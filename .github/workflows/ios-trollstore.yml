@@ -1,0 +1,58 @@
+name: Build iOS TrollStore IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build unsigned IPA
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read Flutter version from .mise.toml
+        id: mise
+        run: echo "flutter_version=$(grep 'flutter' .mise.toml | sed 's/.*= *\"//' | sed 's/\"//')" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ steps.mise.outputs.flutter_version }}
+          cache: true
+
+      - name: Install dependencies
+        working-directory: apps/mobile
+        run: flutter pub get
+
+      - name: Build unsigned iOS app
+        working-directory: apps/mobile
+        run: |
+          flutter build ios \
+            --release \
+            --no-codesign \
+            --no-tree-shake-icons \
+            --dart-define=REVENUECAT_PUBLIC_KEY=
+
+      - name: Package IPA
+        run: |
+          APP_PATH="apps/mobile/build/ios/iphoneos/Runner.app"
+          test -d "$APP_PATH"
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$APP_PATH" "$RUNNER_TEMP/Payload/"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$RUNNER_TEMP/Payload" \
+            "$RUNNER_TEMP/CC-Pocket-TrollStore-unsigned.ipa"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: CC-Pocket-TrollStore-unsigned-${{ github.sha }}
+          path: ${{ runner.temp }}/CC-Pocket-TrollStore-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
