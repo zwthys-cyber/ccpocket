@@ -83,9 +83,9 @@ We may update this privacy policy from time to time. Changes will be posted to t
 ## Contact
 
 If you have questions about this privacy policy, please open an issue at:
-https://github.com/K9i-0/ccpocket/issues
+https://github.com/zwthys-cyber/ccpocket/issues
 
 ## Open Source
 
 ccpocket is open source. You can review the complete source code at:
-https://github.com/K9i-0/ccpocket
+https://github.com/zwthys-cyber/ccpocket

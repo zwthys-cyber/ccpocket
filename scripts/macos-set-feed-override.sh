@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BUNDLE_ID="${BUNDLE_ID:-com.k9i.ccpocket}"
+BUNDLE_ID="${BUNDLE_ID:-com.zwthys.ccpocket}"
 DEFAULTS_KEY="ccpocket.sparkle.feed_url_override"
 FEED_URL="${1:-}"
 

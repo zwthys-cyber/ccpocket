@@ -5,9 +5,9 @@ metadata uploads succeeded. iOS is WAITING_FOR_REVIEW. Android production releas
 1.127.2 (244) is in review, confirmed in the Console. Android's 20 listing changes
 have been approved and are ready for manual publishing. Nothing was published.
 
-- Approved-state recheck: https://github.com/K9i-0/ccpocket/actions/runs/33936454589
-- Metadata and images upload (both succeeded): https://github.com/K9i-0/ccpocket/actions/runs/33936612925
-- Submission run (iOS succeeded, Android stopped): https://github.com/K9i-0/ccpocket/actions/runs/33936733459
+- Approved-state recheck: https://github.com/zwthys-cyber/ccpocket/actions/runs/33936454589
+- Metadata and images upload (both succeeded): https://github.com/zwthys-cyber/ccpocket/actions/runs/33936612925
+- Submission run (iOS succeeded, Android stopped): https://github.com/zwthys-cyber/ccpocket/actions/runs/33936733459
 - Google Play publishing overview: https://play.google.com/console/u/0/developers/6160648729759324658/app/4972604564193312237/publishing
 
 Google Play's metadata upload sent the approved four-language listing changes
@@ -26,9 +26,9 @@ Do not rerun the promotion workflow: the Console submission is complete.
 - Public iOS: 1.127.1 (243), READY_FOR_DISTRIBUTION.
 - Public Android: versionCode 243, completed.
 - Candidate for both: 1.127.2 (244), existing release builds.
-- Read-only snapshot: https://github.com/K9i-0/ccpocket/actions/runs/33935242768
-- iOS release workflow: https://github.com/K9i-0/ccpocket/actions/runs/33927390316
-- Android release workflow: https://github.com/K9i-0/ccpocket/actions/runs/33927396035
+- Read-only snapshot: https://github.com/zwthys-cyber/ccpocket/actions/runs/33935242768
+- iOS release workflow: https://github.com/zwthys-cyber/ccpocket/actions/runs/33927390316
+- Android release workflow: https://github.com/zwthys-cyber/ccpocket/actions/runs/33927396035
 - Review ref: store/review-1.127.2-244
 - Review SHA: a06f6793b8e919063173149929d8e02b29bdaa85
 - Source branch: feat/mint-readme-store

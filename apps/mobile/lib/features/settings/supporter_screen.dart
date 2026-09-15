@@ -151,14 +151,16 @@ class _SupportImpactCard extends StatelessWidget {
           children: [
             Text(
               l.supporterImpactTitle,
-              style: Theme.of(context).textTheme.titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w700),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 8),
             Text(
               l.supporterImpactBody,
-              style: Theme.of(context).textTheme.bodyMedium
-                  ?.copyWith(color: cs.onSurfaceVariant),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
             ),
             const SizedBox(height: 16),
             _SupportImpactItem(
@@ -204,14 +206,16 @@ class _SupportPurchaseInfoCard extends StatelessWidget {
           children: [
             Text(
               l.supporterPurchaseInfoTitle,
-              style: Theme.of(context).textTheme.titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w700),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 8),
             Text(
               l.supporterPurchaseInfoBody,
-              style: Theme.of(context).textTheme.bodyMedium
-                  ?.copyWith(color: cs.onSurfaceVariant),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
             ),
             const SizedBox(height: 12),
             _SupportTextLink(
@@ -259,8 +263,9 @@ class _SupportPackageSection extends StatelessWidget {
     final children = <Widget>[
       Text(
         l.supporterPackagesTitle,
-        style: Theme.of(context).textTheme.titleMedium
-            ?.copyWith(fontWeight: FontWeight.w700),
+        style: Theme.of(
+          context,
+        ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
       ),
       const SizedBox(height: 12),
     ];
@@ -340,8 +345,9 @@ class _SupportPackageGroup extends StatelessWidget {
     final children = <Widget>[
       Text(
         title,
-        style: Theme.of(context).textTheme.titleSmall
-            ?.copyWith(fontWeight: FontWeight.w700),
+        style: Theme.of(
+          context,
+        ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
       ),
       const SizedBox(height: 4),
       Text(body, style: Theme.of(context).textTheme.bodyMedium),
@@ -462,14 +468,16 @@ class _SupportImpactItem extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: Theme.of(context).textTheme.titleSmall
-                    ?.copyWith(fontWeight: FontWeight.w700),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 2),
               Text(
                 body,
-                style: Theme.of(context).textTheme.bodyMedium
-                    ?.copyWith(color: cs.onSurfaceVariant),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
               ),
             ],
           ),
@@ -612,8 +620,10 @@ class _SupportSummaryContent extends StatelessWidget {
               const SizedBox(width: 8),
               Text(
                 l.supporterSummaryTitle,
-                style: Theme.of(context).textTheme.titleSmall
-                    ?.copyWith(color: cs.primary, fontWeight: FontWeight.w700),
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: cs.primary,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ],
           ),
@@ -714,8 +724,10 @@ class _SupportSummaryBadge extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: Theme.of(context).textTheme.labelMedium
-            ?.copyWith(color: cs.primary, fontWeight: FontWeight.w700),
+        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+          color: cs.primary,
+          fontWeight: FontWeight.w700,
+        ),
       ),
     );
   }
@@ -742,8 +754,10 @@ class _SupportTextLink extends StatelessWidget {
             Flexible(
               child: Text(
                 label,
-                style: Theme.of(context).textTheme.labelLarge
-                    ?.copyWith(color: cs.primary, fontWeight: FontWeight.w700),
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: cs.primary,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
             const SizedBox(width: 4),
@@ -980,12 +994,14 @@ int _comparePackagesByPrice(SupportPackage a, SupportPackage b) {
 }
 
 int _comparePackageTiebreakers(SupportPackage a, SupportPackage b) {
-  final kindComparison = _packageDisplayPriority(a)
-      .compareTo(_packageDisplayPriority(b));
+  final kindComparison = _packageDisplayPriority(
+    a,
+  ).compareTo(_packageDisplayPriority(b));
   if (kindComparison != 0) return kindComparison;
   if (a.isSubscription && b.isSubscription) {
-    final tierComparison = _monthlyPackagePriority(a)
-        .compareTo(_monthlyPackagePriority(b));
+    final tierComparison = _monthlyPackagePriority(
+      a,
+    ).compareTo(_monthlyPackagePriority(b));
     if (tierComparison != 0) return tierComparison;
   }
   return a.id.compareTo(b.id);
@@ -1117,16 +1133,16 @@ Future<void> _openSupporterDoc(BuildContext context) async {
   final locale = Localizations.localeOf(context).languageCode;
   final uri = switch (locale) {
     'ja' => Uri.parse(
-      'https://github.com/K9i-0/ccpocket/blob/main/docs/supporter_ja.md',
+      'https://github.com/zwthys-cyber/ccpocket/blob/main/docs/supporter_ja.md',
     ),
     'zh' => Uri.parse(
-      'https://github.com/K9i-0/ccpocket/blob/main/docs/supporter_zh.md',
+      'https://github.com/zwthys-cyber/ccpocket/blob/main/docs/supporter_zh.md',
     ),
     'ko' => Uri.parse(
-      'https://github.com/K9i-0/ccpocket/blob/main/docs/supporter_ko.md',
+      'https://github.com/zwthys-cyber/ccpocket/blob/main/docs/supporter_ko.md',
     ),
     _ => Uri.parse(
-      'https://github.com/K9i-0/ccpocket/blob/main/docs/supporter.md',
+      'https://github.com/zwthys-cyber/ccpocket/blob/main/docs/supporter.md',
     ),
   };
   await _openExternalSupportLink(context, uri);

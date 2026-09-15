@@ -1,7 +1,7 @@
 # CC Pocket Technical Stack
 
 This document is the agent-readable version of the CC Pocket architecture page.
-Human-readable HTML is available at `https://k9i-0.github.io/ccpocket/architecture/`.
+Human-readable HTML is available at `https://zwthys-cyber.github.io/ccpocket/architecture/`.
 
 ## Product Shape
 

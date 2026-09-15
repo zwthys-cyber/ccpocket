@@ -51,7 +51,7 @@ jobs:
         working-directory: apps/mobile
       - name: Fetch signing files
         run: |
-          app-store-connect fetch-signing-files com.k9i.ccpocket \
+          app-store-connect fetch-signing-files com.zwthys.ccpocket \
             --type IOS_APP_STORE --create
       - name: Setup keychain
         run: keychain initialize

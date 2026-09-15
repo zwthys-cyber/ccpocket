@@ -190,9 +190,9 @@ swift .claude/skills/update-store/scripts/sim-tap.swift prepare-store ipad
 
 **事前権限付与**: もし `erase` を実行した場合のみ、アプリ起動前に実行する:
 ```bash
-xcrun simctl privacy booted grant notifications com.k9i.ccpocket
-xcrun simctl privacy booted grant speech-recognition com.k9i.ccpocket
-xcrun simctl privacy booted grant microphone com.k9i.ccpocket
+xcrun simctl privacy booted grant notifications com.zwthys.ccpocket
+xcrun simctl privacy booted grant speech-recognition com.zwthys.ccpocket
+xcrun simctl privacy booted grant microphone com.zwthys.ccpocket
 ```
 これによりダイアログの表示自体を防止できる。`simctl privacy` が失敗した場合は以下のフォールバックを使う。
 

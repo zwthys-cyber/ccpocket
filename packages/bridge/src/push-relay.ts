@@ -27,23 +27,23 @@ type PushRelayOpPayload =
 
 type PushRelayRequestPayload = PushRelayOpPayload & { bridgeId: string };
 
-const DEFAULT_RELAY_URL = "https://us-central1-ccpocket-ca33b.cloudfunctions.net/relay";
-
 export class PushRelayClient {
-  private readonly relayUrl: string;
+  private readonly relayUrl: string | null;
   private readonly firebaseAuth: FirebaseAuthClient | null;
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: PushRelayClientOptions = {}) {
-    this.relayUrl = options.relayUrl ?? DEFAULT_RELAY_URL;
+    this.relayUrl = options.relayUrl !== undefined
+      ? options.relayUrl.trim() || null
+      : process.env.BRIDGE_PUSH_RELAY_URL?.trim() || null;
     this.firebaseAuth = options.firebaseAuth ?? null;
     this.timeoutMs = options.timeoutMs ?? 10_000;
     this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
   get isConfigured(): boolean {
-    return this.firebaseAuth != null;
+    return this.firebaseAuth != null && this.relayUrl != null;
   }
 
   private get bridgeId(): string {
@@ -85,7 +85,7 @@ export class PushRelayClient {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const response = await this.fetchImpl(this.relayUrl, {
+      const response = await this.fetchImpl(this.relayUrl!, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

@@ -7,7 +7,6 @@ import 'package:purchases_flutter/purchases_flutter.dart'
 import '../core/logger.dart';
 
 const _supporterEntitlementId = 'supporter';
-const _debugTestStorePublicKey = 'test_kxZnEyrhheCZDdsIBOOCNMwTWsR';
 const _revenueCatPublicKey = String.fromEnvironment('REVENUECAT_PUBLIC_KEY');
 
 enum SupportPackageKind { monthly, snack, coffee, lunch, other }
@@ -218,9 +217,8 @@ class RevenueCatOfferingData {
   final List<SupportPackage> packages;
 }
 
-typedef RevenueCatCustomerInfoListener = void Function(
-  RevenueCatCustomerInfo info,
-);
+typedef RevenueCatCustomerInfoListener =
+    void Function(RevenueCatCustomerInfo info);
 
 abstract class RevenueCatGateway {
   Future<void> setDebugLogsEnabled();
@@ -439,8 +437,7 @@ class RevenueCatService {
   bool _isConfigured = false;
 
   static String get _defaultPublicApiKey {
-    if (_revenueCatPublicKey.isNotEmpty) return _revenueCatPublicKey;
-    return kDebugMode ? _debugTestStorePublicKey : '';
+    return _revenueCatPublicKey;
   }
 
   bool get isSupportedPlatform {

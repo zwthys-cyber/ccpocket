@@ -76,7 +76,7 @@ jobs:
             exit 1
           fi
         env:
-          BUNDLE_ID: com.k9i.ccpocket
+          BUNDLE_ID: com.zwthys.ccpocket
 
       - name: Setup keychain
         run: keychain initialize
@@ -324,7 +324,7 @@ jobs:
       cancel-in-progress: false
     environment:
       name: github-pages
-      url: https://k9i-0.github.io/ccpocket/sparkle/appcast.xml
+      url: https://zwthys-cyber.github.io/ccpocket/sparkle/appcast.xml
     env:
       GH_TOKEN: ${{ github.token }}
       SPARKLE_VERSION: 2.9.1
@@ -389,7 +389,7 @@ jobs:
             '     xmlns:dc="http://purl.org/dc/elements/1.1/">' \
             '  <channel>' \
             '    <title>CC Pocket macOS Updates</title>' \
-            '    <link>https://k9i-0.github.io/ccpocket/sparkle/appcast.xml</link>' \
+            '    <link>https://zwthys-cyber.github.io/ccpocket/sparkle/appcast.xml</link>' \
             '    <description>Updates for CC Pocket macOS</description>' \
             '    <language>en</language>' \
             '    <item>' \
@@ -486,7 +486,7 @@ jobs:
         env:
           EXPECTED_BUILD_NUMBER: ${{ needs.release.outputs.build_number }}
           EXPECTED_SEMVER: ${{ needs.release.outputs.semver }}
-          SPARKLE_APPCAST_URL: https://k9i-0.github.io/ccpocket/sparkle/appcast.xml
+          SPARKLE_APPCAST_URL: https://zwthys-cyber.github.io/ccpocket/sparkle/appcast.xml
         run: |
           set -euo pipefail
 

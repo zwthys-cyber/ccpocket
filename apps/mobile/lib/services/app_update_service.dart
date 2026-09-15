@@ -74,7 +74,7 @@ class MethodChannelAppUpdateGateway implements AppUpdateGateway {
 /// been configured yet, the service falls back to GitHub Releases so the
 /// current banner UX keeps working during rollout.
 class AppUpdateService {
-  static const _owner = 'K9i-0';
+  static const _owner = 'zwthys-cyber';
   static const _repo = 'ccpocket';
   static const _dismissedVersionKey = 'app_update_dismissed_version';
   static const _lastCheckKey = 'app_update_last_check';

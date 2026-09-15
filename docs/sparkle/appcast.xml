@@ -4,7 +4,7 @@
      xmlns:dc="http://purl.org/dc/elements/1.1/">
   <channel>
     <title>CC Pocket macOS Updates</title>
-    <link>https://k9i-0.github.io/ccpocket/sparkle/appcast.xml</link>
+    <link>https://zwthys-cyber.github.io/ccpocket/sparkle/appcast.xml</link>
     <description>Updates for CC Pocket macOS</description>
     <language>en</language>
     <item>
@@ -12,9 +12,9 @@
       <pubDate>Sat, 12 Sep 2026 10:42:07 +0000</pubDate>
       <sparkle:version>247</sparkle:version>
       <sparkle:shortVersionString>1.130.0</sparkle:shortVersionString>
-      <sparkle:releaseNotesLink>https://github.com/K9i-0/ccpocket/releases/tag/macos/v1.130.0%2B247</sparkle:releaseNotesLink>
+      <sparkle:releaseNotesLink>https://github.com/zwthys-cyber/ccpocket/releases/tag/macos/v1.130.0%2B247</sparkle:releaseNotesLink>
       <enclosure
-        url="https://github.com/K9i-0/ccpocket/releases/download/macos/v1.130.0%2B247/CC-Pocket-macos-v1.130.0.dmg"
+        url="https://github.com/zwthys-cyber/ccpocket/releases/download/macos/v1.130.0%2B247/CC-Pocket-macos-v1.130.0.dmg"
         sparkle:version="247"
         sparkle:shortVersionString="1.130.0"
         sparkle:edSignature="E1iIQiJi0UTYsRejPyx/Qvf29BB0DD1oP7BW6VsMiGdiOv3QnGiGX+QaHlwtjioXxTxGm+HOiM+mfQS2SBuJBQ==" length="62830407"

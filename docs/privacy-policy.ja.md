@@ -62,4 +62,4 @@ Bridge Serverに更新がある場合（ツール承認リクエスト、セッ�
 
 ## お問い合わせ
 
-本プライバシーポリシーに関するご質問は、[GitHub](https://github.com/K9i-0/ccpocket/issues)でissueを作成してください。
+本プライバシーポリシーに関するご質問は、[GitHub](https://github.com/zwthys-cyber/ccpocket/issues)でissueを作成してください。

@@ -4,7 +4,7 @@ set -euo pipefail
 
 version="${1:-}"
 build_number="${2:-}"
-bundle_id="${ASC_BUNDLE_ID:-com.k9i.ccpocket}"
+bundle_id="${ASC_BUNDLE_ID:-com.zwthys.ccpocket}"
 
 fail() {
   echo "::error::$*" >&2

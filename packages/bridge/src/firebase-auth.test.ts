@@ -50,6 +50,7 @@ describe("FirebaseAuthClient", () => {
       .mockResolvedValueOnce(userNotFoundResponse())
       .mockResolvedValueOnce(signUpResponse("new-uid", "new-id-token", "dummy-new-refresh"));
     const client = new FirebaseAuthClient({
+      apiKey: "test-api-key",
       credentialsFile,
       fetchImpl: fetchMock as unknown as typeof fetch,
     });
@@ -74,6 +75,7 @@ describe("FirebaseAuthClient", () => {
       .mockResolvedValueOnce(userNotFoundResponse())
       .mockResolvedValueOnce(signUpResponse("new-uid", "new-id-token", "dummy-new-refresh"));
     const client = new FirebaseAuthClient({
+      apiKey: "test-api-key",
       credentialsFile,
       fetchImpl: fetchMock as unknown as typeof fetch,
     });

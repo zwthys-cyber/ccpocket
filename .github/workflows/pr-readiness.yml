@@ -55,4 +55,4 @@ jobs:
         run: node scripts/pr-readiness.mjs
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MAINTAINER_LOGIN: K9i-0
+          MAINTAINER_LOGIN: zwthys-cyber

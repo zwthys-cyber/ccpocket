@@ -54,7 +54,7 @@ jobs:
           app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --type IOS_APP_STORE --create
         env:
-          BUNDLE_ID: com.k9i.ccpocket
+          BUNDLE_ID: com.zwthys.ccpocket
       - name: Setup keychain
         run: keychain initialize
       - name: Add certs to keychain

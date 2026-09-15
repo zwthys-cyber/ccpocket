@@ -15,9 +15,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO="K9i-0/ccpocket"
+REPO="zwthys-cyber/ccpocket"
 NPM_PACKAGE="@ccpocket/bridge"
-BUNDLE_ID="com.k9i.ccpocket"
+BUNDLE_ID="com.zwthys.ccpocket"
 TODAY=$(date -u +"%Y-%m-%d")
 
 # ── npm downloads (yesterday) ─────────────────────────────────

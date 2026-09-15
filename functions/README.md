@@ -24,4 +24,4 @@ npm run functions:deploy
 ```
 
 `firebase.json` の predeploy hook がデプロイ前にFunctionsをビルドする。
-デプロイ先は `ccpocket-ca33b` で、CDは使用せず手動で実行する。
+デプロイ先は自分の Firebase プロジェクトを `.firebaserc` に設定し、CDは使用せず手動で実行する。

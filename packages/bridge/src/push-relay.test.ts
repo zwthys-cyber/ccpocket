@@ -71,6 +71,7 @@ describe("PushRelayClient", () => {
   it("forwards the active token hash allowlist for notifications", async () => {
     const fetchMock = vi.fn(async () => new Response("", { status: 200 }));
     const client = new PushRelayClient({
+      relayUrl: "https://relay.example.com/push",
       firebaseAuth: createMockAuth("bridge-uid", "id-token"),
       fetchImpl: fetchMock as unknown as typeof fetch,
     });
@@ -90,24 +91,25 @@ describe("PushRelayClient", () => {
     });
   });
 
-  it("uses default relay URL when not specified", async () => {
+  it("is disabled when relay URL is not specified", async () => {
     const fetchMock = vi.fn(async () => new Response("", { status: 200 }));
     const mockAuth = createMockAuth();
     const client = new PushRelayClient({
+      relayUrl: "",
       firebaseAuth: mockAuth,
       fetchImpl: fetchMock as unknown as typeof fetch,
     });
 
+    expect(client.isConfigured).toBe(false);
     await client.registerToken("token-1", "android");
-
-    const [url] = fetchMock.mock.calls[0];
-    expect(url).toBe("https://us-central1-ccpocket-ca33b.cloudfunctions.net/relay");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("fetches fresh ID token on each request", async () => {
     const fetchMock = vi.fn(async () => new Response("", { status: 200 }));
     const mockAuth = createMockAuth();
     const client = new PushRelayClient({
+      relayUrl: "https://relay.example.com/push",
       firebaseAuth: mockAuth,
       fetchImpl: fetchMock as unknown as typeof fetch,
     });
@@ -132,6 +134,7 @@ describe("PushRelayClient", () => {
       initialize: vi.fn(async () => {}),
     } as unknown as FirebaseAuthClient;
     const client = new PushRelayClient({
+      relayUrl: "https://relay.example.com/push",
       firebaseAuth: mockAuth,
       fetchImpl: fetchMock as unknown as typeof fetch,
     });

@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-BUNDLE_ID="${BUNDLE_ID:-com.k9i.ccpocket}"
+BUNDLE_ID="${BUNDLE_ID:-com.zwthys.ccpocket}"
 
 delete_default() {
   local key="$1"

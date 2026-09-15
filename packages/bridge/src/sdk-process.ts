@@ -128,7 +128,7 @@ const CLAUDE_OAUTH_OPT_IN_MESSAGE =
   "⚠ Claude subscription authentication requires explicit opt-in\n\n" +
   "Set ANTHROPIC_API_KEY on the Bridge machine, or review the documented policy risk and restart Bridge with:\n\n" +
   "  BRIDGE_ALLOW_CLAUDE_OAUTH=1\n\n" +
-  "https://github.com/K9i-0/ccpocket/blob/main/docs/auth-troubleshooting.md";
+  "https://github.com/zwthys-cyber/ccpocket/blob/main/docs/auth-troubleshooting.md";
 
 export function isClaudeOAuthOptInEnabled(
   env: NodeJS.ProcessEnv = process.env,

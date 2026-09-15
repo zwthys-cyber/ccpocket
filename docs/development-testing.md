@@ -97,7 +97,7 @@ After each launch, inspect the task stack:
 
 ```bash
 adb shell dumpsys activity activities | grep -E \
-  "Task\{|com\.k9i\.ccpocket/(\.DeepLinkActivity|\.MainActivity)"
+  "Task\{|com\.zwthys\.ccpocket/(\.DeepLinkActivity|\.MainActivity)"
 ```
 
 Confirm that only the canonical `MainActivity` remains, the URI is handled once,

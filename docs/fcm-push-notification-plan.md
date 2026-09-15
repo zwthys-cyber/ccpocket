@@ -31,16 +31,16 @@ ccpocket を公開運用する前提で、ユーザーがアプリをバック�
   - Relay API (`register` / `unregister` / `notify`) 実装
   - Firestore upsert + invalid token cleanup 実装
 - Firebase Project:
-  - ルート `firebase.json` / `.firebaserc` を作成（project: `ccpocket-ca33b`）
+  - ルート `firebase.json` / `.firebaserc` を作成（自分の Firebase project）
   - `apps/mobile/firebase.json` を生成
 
 ### 明日やる（手動）
 
 - Firebase プロジェクトを Blaze にアップグレード（Functions/SecretManager デプロイブロッカー）
 - Cloud Functions deploy
-  - `firebase deploy --only functions --project ccpocket-ca33b`
+  - `firebase deploy --only functions --project <your-firebase-project-id>`
 - `PUSH_RELAY_SECRET` の本番設定
-  - `firebase functions:secrets:set PUSH_RELAY_SECRET --project ccpocket-ca33b`
+  - `firebase functions:secrets:set PUSH_RELAY_SECRET --project <your-firebase-project-id>`
 - APNs証明書/キー設定（iOS通知）
 - Functionsデプロイ後、Bridge側 env を設定
   - `PUSH_RELAY_URL`

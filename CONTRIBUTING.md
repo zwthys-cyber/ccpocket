@@ -39,7 +39,7 @@ Rather than sharing code diffs, you share the **instructions you gave to an AI**
 
 ### How to Contribute
 
-1. **Create an Issue** — Use the [Prompt Request template](https://github.com/K9i-0/ccpocket/issues/new?template=prompt_request.yml)
+1. **Create an Issue** — Use the [Prompt Request template](https://github.com/zwthys-cyber/ccpocket/issues/new?template=prompt_request.yml)
 2. **Describe the prompt and results** — The actual prompt you used, what it achieved, screenshots, etc.
 3. **Maintainers verify and apply** — We re-run the prompt, adjust as needed, and merge
 
@@ -54,8 +54,8 @@ Rather than sharing code diffs, you share the **instructions you gave to an AI**
 
 In addition to Prompt Requests, regular Issues are always welcome.
 
-- [Bug Report](https://github.com/K9i-0/ccpocket/issues/new?template=bug_report.yml) — Report a bug
-- [Feature Request](https://github.com/K9i-0/ccpocket/issues/new?template=feature_request.yml) — Suggest a feature
+- [Bug Report](https://github.com/zwthys-cyber/ccpocket/issues/new?template=bug_report.yml) — Report a bug
+- [Feature Request](https://github.com/zwthys-cyber/ccpocket/issues/new?template=feature_request.yml) — Suggest a feature
 
 ### Platform Support Status
 
@@ -298,7 +298,7 @@ Maintainers may apply labels like these when triaging Issues and PRs:
 
 ## Security
 
-If you discover a vulnerability, please report it privately via [GitHub Security Advisories](https://github.com/K9i-0/ccpocket/security/advisories/new) rather than opening a public Issue. See [SECURITY.md](./SECURITY.md) for details.
+If you discover a vulnerability, please report it privately via [GitHub Security Advisories](https://github.com/zwthys-cyber/ccpocket/security/advisories/new) rather than opening a public Issue. See [SECURITY.md](./SECURITY.md) for details.
 
 ---
 
@@ -331,7 +331,7 @@ If you discover a vulnerability, please report it privately via [GitHub Security
 
 ### 貢献の流れ
 
-1. **Issue を作成する** — [Prompt Request テンプレート](https://github.com/K9i-0/ccpocket/issues/new?template=prompt_request.yml) を使用
+1. **Issue を作成する** — [Prompt Request テンプレート](https://github.com/zwthys-cyber/ccpocket/issues/new?template=prompt_request.yml) を使用
 2. **プロンプトと結果を記載する** — 実際に使ったプロンプト、実現できたこと、スクリーンショットなど
 3. **メンテナが検証・適用する** — プロンプトを再実行し、必要に応じて調整してマージ
 
@@ -476,8 +476,8 @@ Ready は受付条件であり採用の約束ではありません。目的が�
 
 ### バグ報告・機能提案
 
-- [Bug Report](https://github.com/K9i-0/ccpocket/issues/new?template=bug_report.yml) — バグの報告
-- [Feature Request](https://github.com/K9i-0/ccpocket/issues/new?template=feature_request.yml) — 機能の提案
+- [Bug Report](https://github.com/zwthys-cyber/ccpocket/issues/new?template=bug_report.yml) — バグの報告
+- [Feature Request](https://github.com/zwthys-cyber/ccpocket/issues/new?template=feature_request.yml) — 機能の提案
 
 ### プラットフォームのサポート状況
 
@@ -546,4 +546,4 @@ Issue / PR には次のようなラベルを付けることがあります:
 
 ### セキュリティ
 
-脆弱性を発見した場合は、公開 Issue ではなく [GitHub Security Advisories](https://github.com/K9i-0/ccpocket/security/advisories/new) から非公開で報告してください。詳細は [SECURITY.md](./SECURITY.md) を参照してください。
+脆弱性を発見した場合は、公開 Issue ではなく [GitHub Security Advisories](https://github.com/zwthys-cyber/ccpocket/security/advisories/new) から非公開で報告してください。詳細は [SECURITY.md](./SECURITY.md) を参照してください。

@@ -47,7 +47,7 @@ This app is not affiliated with, endorsed by, or associated with Anthropic or Op
 - A Mac or Linux machine with OpenAI Codex CLI, Claude Code CLI, or both installed
 - Network connectivity between your device and the server (local network or Tailscale recommended)
 
-Source code available at https://github.com/K9i-0/ccpocket
+Source code available at https://github.com/zwthys-cyber/ccpocket
 
 ### Japanese (日本語)
 
@@ -83,7 +83,7 @@ CC Pocket は、OpenAI Codex / Claude Code のモバイル・デスクトップ�
 - Codex CLI または Claude Code CLI がインストール済みの Mac / Linux マシン
 - 端末とサーバー間のネットワーク接続（ローカルネットワークまたは Tailscale 推奨）
 
-ソースコードは https://github.com/K9i-0/ccpocket で公開しています。
+ソースコードは https://github.com/zwthys-cyber/ccpocket で公開しています。
 
 ### Chinese (简体中文)
 
@@ -119,7 +119,7 @@ CC Pocket 是 OpenAI Codex / Claude Code 的移动与桌面客户端。代理通
 - 已安装 OpenAI Codex CLI 和/或 Claude Code CLI 的 Mac / Linux 主机
 - 设备与服务器之间的网络连接（推荐局域网或 Tailscale）
 
-源代码：https://github.com/K9i-0/ccpocket
+源代码：https://github.com/zwthys-cyber/ccpocket
 
 ### Korean (한국어)
 
@@ -155,7 +155,7 @@ CC Pocket은 OpenAI Codex / Claude Code를 위한 모바일 및 데스크톱 클
 - OpenAI Codex CLI 및/또는 Claude Code CLI가 설치된 Mac / Linux 머신
 - 기기와 서버 사이의 네트워크 연결(로컬 네트워크 또는 Tailscale 권장)
 
-소스 코드는 https://github.com/K9i-0/ccpocket 에서 확인할 수 있습니다.
+소스 코드는 https://github.com/zwthys-cyber/ccpocket 에서 확인할 수 있습니다.
 
 ## Category
 
@@ -177,6 +177,6 @@ Korean keywords: codex,claude,코딩,AI,에이전트,모바일,bridge,ssh,원격
 
 ## Privacy
 
-- Privacy Policy URL: https://github.com/K9i-0/ccpocket/blob/main/PRIVACY_POLICY.md
-- Korean Privacy Policy URL: https://github.com/K9i-0/ccpocket/blob/main/PRIVACY_POLICY.ko.md
+- Privacy Policy URL: https://github.com/zwthys-cyber/ccpocket/blob/main/PRIVACY_POLICY.md
+- Korean Privacy Policy URL: https://github.com/zwthys-cyber/ccpocket/blob/main/PRIVACY_POLICY.ko.md
 - Data collected: See privacy-policy.md

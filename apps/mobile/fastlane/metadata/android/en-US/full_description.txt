@@ -28,4 +28,4 @@ GET STARTED
 A reachable Bridge Server and a configured agent account are required. CC Pocket is free to use, with optional Supporter purchases. Agent service fees are separate.
 
 CC Pocket is open source and is not affiliated with Anthropic or OpenAI.
-https://github.com/K9i-0/ccpocket
+https://github.com/zwthys-cyber/ccpocket

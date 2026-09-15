@@ -47,7 +47,7 @@ void main() {
         final client = MockClient((request) async {
           expect(
             request.url.toString(),
-            'https://api.github.com/repos/K9i-0/ccpocket/releases?per_page=20',
+            'https://api.github.com/repos/zwthys-cyber/ccpocket/releases?per_page=20',
           );
 
           return http.Response(jsonEncode(_mockReleases), 200);
@@ -66,11 +66,11 @@ void main() {
         expect(update.canInstallInApp, isFalse);
         expect(
           update.downloadUrl,
-          'https://github.com/K9i-0/ccpocket/releases/download/macos/v1.44.0%2B74/CC-Pocket-macos-v1.44.0.dmg',
+          'https://github.com/zwthys-cyber/ccpocket/releases/download/macos/v1.44.0%2B74/CC-Pocket-macos-v1.44.0.dmg',
         );
         expect(
           update.releaseUrl,
-          'https://github.com/K9i-0/ccpocket/releases/tag/macos/v1.44.0%2B74',
+          'https://github.com/zwthys-cyber/ccpocket/releases/tag/macos/v1.44.0%2B74',
         );
       },
     );
@@ -93,7 +93,7 @@ void main() {
       expect(update.canInstallInApp, isTrue);
       expect(
         update.downloadUrl,
-        'https://github.com/K9i-0/ccpocket/releases/download/macos/v1.44.0%2B74/CC-Pocket-macos-v1.44.0.dmg',
+        'https://github.com/zwthys-cyber/ccpocket/releases/download/macos/v1.44.0%2B74/CC-Pocket-macos-v1.44.0.dmg',
       );
     });
 
@@ -102,7 +102,8 @@ void main() {
         final releases = [
           {
             'tag_name': 'macos/v1.45.0+75',
-            'html_url': 'https://github.com/K9i-0/ccpocket/releases/tag/macos/v1.45.0%2B75',
+            'html_url':
+                'https://github.com/zwthys-cyber/ccpocket/releases/tag/macos/v1.45.0%2B75',
             'assets': [
               {
                 'name': 'wrong-name.dmg',
@@ -163,28 +164,30 @@ final _mockReleases = [
   {
     'tag_name': 'macos/v1.44.0+74',
     'html_url':
-        'https://github.com/K9i-0/ccpocket/releases/tag/macos/v1.44.0%2B74',
+        'https://github.com/zwthys-cyber/ccpocket/releases/tag/macos/v1.44.0%2B74',
     'assets': [
       {
         'name': 'CC-Pocket-macos-v1.44.0.dmg',
-        'browser_download_url': 'https://github.com/K9i-0/ccpocket/releases/download/macos/v1.44.0%2B74/CC-Pocket-macos-v1.44.0.dmg',
+        'browser_download_url':
+            'https://github.com/zwthys-cyber/ccpocket/releases/download/macos/v1.44.0%2B74/CC-Pocket-macos-v1.44.0.dmg',
       },
     ],
   },
   {
     'tag_name': 'ios/v1.44.0+74',
     'html_url':
-        'https://github.com/K9i-0/ccpocket/releases/tag/ios/v1.44.0%2B74',
+        'https://github.com/zwthys-cyber/ccpocket/releases/tag/ios/v1.44.0%2B74',
     'assets': const [],
   },
   {
     'tag_name': 'macos/v1.43.0+73',
     'html_url':
-        'https://github.com/K9i-0/ccpocket/releases/tag/macos/v1.43.0%2B73',
+        'https://github.com/zwthys-cyber/ccpocket/releases/tag/macos/v1.43.0%2B73',
     'assets': [
       {
         'name': 'CC-Pocket-macos-v1.43.0.dmg',
-        'browser_download_url': 'https://github.com/K9i-0/ccpocket/releases/download/macos/v1.43.0%2B73/CC-Pocket-macos-v1.43.0.dmg',
+        'browser_download_url':
+            'https://github.com/zwthys-cyber/ccpocket/releases/download/macos/v1.43.0%2B73/CC-Pocket-macos-v1.43.0.dmg',
       },
     ],
   },

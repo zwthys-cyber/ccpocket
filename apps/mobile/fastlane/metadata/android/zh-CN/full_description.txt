@@ -28,4 +28,4 @@
 需要可连接的Bridge Server和已配置的代理账号。CC Pocket可免费使用，也可通过自愿购买Supporter支持开发。代理服务费用另计。
 
 CC Pocket是开源软件，并非Anthropic或OpenAI的官方应用。
-https://github.com/K9i-0/ccpocket
+https://github.com/zwthys-cyber/ccpocket

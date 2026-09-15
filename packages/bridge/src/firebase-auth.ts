@@ -17,14 +17,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-const FIREBASE_API_KEY = "AIzaSyAptNnokWPqJIgv2Lr3I8ETN6bqZb5BGvc";
-const SIGN_UP_URL = `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${FIREBASE_API_KEY}`;
-const REFRESH_URL = `https://securetoken.googleapis.com/v1/token?key=${FIREBASE_API_KEY}`;
-
 const CREDENTIALS_DIR = join(homedir(), ".ccpocket");
 const CREDENTIALS_FILE = join(CREDENTIALS_DIR, "firebase-credentials.json");
 
 export interface FirebaseAuthClientOptions {
+  apiKey: string;
   credentialsFile?: string;
   fetchImpl?: typeof fetch;
 }
@@ -87,14 +84,21 @@ function saveCredentials(credentialsFile: string, creds: PersistedCredentials): 
 export class FirebaseAuthClient {
   private readonly credentialsFile: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly signUpUrl: string;
+  private readonly refreshUrl: string;
   private _uid: string | null = null;
   private _idToken: string | null = null;
   private _refreshToken: string | null = null;
   private _expiresAt: number = 0;
 
-  constructor(options: FirebaseAuthClientOptions = {}) {
+  constructor(options: FirebaseAuthClientOptions) {
+    if (!options.apiKey.trim()) {
+      throw new Error("Firebase API key is required");
+    }
     this.credentialsFile = options.credentialsFile ?? CREDENTIALS_FILE;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.signUpUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${encodeURIComponent(options.apiKey.trim())}`;
+    this.refreshUrl = `https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(options.apiKey.trim())}`;
   }
 
   get uid(): string {
@@ -154,7 +158,7 @@ export class FirebaseAuthClient {
   }
 
   private async signUpAnonymously(): Promise<void> {
-    const res = await this.fetchImpl(SIGN_UP_URL, {
+    const res = await this.fetchImpl(this.signUpUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ returnSecureToken: true }),
@@ -184,7 +188,7 @@ export class FirebaseAuthClient {
   }
 
   private async refreshIdToken(): Promise<void> {
-    const res = await this.fetchImpl(REFRESH_URL, {
+    const res = await this.fetchImpl(this.refreshUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(this._refreshToken!)}`,

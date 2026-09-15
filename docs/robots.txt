@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://k9i-0.github.io/ccpocket/sitemap.xml
+Sitemap: https://zwthys-cyber.github.io/ccpocket/sitemap.xml

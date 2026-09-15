@@ -374,9 +374,18 @@ export async function checkTailscale(): Promise<CheckResult> {
 }
 
 export async function checkFirebaseConnectivity(): Promise<CheckResult> {
+  const firebaseApiKey = process.env.BRIDGE_FIREBASE_API_KEY?.trim();
+  if (!firebaseApiKey) {
+    return {
+      name: "Firebase connectivity",
+      status: "warn",
+      message: "Not configured",
+      remediation:
+        "Push notifications are disabled. Set BRIDGE_FIREBASE_API_KEY and BRIDGE_PUSH_RELAY_URL to enable them.",
+    };
+  }
   // Use a read-only endpoint to avoid creating anonymous accounts as a side effect
-  const FIREBASE_API_KEY = "AIzaSyAptNnokWPqJIgv2Lr3I8ETN6bqZb5BGvc";
-  const url = `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${FIREBASE_API_KEY}`;
+  const url = `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(firebaseApiKey)}`;
 
   try {
     const response = await fetch(url, {

@@ -19,14 +19,14 @@ jobs:
   deploy:
     environment:
       name: github-pages
-      url: https://k9i-0.github.io/ccpocket/install/
+      url: https://zwthys-cyber.github.io/ccpocket/install/
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Preserve Sparkle appcast
         env:
-          SPARKLE_APPCAST_URL: https://k9i-0.github.io/ccpocket/sparkle/appcast.xml
+          SPARKLE_APPCAST_URL: https://zwthys-cyber.github.io/ccpocket/sparkle/appcast.xml
         run: |
           set -euo pipefail
 

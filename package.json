@@ -3,10 +3,10 @@
   "description": "Mobile client for Claude and Codex with WebSocket bridge server",
   "private": true,
   "license": "MIT",
-  "author": "K9i",
+  "author": "zwthys-cyber",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/K9i-0/ccpocket.git"
+    "url": "git+https://github.com/zwthys-cyber/ccpocket.git"
   },
   "workspaces": [
     "packages/*"
@@ -24,7 +24,7 @@
     "test:release-tools": "node --test scripts/release/*.test.mjs",
     "functions:typecheck": "npm --prefix functions run typecheck",
     "functions:build": "npm --prefix functions run build",
-    "functions:deploy": "firebase deploy --only functions --project ccpocket-ca33b",
+    "functions:deploy": "firebase deploy --only functions",
     "release-card": "node scripts/release-card/generate.mjs",
     "shorebird:patch:android": "bash .claude/skills/shorebird-patch/patch.sh android",
     "shorebird:patch:ios": "bash .claude/skills/shorebird-patch/patch.sh ios",

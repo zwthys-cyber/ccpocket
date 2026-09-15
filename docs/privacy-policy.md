@@ -62,4 +62,4 @@ We may update this Privacy Policy from time to time. Changes will be posted on t
 
 ## Contact
 
-If you have questions about this Privacy Policy, please open an issue on [GitHub](https://github.com/K9i-0/ccpocket/issues).
+If you have questions about this Privacy Policy, please open an issue on [GitHub](https://github.com/zwthys-cyber/ccpocket/issues).

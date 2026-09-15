@@ -73,13 +73,21 @@ export async function startServer() {
 
   // Initialize Firebase Anonymous Auth for push notifications
   let firebaseAuth: FirebaseAuthClient | undefined;
-  try {
-    firebaseAuth = new FirebaseAuthClient();
-    await firebaseAuth.initialize();
-    console.log("[bridge] Push relay enabled (Firebase Anonymous Auth)");
-  } catch (err) {
-    console.warn("[bridge] Push relay disabled: Firebase auth failed:", err);
-    firebaseAuth = undefined;
+  const firebaseApiKey = process.env.BRIDGE_FIREBASE_API_KEY?.trim();
+  const pushRelayUrl = process.env.BRIDGE_PUSH_RELAY_URL?.trim();
+  if (firebaseApiKey && pushRelayUrl) {
+    try {
+      firebaseAuth = new FirebaseAuthClient({ apiKey: firebaseApiKey });
+      await firebaseAuth.initialize();
+      console.log("[bridge] Push relay enabled (Firebase Anonymous Auth)");
+    } catch (err) {
+      console.warn("[bridge] Push relay disabled: Firebase auth failed:", err);
+      firebaseAuth = undefined;
+    }
+  } else {
+    console.log(
+      "[bridge] Push relay disabled (set BRIDGE_FIREBASE_API_KEY and BRIDGE_PUSH_RELAY_URL to enable)",
+    );
   }
 
   const imageStore = new ImageStore();

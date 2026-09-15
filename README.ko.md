@@ -5,7 +5,7 @@
 휴대폰 채팅처럼 Codex와 Claude를 사용하세요. 작업을 요청하고, 다음 단계를 승인하고,
 결과를 확인하세요. 태블릿이나 Mac에서도 같은 작업을 이어갈 수 있습니다.
 
-[CC Pocket 둘러보기](https://k9i-0.github.io/ccpocket/install/?lang=ko) · 무료 사용 · 오픈 소스
+[CC Pocket 둘러보기](https://zwthys-cyber.github.io/ccpocket/install/?lang=ko) · 무료 사용 · 오픈 소스
 
 [English README](README.md) | [日本語 README](README.ja.md) | [简体中文 README](README.zh-CN.md)
 
@@ -29,11 +29,11 @@ npx @ccpocket/bridge@latest
 
 | 플랫폼 | 설치 |
 |--------|------|
-| **iOS / iPadOS** | <a href="https://apps.apple.com/us/app/cc-pocket-code-anywhere/id6759188790"><img height="40" alt="App Store에서 다운로드" src="docs/images/app-store-badge.svg" /></a> |
-| **Android** | <a href="https://play.google.com/store/apps/details?id=com.k9i.ccpocket"><img height="40" alt="Google Play에서 받기" src="docs/images/google-play-badge-en.svg" /></a> |
-| **macOS** | 최신 `.dmg`는 [GitHub Releases](https://github.com/K9i-0/ccpocket/releases?q=macos)에서 다운로드할 수 있습니다. `macos/v*` 태그가 붙은 릴리스를 찾으세요. Homebrew Cask를 사용해 `brew install --cask cc-pocket` 명령으로 설치할 수도 있습니다. |
-| **Linux(실험적)** | 최신 `.tar.gz`는 [GitHub Releases](https://github.com/K9i-0/ccpocket/releases?q=linux)에서 다운로드할 수 있습니다. `linux/v*` 태그가 붙은 릴리스를 찾으세요. 커뮤니티에서 관리하는 [AUR 패키지](https://aur.archlinux.org/packages/cc-pocket-bin)를 `yay -S cc-pocket-bin`으로 설치할 수도 있습니다. |
-| **Windows(실험적)** | 최신 `.zip`은 [GitHub Releases](https://github.com/K9i-0/ccpocket/releases?q=windows)에서 다운로드할 수 있습니다. `windows/v*` 태그가 붙은 릴리스를 찾으세요. |
+| **iOS / iPadOS** | <a href="https://github.com/zwthys-cyber/ccpocket/releases?q=trollstore"><img height="40" alt="App Store에서 다운로드" src="docs/images/app-store-badge.svg" /></a> |
+| **Android** | <a href="https://play.google.com/store/apps/details?id=com.zwthys.ccpocket"><img height="40" alt="Google Play에서 받기" src="docs/images/google-play-badge-en.svg" /></a> |
+| **macOS** | 최신 `.dmg`는 [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=macos)에서 다운로드할 수 있습니다. `macos/v*` 태그가 붙은 릴리스를 찾으세요. Homebrew Cask를 사용해 `brew install --cask cc-pocket` 명령으로 설치할 수도 있습니다. |
+| **Linux(실험적)** | 최신 `.tar.gz`는 [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=linux)에서 다운로드할 수 있습니다. `linux/v*` 태그가 붙은 릴리스를 찾으세요. 커뮤니티에서 관리하는 [AUR 패키지](https://aur.archlinux.org/packages/cc-pocket-bin)를 `yay -S cc-pocket-bin`으로 설치할 수도 있습니다. |
+| **Windows(실험적)** | 최신 `.zip`은 [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=windows)에서 다운로드할 수 있습니다. `windows/v*` 태그가 붙은 릴리스를 찾으세요. |
 
 ## 무료로 사용할 수 있습니다
 
@@ -94,7 +94,7 @@ npx @ccpocket/bridge@1 setup
 ## 개발
 
 ```bash
-git clone https://github.com/K9i-0/ccpocket.git
+git clone https://github.com/zwthys-cyber/ccpocket.git
 cd ccpocket
 npm install
 cd apps/mobile && flutter pub get && cd ../..

@@ -102,7 +102,7 @@
             android:value="2" />
         <provider
             android:name="com.superlist.super_native_extensions.DataProvider"
-            android:authorities="com.k9i.ccpocket.SuperClipboardDataProvider"
+            android:authorities="com.zwthys.ccpocket.SuperClipboardDataProvider"
             android:exported="true"
             android:grantUriPermissions="true" />
     </application>

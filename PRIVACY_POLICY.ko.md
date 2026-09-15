@@ -83,9 +83,9 @@ ccpocket은 데이터를 사용자의 기기에만 저장하므로 다음을 할
 ## 문의
 
 이 개인정보 처리방침에 대한 질문이 있으면 다음 GitHub 이슈로 문의해 주세요:
-https://github.com/K9i-0/ccpocket/issues
+https://github.com/zwthys-cyber/ccpocket/issues
 
 ## 오픈 소스
 
 ccpocket은 오픈 소스입니다. 전체 소스 코드는 다음에서 확인할 수 있습니다:
-https://github.com/K9i-0/ccpocket
+https://github.com/zwthys-cyber/ccpocket

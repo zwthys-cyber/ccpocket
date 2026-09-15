@@ -28,7 +28,7 @@ Mac, Linux, Windows에서 Bridge Server를 실행하세요. QR 코드나 저장�
 연결 가능한 Bridge Server와 설정된 에이전트 계정이 필요합니다. CC Pocket은 무료로 사용할 수 있으며 선택적인 Supporter 구매로 개발을 지원할 수 있습니다. 에이전트 서비스 이용료는 별도입니다.
 
 CC Pocket은 오픈 소스이며 Anthropic 또는 OpenAI의 공식 앱이 아닙니다.
-https://github.com/K9i-0/ccpocket
+https://github.com/zwthys-cyber/ccpocket
 
 이용 약관
 https://www.apple.com/legal/internet-services/itunes/dev/stdeula/

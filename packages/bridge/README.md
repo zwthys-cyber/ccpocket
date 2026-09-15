@@ -2,7 +2,7 @@
 
 Bridge server that connects Claude sessions powered by the [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk) and [Codex CLI](https://github.com/openai/codex) to mobile devices via WebSocket.
 
-This is the server component of [ccpocket](https://github.com/K9i-0/ccpocket) — a mobile client for Claude and Codex.
+This is the server component of [ccpocket](https://github.com/zwthys-cyber/ccpocket) — a mobile client for Claude and Codex.
 
 ## Quick Start
 

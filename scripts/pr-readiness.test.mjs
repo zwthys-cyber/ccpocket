@@ -576,14 +576,14 @@ test('requires maintainer override for external review-policy changes', () => {
   const policyChange = {
     files: ['.coderabbit.yaml'],
     author: 'external-contributor',
-    maintainer: 'K9i-0',
+    maintainer: 'zwthys-cyber',
   };
   assert.equal(requiresReviewPolicyOverride({ ...policyChange, override: false }), true);
   assert.equal(requiresReviewPolicyOverride({ ...policyChange, override: true }), false);
   assert.equal(
     requiresReviewPolicyOverride({
       ...policyChange,
-      author: 'K9i-0',
+      author: 'zwthys-cyber',
       override: false,
     }),
     false,

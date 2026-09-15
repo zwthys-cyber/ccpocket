@@ -1,4 +1,4 @@
-package com.k9i.ccpocket
+package com.zwthys.ccpocket
 
 import android.content.ComponentName
 import android.content.pm.PackageManager

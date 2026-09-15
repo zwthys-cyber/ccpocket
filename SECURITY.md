@@ -11,7 +11,7 @@
 
 If you discover a security vulnerability, **please do not open a public issue**.
 
-Instead, report it privately via [GitHub Security Advisories](https://github.com/K9i-0/ccpocket/security/advisories/new).
+Instead, report it privately via [GitHub Security Advisories](https://github.com/zwthys-cyber/ccpocket/security/advisories/new).
 
 Please include:
 

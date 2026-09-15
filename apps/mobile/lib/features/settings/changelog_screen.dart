@@ -8,7 +8,7 @@ import '../../l10n/app_localizations.dart';
 import '../../theme/markdown_style.dart';
 
 const _changelogUrl =
-    'https://raw.githubusercontent.com/K9i-0/ccpocket/main/CHANGELOG.md';
+    'https://raw.githubusercontent.com/zwthys-cyber/ccpocket/main/CHANGELOG.md';
 
 @RoutePage()
 class ChangelogScreen extends StatefulWidget {
@@ -139,8 +139,9 @@ class _ChangelogScreenState extends State<ChangelogScreen> {
             children: [
               Text(
                 l.showAllMain,
-                style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(color: cs.onSurfaceVariant),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
               ),
               Switch(
                 value: _showAll,

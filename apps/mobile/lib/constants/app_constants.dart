@@ -16,17 +16,18 @@ class AppConstants {
   // ── External links ──
 
   /// Install landing page (redirects to App Store / Play Store on mobile)
-  static const String installUrl = 'https://k9i-0.github.io/ccpocket/install';
+  static const String installUrl =
+      'https://github.com/zwthys-cyber/ccpocket/releases';
 
   /// Primary share URL — uses install page for better mobile conversion
   static const String shareUrl = installUrl;
 
   /// GitHub repository URL
-  static const String githubUrl = 'https://github.com/K9i-0/ccpocket';
+  static const String githubUrl = 'https://github.com/zwthys-cyber/ccpocket';
 
   /// GitHub Releases filtered to macOS desktop builds
   static const String macOSReleasesUrl =
-      'https://github.com/K9i-0/ccpocket/releases?q=macos';
+      'https://github.com/zwthys-cyber/ccpocket/releases?q=macos';
 
   /// Claude API billing settings page
   static const String claudeApiBillingUrl =
@@ -38,19 +39,19 @@ class AppConstants {
 
   /// App Store URL (iOS)
   static const String appStoreUrl =
-      'https://apps.apple.com/us/app/cc-pocket-code-anywhere/id6759188790';
+      'https://github.com/zwthys-cyber/ccpocket/releases?q=trollstore';
 
   /// Play Store URL (Android)
   static const String playStoreUrl =
-      'https://play.google.com/store/apps/details?id=com.k9i.ccpocket';
+      'https://github.com/zwthys-cyber/ccpocket/releases?q=android';
 
   /// Public privacy policy page
   static const String privacyPolicyUrl =
-      'https://github.com/K9i-0/ccpocket/blob/main/PRIVACY_POLICY.md';
+      'https://github.com/zwthys-cyber/ccpocket/blob/main/PRIVACY_POLICY.md';
 
   /// Public Korean privacy policy page
   static const String privacyPolicyKoUrl =
-      'https://github.com/K9i-0/ccpocket/blob/main/PRIVACY_POLICY.ko.md';
+      'https://github.com/zwthys-cyber/ccpocket/blob/main/PRIVACY_POLICY.ko.md';
 
   /// Apple standard EULA for auto-renewable subscriptions
   static const String termsOfUseUrl =

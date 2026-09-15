@@ -5,7 +5,7 @@
 CodexとClaudeを、スマホのチャット感覚で。指示を出し、次の操作を承認し、結果を確認。
 タブレットやMacでも、同じ作業の続きを開けます。
 
-[CC Pocketを見る](https://k9i-0.github.io/ccpocket/install/?lang=ja) · 無料で利用 · オープンソース
+[CC Pocketを見る](https://zwthys-cyber.github.io/ccpocket/install/?lang=ja) · 無料で利用 · オープンソース
 
 [English README](README.md) | [简体中文版 README](README.zh-CN.md) | [한국어 README](README.ko.md)
 
@@ -29,11 +29,11 @@ npx @ccpocket/bridge@latest
 
 | プラットフォーム | インストール |
 |------------------|--------------|
-| **iOS / iPadOS** | <a href="https://apps.apple.com/jp/app/cc-pocket-%E3%81%A9%E3%81%93%E3%81%A7%E3%82%82%E3%82%B3%E3%83%BC%E3%83%87%E3%82%A3%E3%83%B3%E3%82%B0/id6759188790"><img height="40" alt="App Storeからダウンロード" src="docs/images/app-store-badge.svg" /></a> |
-| **Android** | <a href="https://play.google.com/store/apps/details?id=com.k9i.ccpocket"><img height="40" alt="Google Play で手に入れよう" src="docs/images/google-play-badge-ja.svg" /></a> |
-| **macOS** | 最新の `.dmg` は [GitHub Releases](https://github.com/K9i-0/ccpocket/releases?q=macos) からダウンロードできます。`macos/v*` タグのリリースを探してください。Homebrew Cask を用いて `brew install --cask cc-pocket` でインストールすることもできます。 |
-| **Linux（実験的）** | 最新の `.tar.gz` は [GitHub Releases](https://github.com/K9i-0/ccpocket/releases?q=linux) からダウンロードできます。`linux/v*` タグのリリースを探してください。コミュニティ管理の [AUR パッケージ](https://aur.archlinux.org/packages/cc-pocket-bin)を `yay -S cc-pocket-bin` でインストールすることもできます。 |
-| **Windows（実験的）** | 最新の `.zip` は [GitHub Releases](https://github.com/K9i-0/ccpocket/releases?q=windows) からダウンロードできます。`windows/v*` タグのリリースを探してください。 |
+| **iOS / iPadOS** | <a href="https://github.com/zwthys-cyber/ccpocket/releases?q=trollstore"><img height="40" alt="App Storeからダウンロード" src="docs/images/app-store-badge.svg" /></a> |
+| **Android** | <a href="https://play.google.com/store/apps/details?id=com.zwthys.ccpocket"><img height="40" alt="Google Play で手に入れよう" src="docs/images/google-play-badge-ja.svg" /></a> |
+| **macOS** | 最新の `.dmg` は [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=macos) からダウンロードできます。`macos/v*` タグのリリースを探してください。Homebrew Cask を用いて `brew install --cask cc-pocket` でインストールすることもできます。 |
+| **Linux（実験的）** | 最新の `.tar.gz` は [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=linux) からダウンロードできます。`linux/v*` タグのリリースを探してください。コミュニティ管理の [AUR パッケージ](https://aur.archlinux.org/packages/cc-pocket-bin)を `yay -S cc-pocket-bin` でインストールすることもできます。 |
+| **Windows（実験的）** | 最新の `.zip` は [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=windows) からダウンロードできます。`windows/v*` タグのリリースを探してください。 |
 
 ## 無料で利用できます
 
@@ -59,8 +59,8 @@ CC Pocket は MIT ライセンスです。完成済みアプリとして使う�
 - ローカルのエージェントツールや既存のセッション履歴との互換性を保ちながら、プロンプトや MCP より GUI が向いている業務機能を追加できます。
 - デスクトップ対応を拡張できます。macOS / Linux / Windows ビルドは現在利用できますが、Linux / Windows は継続検証環境が限定的なため experimental 扱いです。
 
-実装の詳細は [technical stack page](https://k9i-0.github.io/ccpocket/architecture/) または
-[agent-readable Markdown](https://k9i-0.github.io/ccpocket/architecture/stack.md) を参照してください。
+実装の詳細は [technical stack page](https://zwthys-cyber.github.io/ccpocket/architecture/) または
+[agent-readable Markdown](https://zwthys-cyber.github.io/ccpocket/architecture/stack.md) を参照してください。
 
 ## 仕組み
 
@@ -111,7 +111,7 @@ npx @ccpocket/bridge@1 setup
 ## 開発
 
 ```bash
-git clone https://github.com/K9i-0/ccpocket.git
+git clone https://github.com/zwthys-cyber/ccpocket.git
 cd ccpocket
 npm install
 cd apps/mobile && flutter pub get && cd ../..

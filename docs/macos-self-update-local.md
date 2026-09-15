@@ -163,7 +163,7 @@ bash scripts/macos-set-feed-override.sh
 - Sparkle cannot install updates when the app is run directly from a mounted
   disk image or while app translocation is in effect. Use `/Applications`.
 - Production releases use
-  `https://k9i-0.github.io/ccpocket/sparkle/appcast.xml` as the appcast URL.
+  `https://zwthys-cyber.github.io/ccpocket/sparkle/appcast.xml` as the appcast URL.
   The macOS release workflow signs the release DMG with the
   `SPARKLE_PRIVATE_KEY` GitHub Actions secret and deploys the generated
   `docs/sparkle/appcast.xml` artifact to GitHub Pages.

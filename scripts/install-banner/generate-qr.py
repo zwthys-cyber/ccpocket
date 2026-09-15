@@ -19,7 +19,7 @@ ICON_PATH = os.path.join(
     ROOT, "apps/mobile/fastlane/metadata/android/en-US/images/icon.png"
 )
 OUTPUT_QR = os.path.join(ROOT, "docs/images/install-qr.png")
-INSTALL_URL = "https://k9i-0.github.io/ccpocket/install"
+INSTALL_URL = "https://zwthys-cyber.github.io/ccpocket/install"
 
 
 def parse_args():

@@ -5,15 +5,15 @@
   "private": false,
   "type": "module",
   "license": "MIT",
-  "author": "K9i",
+  "author": "zwthys-cyber",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/K9i-0/ccpocket.git",
+    "url": "git+https://github.com/zwthys-cyber/ccpocket.git",
     "directory": "packages/bridge"
   },
-  "homepage": "https://github.com/K9i-0/ccpocket/tree/main/packages/bridge#readme",
+  "homepage": "https://github.com/zwthys-cyber/ccpocket/tree/main/packages/bridge#readme",
   "bugs": {
-    "url": "https://github.com/K9i-0/ccpocket/issues"
+    "url": "https://github.com/zwthys-cyber/ccpocket/issues"
   },
   "keywords": [
     "claude-code",

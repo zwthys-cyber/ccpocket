@@ -13,7 +13,7 @@
 import AppKit
 import Foundation
 
-let storeScreenshotBundleId = "com.k9i.ccpocket"
+let storeScreenshotBundleId = "com.zwthys.ccpocket"
 
 // MARK: - AX Helpers
 
