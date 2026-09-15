@@ -1,5 +1,8 @@
 # CC Pocket
 
+> 本仓库由 `zwthys-cyber` 维护。中文安装、TrollStore 和服务器连接说明请优先阅读
+> [简体中文文档](README.zh-CN.md)。
+
 **Your agents. In your pocket.**
 
 Codex and Claude, with a chat UI made for your phone. Start a task, approve the next
@@ -18,10 +21,16 @@ step, and review the result. Pick up the same work on your tablet or Mac.
 1. Install at least one agent CLI on the machine that will run your sessions:
    [Codex](https://github.com/openai/codex) or [Claude](https://docs.anthropic.com/en/docs/claude-code).
 2. Install [Node.js](https://nodejs.org/) 20.18.1 or newer on that same machine.
-3. Start the CC Pocket Bridge Server:
+3. Clone this fork and build its Bridge Server:
 
 ```bash
-npx @ccpocket/bridge@latest
+git clone https://github.com/zwthys-cyber/ccpocket.git
+cd ccpocket
+npm ci
+npm run bridge:build
+node packages/bridge/dist/cli.js setup \
+  --host 0.0.0.0 --port 8765 \
+  --api-key "$(openssl rand -hex 24)"
 ```
 
 4. Install CC Pocket and scan the QR code printed by the Bridge Server.
@@ -96,7 +105,7 @@ For access away from home or the office, Tailscale is the recommended setup:
 For an always-on host, the Bridge Server can also be registered as a background service:
 
 ```bash
-npx @ccpocket/bridge@1 setup
+node packages/bridge/dist/cli.js setup --host 0.0.0.0 --port 8765
 ```
 
 Service setup supports macOS launchd and Linux systemd.

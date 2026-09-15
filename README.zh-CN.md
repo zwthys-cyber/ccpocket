@@ -15,25 +15,44 @@
 
 ## 安装
 
+此分支由 `zwthys-cyber` 独立维护，应用标识为 `com.zwthys.ccpocket`。iOS 版本是
+无需 Apple Developer 账号的 TrollStore 未签名 IPA；目前没有 App Store、Google Play
+或官方推送服务。
+
 1. 在运行会话的主机上安装至少一个代理 CLI：
    [Codex](https://github.com/openai/codex) 或 [Claude](https://docs.anthropic.com/en/docs/claude-code)。
 2. 在同一台主机上安装 [Node.js](https://nodejs.org/) 20.18.1 或更高版本。
-3. 启动 CC Pocket Bridge Server：
+3. 克隆本仓库并构建属于此分支的 Bridge Server：
 
 ```bash
-npx @ccpocket/bridge@latest
+git clone https://github.com/zwthys-cyber/ccpocket.git
+cd ccpocket
+npm ci
+npm run bridge:build
 ```
 
-4. 安装 CC Pocket，并扫描 Bridge Server 打印出的二维码。
-5. 选择项目，再选择 Codex 或 Claude，然后从 App 启动会话。
+4. 生成 API Key，并把 Bridge 安装为后台服务：
+
+```bash
+node packages/bridge/dist/cli.js setup \
+  --host 0.0.0.0 --port 8765 \
+  --api-key "$(openssl rand -hex 24)"
+```
+
+请保存输出的 API Key。默认地址为 `ws://<服务器IP>:8765`，默认允许访问启动命令所在
+用户的目录。公网服务器必须使用防火墙、Tailscale 或 HTTPS/WSS 反向代理保护，不要把
+没有 API Key 的 8765 端口直接暴露到互联网。
+
+5. 从本仓库的 [Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=trollstore)
+   下载 TrollStore IPA 并安装。
+6. 在 App 中添加服务器，填写 `ws://<服务器IP>:8765` 和刚才保存的 API Key；也可以扫描
+   Bridge 输出的二维码。
+7. 选择项目，再选择 Codex 或 Claude，然后启动会话。
 
 | 平台 | 安装 |
 |------|------|
-| **iOS / iPadOS** | <a href="https://github.com/zwthys-cyber/ccpocket/releases?q=trollstore"><img height="40" alt="Download on the App Store" src="docs/images/app-store-badge.svg" /></a> |
-| **Android** | <a href="https://play.google.com/store/apps/details?id=com.zwthys.ccpocket"><img height="40" alt="Get it on Google Play" src="docs/images/google-play-badge-en.svg" /></a> |
-| **macOS** | 从 [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=macos) 下载最新 `.dmg`。请查找带有 `macos/v*` 标签的发行版。也可以使用 Homebrew Cask 通过 `brew install --cask cc-pocket` 安装。 |
-| **Linux（实验性）** | 从 [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=linux) 下载最新 `.tar.gz`。请查找带有 `linux/v*` 标签的发行版。也可以使用 `yay -S cc-pocket-bin` 安装由社区维护的 [AUR 软件包](https://aur.archlinux.org/packages/cc-pocket-bin)。 |
-| **Windows（实验性）** | 从 [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=windows) 下载最新 `.zip`。请查找带有 `windows/v*` 标签的发行版。 |
+| **iOS / iPadOS（TrollStore）** | 从 [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=trollstore) 下载最新未签名 IPA。 |
+| **Android / macOS / Linux / Windows** | 此分支暂未提供经过验证的公开安装包，可按开发说明自行构建。 |
 
 ## 免费使用
 
@@ -70,10 +89,10 @@ App 是操作界面。Bridge Server 在能够访问你的项目、shell、git �
 2. 加入同一个 tailnet
 3. 从 CC Pocket 连接 `ws://<host-tailscale-ip>:8765`
 
-对于长期在线的主机，也可以把 Bridge Server 注册为后台服务：
+对于长期在线的主机，也可以从仓库目录把 Bridge Server 注册为后台服务：
 
 ```bash
-npx @ccpocket/bridge@1 setup
+node packages/bridge/dist/cli.js setup --host 0.0.0.0 --port 8765
 ```
 
 服务化设置支持 macOS launchd 和 Linux systemd。
@@ -81,6 +100,11 @@ npx @ccpocket/bridge@1 setup
 [Bridge package README](packages/bridge/README.md#configuration)。
 
 ## 说明
+
+- 推送通知默认关闭。本分支不使用原作者的 Firebase/APNs。若以后拥有自己的推送基础设施，需同时配置
+  `BRIDGE_FIREBASE_API_KEY` 和 `BRIDGE_PUSH_RELAY_URL`，并在 iOS 工程中配置自己的 Firebase/APNs。
+- 应用内购买默认关闭；只有显式提供自己的 `REVENUECAT_PUBLIC_KEY` 才会启用 RevenueCat。
+- 本分支不使用原作者的 Shorebird 配置。
 
 - Claude 会话默认使用 `ANTHROPIC_API_KEY`。由于官方文档对此架构的适用范围尚不明确，
   订阅认证需要在 Bridge 上通过 `BRIDGE_ALLOW_CLAUDE_OAUTH=1` 明确启用。
