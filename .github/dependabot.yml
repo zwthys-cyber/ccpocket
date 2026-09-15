@@ -9,6 +9,9 @@ updates:
       prefix: "chore(ci)"
     labels:
       - "dependencies"
+    ignore:
+      # This fork does not use the upstream Shorebird release service.
+      - dependency-name: "shorebirdtech/setup-shorebird"
     open-pull-requests-limit: 5
   - package-ecosystem: "npm"
     directory: "/packages/bridge"
