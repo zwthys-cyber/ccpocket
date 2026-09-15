@@ -50,7 +50,7 @@ jobs:
             "$RUNNER_TEMP/CC-Pocket-TrollStore-unsigned.ipa"
 
       - name: Upload IPA
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: CC-Pocket-TrollStore-unsigned-${{ github.sha }}
           path: ${{ runner.temp }}/CC-Pocket-TrollStore-unsigned.ipa
