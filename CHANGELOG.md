@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.131.1] - 2026-09-15
+
+### Changed
+- Move repository, update, installation, support, and privacy links to the `zwthys-cyber/ccpocket` fork.
+- Change the application identifiers to `com.zwthys.ccpocket` and remove the upstream Apple development team.
+- Run the self-hosted Bridge from this repository instead of the upstream npm package.
+
+### Fixed
+- Disable upstream Firebase push relay, RevenueCat, and Shorebird configuration unless fork-owned credentials are supplied.
+- Prevent the legacy Bridge service from reclaiming port 8765 after a restart.
+
 ## [1.131.0] - 2026-09-14
 
 ### Added
