@@ -1,10 +1,12 @@
 name: Deploy GitHub Pages
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
       - 'docs/**'
+      - '.github/workflows/pages.yml'
 
 permissions:
   contents: read
@@ -32,11 +34,20 @@ jobs:
 
           APPCAST_PATH="docs/sparkle/appcast.xml"
           TMP_APPCAST="$(mktemp)"
+          trap 'rm -f "$TMP_APPCAST"' EXIT
 
-          curl --fail --location --show-error --silent \
+          HTTP_STATUS="$(curl --location --show-error --silent \
             --retry 3 --retry-delay 2 \
             "$SPARKLE_APPCAST_URL" \
-            --output "$TMP_APPCAST"
+            --output "$TMP_APPCAST" --write-out '%{http_code}')"
+          if [ "$HTTP_STATUS" = "404" ]; then
+            echo "No published Sparkle appcast; using the repository version."
+            exit 0
+          fi
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::error::Failed to download Sparkle appcast: HTTP $HTTP_STATUS"
+            exit 1
+          fi
 
           python3 - "$TMP_APPCAST" "$APPCAST_PATH" <<'PY'
           import shutil
