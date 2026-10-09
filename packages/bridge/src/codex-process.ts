@@ -24,7 +24,7 @@ import {
   normalizeCodexServiceTierForRpc,
 } from "./codex-service-tier.js";
 import { resolvePlatformPath } from "./path-utils.js";
-import type { CodexRateLimitsResponse } from "./usage.js";
+import type { CodexRateLimitsResponse, ResetOutcome } from "./usage.js";
 
 export { buildCodexSpawnSpec };
 
@@ -1019,6 +1019,17 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
       undefined,
       timeoutMs,
     )) as CodexRateLimitsResponse;
+  }
+
+  async consumeRateLimitReset(idempotencyKey: string, creditId?: string, timeoutMs = 10_000): Promise<ResetOutcome> {
+    const result = await this.request("account/rateLimitResetCredit/consume", {
+      idempotencyKey,
+      ...(creditId ? { creditId } : {}),
+    }, timeoutMs) as { outcome?: string };
+    if (!["reset", "alreadyRedeemed", "nothingToReset", "noCredit"].includes(result.outcome ?? "")) {
+      throw new Error("Unexpected Codex reset response");
+    }
+    return result.outcome as ResetOutcome;
   }
 
   waitUntilReady(): Promise<void> {

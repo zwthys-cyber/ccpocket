@@ -709,12 +709,14 @@ class UsageInfo {
   final UsageWindow? fiveHour;
   final UsageWindow? sevenDay;
   final String? error;
+  final UsageResetCredits? resetCredits;
 
   const UsageInfo({
     required this.provider,
     this.fiveHour,
     this.sevenDay,
     this.error,
+    this.resetCredits,
   });
 
   factory UsageInfo.fromJson(Map<String, dynamic> json) {
@@ -727,11 +729,63 @@ class UsageInfo {
           ? UsageWindow.fromJson(json['sevenDay'] as Map<String, dynamic>)
           : null,
       error: json['error'] as String?,
+      resetCredits: json['resetCredits'] is Map<String, dynamic>
+          ? UsageResetCredits.fromJson(json['resetCredits'] as Map<String, dynamic>)
+          : null,
     );
   }
 
   bool get hasData => fiveHour != null || sevenDay != null;
   bool get hasError => error != null && !hasData;
+}
+
+class UsageResetCredits {
+  final int availableCount;
+  final List<UsageResetCredit>? credits;
+  const UsageResetCredits({required this.availableCount, this.credits});
+
+  factory UsageResetCredits.fromJson(Map<String, dynamic> json) {
+    return UsageResetCredits(
+      availableCount: (json['availableCount'] as num).toInt(),
+      credits: (json['credits'] as List?)
+          ?.map((row) => UsageResetCredit.fromJson(row as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}
+
+class UsageResetCredit {
+  final String id;
+  final String resetType;
+  final String status;
+  final DateTime? grantedAt;
+  final DateTime? expiresAt;
+  final String? title;
+  final String? description;
+  const UsageResetCredit({
+    required this.id,
+    required this.resetType,
+    required this.status,
+    this.grantedAt,
+    this.expiresAt,
+    this.title,
+    this.description,
+  });
+
+  factory UsageResetCredit.fromJson(Map<String, dynamic> json) {
+    DateTime? timestamp(dynamic value) => value is num
+        ? DateTime.fromMillisecondsSinceEpoch((value * 1000).round(), isUtc: true)
+        : null;
+    return UsageResetCredit(
+      id: json['id'] as String,
+      resetType: json['resetType'] as String,
+      status: json['status'] as String,
+      grantedAt: timestamp(json['grantedAt']),
+      expiresAt: timestamp(json['expiresAt']),
+      title: json['title'] as String?,
+      description: json['description'] as String?,
+    );
+  }
 }
 
 // ---- Helpers ----
@@ -1253,6 +1307,11 @@ sealed class ServerMessage {
         providers: (json['providers'] as List)
             .map((p) => UsageInfo.fromJson(p as Map<String, dynamic>))
             .toList(),
+      ),
+      'usage_reset_result' => UsageResetResultMessage(
+        requestId: json['requestId'] as String,
+        outcome: json['outcome'] as String?,
+        error: json['error'] as String?,
       ),
       'recording_list' => RecordingListMessage(
         recordings: (json['recordings'] as List)
@@ -3396,6 +3455,13 @@ class UsageResultMessage implements ServerMessage {
   const UsageResultMessage({required this.providers});
 }
 
+class UsageResetResultMessage implements ServerMessage {
+  final String requestId;
+  final String? outcome;
+  final String? error;
+  const UsageResetResultMessage({required this.requestId, this.outcome, this.error});
+}
+
 class RecordingListMessage implements ServerMessage {
   final List<RecordingInfo> recordings;
   const RecordingListMessage({required this.recordings});
@@ -5340,6 +5406,13 @@ class ClientMessage {
       ClientMessage._({'type': 'list_windows'});
 
   factory ClientMessage.getUsage() => ClientMessage._({'type': 'get_usage'});
+
+  factory ClientMessage.consumeUsageReset({required String requestId, required String idempotencyKey, String? creditId}) => ClientMessage._({
+    'type': 'consume_usage_reset',
+    'requestId': requestId,
+    'idempotencyKey': idempotencyKey,
+    if (creditId != null) 'creditId': creditId,
+  });
 
   factory ClientMessage.listRecordings() =>
       ClientMessage._({'type': 'list_recordings'});

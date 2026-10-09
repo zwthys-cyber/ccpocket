@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.140.2] - 2026-10-09
+
+### Added
+- Display earned Codex limit-reset counts and expiration details below usage.
+- Redeem earned resets after confirmation, with persistent retry idempotency and refreshed usage.
+
 ## [1.140.1] - 2026-10-03
 
 ### Changed

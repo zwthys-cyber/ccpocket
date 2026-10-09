@@ -1382,5 +1382,41 @@
         "type": "int"
       }
     }
-  }
+  },
+  "usageResetTitle": "Limit resets",
+  "usageResetCount": "{count} reset opportunities available",
+  "@usageResetCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "usageResetDescription": "Use an earned reset to restore eligible 5-hour or weekly limits.",
+  "usageResetUse": "Use reset",
+  "usageResetOpportunity": "Rate-limit reset",
+  "usageResetExpires": "Expires {time}",
+  "@usageResetExpires": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "usageResetGranted": "Granted {time}",
+  "@usageResetGranted": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "usageResetNoExpiry": "No expiration time provided",
+  "usageResetUnavailable": "Reset information unavailable. Update the Bridge and Codex CLI if needed.",
+  "usageResetConfirm": "This will consume one earned reset. Continue?",
+  "usageResetSuccess": "Limits refreshed after reset.",
+  "usageResetNothing": "No limit is currently eligible for a reset.",
+  "usageResetNoCredit": "No reset opportunities are available.",
+  "usageResetUnsupported": "Update the Bridge and Codex CLI to use resets.",
+  "usageResetFailed": "Reset could not be confirmed. Refresh usage before retrying."
 }

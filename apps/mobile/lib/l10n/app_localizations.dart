@@ -6076,6 +6076,36 @@ abstract class AppLocalizations {
   /// In ja, this message translates to:
   /// **'{days}日{hours}時間'**
   String liteModeDurationDays(int days, int hours);
+
+  String get usageResetTitle;
+
+  String usageResetCount(int count);
+
+  String get usageResetDescription;
+
+  String get usageResetUse;
+
+  String get usageResetOpportunity;
+
+  String usageResetExpires(String time);
+
+  String usageResetGranted(String time);
+
+  String get usageResetNoExpiry;
+
+  String get usageResetUnavailable;
+
+  String get usageResetConfirm;
+
+  String get usageResetSuccess;
+
+  String get usageResetNothing;
+
+  String get usageResetNoCredit;
+
+  String get usageResetUnsupported;
+
+  String get usageResetFailed;
 }
 
 class _AppLocalizationsDelegate

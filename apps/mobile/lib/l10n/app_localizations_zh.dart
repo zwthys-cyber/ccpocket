@@ -3191,4 +3191,49 @@ class AppLocalizationsZh extends AppLocalizations {
   String liteModeDurationDays(int days, int hours) {
     return '$days天$hours小时';
   }
+
+  @override
+String get usageResetTitle => '限额重置';
+
+  @override
+String usageResetCount(int count) => '可用重置机会：${count} 次';
+
+  @override
+String get usageResetDescription => '使用重置机会可恢复符合条件的5小时限额、每周限额或两者。';
+
+  @override
+String get usageResetUse => '使用重置次数';
+
+  @override
+String get usageResetOpportunity => '限额重置机会';
+
+  @override
+String usageResetExpires(String time) => '${time} 到期';
+
+  @override
+String usageResetGranted(String time) => '${time} 获得';
+
+  @override
+String get usageResetNoExpiry => '未提供到期时间';
+
+  @override
+String get usageResetUnavailable => '暂未获取重置机会信息；可能需要更新Bridge和Codex CLI。';
+
+  @override
+String get usageResetConfirm => '这将消耗一次重置机会并恢复符合条件的限额，是否继续？';
+
+  @override
+String get usageResetSuccess => '已使用重置机会，正在刷新限额。';
+
+  @override
+String get usageResetNothing => '当前没有符合重置条件的限额。';
+
+  @override
+String get usageResetNoCredit => '当前没有可用的重置机会。';
+
+  @override
+String get usageResetUnsupported => '请更新Bridge和Codex CLI后再使用重置功能。';
+
+  @override
+String get usageResetFailed => '未能确认重置结果，请刷新用量后再重试。';
 }

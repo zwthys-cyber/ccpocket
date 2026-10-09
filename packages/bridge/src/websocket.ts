@@ -119,7 +119,7 @@ import { RecordingStore } from "./recording-store.js";
 import { PushRelayClient } from "./push-relay.js";
 import type { FirebaseAuthClient } from "./firebase-auth.js";
 import { type PushLocale, normalizePushLocale, t } from "./push-i18n.js";
-import { fetchAllUsage } from "./usage.js";
+import { consumeCodexReset, fetchAllUsage } from "./usage.js";
 import type { PromptHistoryBackupStore } from "./prompt-history-backup.js";
 import type { PromptHistoryStore } from "./prompt-history-store.js";
 import { getPackageVersion } from "./version.js";
@@ -5240,6 +5240,21 @@ export class BridgeWebSocketServer {
             this.send(ws, {
               type: "error",
               message: `Failed to fetch usage: ${err}`,
+            });
+          });
+        break;
+      }
+
+      case "consume_usage_reset": {
+        consumeCodexReset(msg.idempotencyKey, msg.creditId)
+          .then((outcome) => {
+            this.send(ws, { type: "usage_reset_result", requestId: msg.requestId, outcome });
+          })
+          .catch((err) => {
+            this.send(ws, {
+              type: "usage_reset_result",
+              requestId: msg.requestId,
+              error: err instanceof Error ? err.message : String(err),
             });
           });
         break;

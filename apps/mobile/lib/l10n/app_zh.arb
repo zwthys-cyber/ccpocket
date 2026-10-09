@@ -1420,5 +1420,41 @@
   "liteModeDurationSeconds": "{seconds}秒",
   "liteModeDurationMinutes": "{minutes}分{seconds}秒",
   "liteModeDurationHours": "{hours}小时{minutes}分",
-  "liteModeDurationDays": "{days}天{hours}小时"
+  "liteModeDurationDays": "{days}天{hours}小时",
+  "usageResetTitle": "限额重置",
+  "usageResetCount": "可用重置机会：{count} 次",
+  "@usageResetCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "usageResetDescription": "使用重置机会可恢复符合条件的5小时限额、每周限额或两者。",
+  "usageResetUse": "使用重置次数",
+  "usageResetOpportunity": "限额重置机会",
+  "usageResetExpires": "{time} 到期",
+  "@usageResetExpires": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "usageResetGranted": "{time} 获得",
+  "@usageResetGranted": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "usageResetNoExpiry": "未提供到期时间",
+  "usageResetUnavailable": "暂未获取重置机会信息；可能需要更新Bridge和Codex CLI。",
+  "usageResetConfirm": "这将消耗一次重置机会并恢复符合条件的限额，是否继续？",
+  "usageResetSuccess": "已使用重置机会，正在刷新限额。",
+  "usageResetNothing": "当前没有符合重置条件的限额。",
+  "usageResetNoCredit": "当前没有可用的重置机会。",
+  "usageResetUnsupported": "请更新Bridge和Codex CLI后再使用重置功能。",
+  "usageResetFailed": "未能确认重置结果，请刷新用量后再重试。"
 }

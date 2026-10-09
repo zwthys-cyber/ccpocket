@@ -3362,4 +3362,49 @@ class AppLocalizationsEn extends AppLocalizations {
   String liteModeDurationDays(int days, int hours) {
     return '${days}d ${hours}h';
   }
+
+  @override
+String get usageResetTitle => 'Limit resets';
+
+  @override
+String usageResetCount(int count) => '${count} reset opportunities available';
+
+  @override
+String get usageResetDescription => 'Use an earned reset to restore eligible 5-hour or weekly limits.';
+
+  @override
+String get usageResetUse => 'Use reset';
+
+  @override
+String get usageResetOpportunity => 'Rate-limit reset';
+
+  @override
+String usageResetExpires(String time) => 'Expires ${time}';
+
+  @override
+String usageResetGranted(String time) => 'Granted ${time}';
+
+  @override
+String get usageResetNoExpiry => 'No expiration time provided';
+
+  @override
+String get usageResetUnavailable => 'Reset information unavailable. Update the Bridge and Codex CLI if needed.';
+
+  @override
+String get usageResetConfirm => 'This will consume one earned reset. Continue?';
+
+  @override
+String get usageResetSuccess => 'Limits refreshed after reset.';
+
+  @override
+String get usageResetNothing => 'No limit is currently eligible for a reset.';
+
+  @override
+String get usageResetNoCredit => 'No reset opportunities are available.';
+
+  @override
+String get usageResetUnsupported => 'Update the Bridge and Codex CLI to use resets.';
+
+  @override
+String get usageResetFailed => 'Reset could not be confirmed. Refresh usage before retrying.';
 }

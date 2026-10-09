@@ -418,6 +418,7 @@ export type ClientMessage =
       includeDiff?: boolean;
     }
   | { type: "get_usage" }
+  | { type: "consume_usage_reset"; requestId: string; idempotencyKey: string; creditId?: string }
   | { type: "list_recordings" }
   | { type: "get_recording"; sessionId: string }
   | { type: "get_message_images"; claudeSessionId: string; messageUuid: string }
@@ -956,6 +957,7 @@ export type ServerMessage =
       savedBundlePath?: string;
     }
   | { type: "usage_result"; providers: UsageInfoPayload[] }
+  | { type: "usage_reset_result"; requestId: string; outcome?: string; error?: string }
   | { type: "message_images_result"; messageUuid: string; images: ImageRef[] }
   | {
       type: "prompt_history_backup_result";
@@ -1145,6 +1147,7 @@ export interface UsageInfoPayload {
   fiveHour: UsageWindowPayload | null;
   sevenDay: UsageWindowPayload | null;
   error?: string;
+  resetCredits?: import("./usage.js").CodexResetCredits | null;
 }
 
 export type ProcessStatus =
@@ -1982,6 +1985,11 @@ export function parseClientMessage(data: string): ClientMessage | null {
           return null;
         break;
       case "get_usage":
+        break;
+      case "consume_usage_reset":
+        if (typeof msg.requestId !== "string" || !msg.requestId.trim() || msg.requestId.length > 128) return null;
+        if (typeof msg.idempotencyKey !== "string" || !msg.idempotencyKey.trim() || msg.idempotencyKey.length > 128) return null;
+        if (msg.creditId !== undefined && (typeof msg.creditId !== "string" || !msg.creditId.trim() || msg.creditId.length > 512)) return null;
         break;
       case "list_recordings":
         break;

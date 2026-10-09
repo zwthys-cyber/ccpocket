@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchAllUsage, fetchCodexUsage, isGlobalCodexRateLimit, mapCodexRateLimits } from "./usage.js";
+import { consumeCodexReset, fetchAllUsage, fetchCodexUsage, isGlobalCodexRateLimit, mapCodexRateLimits } from "./usage.js";
 
 const fiveHourWindow = {
   usedPercent: 35,
@@ -69,10 +69,11 @@ describe("isGlobalCodexRateLimit", () => {
   });
 });
 
-const { initializeMock, readMock, stopMock } = vi.hoisted(() => ({
+const { initializeMock, readMock, stopMock, consumeMock } = vi.hoisted(() => ({
   initializeMock: vi.fn(),
   readMock: vi.fn(),
   stopMock: vi.fn(),
+  consumeMock: vi.fn(),
 }));
 
 vi.mock("./codex-process.js", () => ({
@@ -80,6 +81,7 @@ vi.mock("./codex-process.js", () => ({
     initializeOnly = initializeMock;
     readRateLimits = readMock;
     stop = stopMock;
+    consumeRateLimitReset = consumeMock;
   },
 }));
 
@@ -88,6 +90,23 @@ describe("fetchCodexUsage", () => {
     vi.resetAllMocks();
     initializeMock.mockResolvedValue(undefined);
     readMock.mockResolvedValue({ rateLimits: { primary: sevenDayWindow } });
+  });
+
+  it("preserves the authoritative reset count when detail rows are absent", async () => {
+    readMock.mockResolvedValue({
+      rateLimits: { primary: sevenDayWindow },
+      rateLimitResetCredits: { availableCount: 3, credits: null },
+    });
+    expect((await fetchCodexUsage()).resetCredits).toEqual({ availableCount: 3, credits: null });
+  });
+
+  it("distinguishes unsupported reset information from zero available credits", async () => {
+    expect((await fetchCodexUsage()).resetCredits).toBeNull();
+    readMock.mockResolvedValue({
+      rateLimits: { primary: sevenDayWindow },
+      rateLimitResetCredits: { availableCount: 0, credits: [] },
+    });
+    expect((await fetchCodexUsage()).resetCredits).toEqual({ availableCount: 0, credits: [] });
   });
 
   it("reads fresh account limits on each refresh without a session", async () => {
@@ -151,5 +170,30 @@ describe("fetchCodexUsage", () => {
       fiveHour: null, sevenDay: null, error: expect.any(String),
     });
     expect(stopMock).toHaveBeenCalledOnce();
+  });
+});
+
+describe("consumeCodexReset", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    initializeMock.mockResolvedValue(undefined);
+    consumeMock.mockResolvedValue("reset");
+  });
+
+  it("shares concurrent redemptions of the same logical attempt", async () => {
+    const first = consumeCodexReset("attempt-1", "credit-1");
+    const second = consumeCodexReset("attempt-1", "credit-1");
+    expect(first).toBe(second);
+    expect(await first).toBe("reset");
+    expect(consumeMock).toHaveBeenCalledExactlyOnceWith("attempt-1", "credit-1", 10_000);
+    expect(stopMock).toHaveBeenCalledOnce();
+  });
+
+  it("cleans up a failed operation and reuses the caller's key on retry", async () => {
+    consumeMock.mockRejectedValueOnce(new Error("Timeout"));
+    await expect(consumeCodexReset("attempt-2")).rejects.toThrow("Timeout");
+    expect(await consumeCodexReset("attempt-2")).toBe("reset");
+    expect(consumeMock).toHaveBeenCalledTimes(2);
+    expect(stopMock).toHaveBeenCalledTimes(2);
   });
 });

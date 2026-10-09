@@ -13,7 +13,25 @@ export interface UsageInfo {
   fiveHour: UsageWindow | null;
   sevenDay: UsageWindow | null;
   error?: string;
+  resetCredits?: CodexResetCredits | null;
 }
+
+export interface CodexResetCredit {
+  id: string;
+  resetType: string;
+  status: string;
+  grantedAt: number;
+  expiresAt: number | null;
+  title: string | null;
+  description: string | null;
+}
+
+export interface CodexResetCredits {
+  availableCount: number;
+  credits: CodexResetCredit[] | null;
+}
+
+export type ResetOutcome = "reset" | "alreadyRedeemed" | "nothingToReset" | "noCredit";
 
 // ── Codex ──
 
@@ -32,6 +50,7 @@ export interface CodexRateLimits {
 export interface CodexRateLimitsResponse {
   rateLimits: CodexRateLimits;
   rateLimitsByLimitId?: Record<string, CodexRateLimits> | null;
+  rateLimitResetCredits?: CodexResetCredits | null;
 }
 
 const FIVE_HOUR_WINDOW_MINUTES = 5 * 60;
@@ -111,7 +130,7 @@ async function readCodexUsage(): Promise<UsageInfo> {
     if (!windows.fiveHour && !windows.sevenDay) {
       throw new Error("No supported Codex usage windows returned by app-server");
     }
-    return { provider: "codex", ...windows };
+    return { provider: "codex", ...windows, resetCredits: response.rateLimitResetCredits ?? null };
   } catch (err) {
     return {
       provider: "codex",
@@ -119,6 +138,28 @@ async function readCodexUsage(): Promise<UsageInfo> {
       sevenDay: null,
       error: `Failed to fetch Codex usage: ${err instanceof Error ? err.message : String(err)}`,
     };
+  } finally {
+    proc.stop();
+  }
+}
+
+const pendingResets = new Map<string, Promise<ResetOutcome>>();
+
+export function consumeCodexReset(idempotencyKey: string, creditId?: string): Promise<ResetOutcome> {
+  const pending = pendingResets.get(idempotencyKey);
+  if (pending) return pending;
+  const operation = redeemCodexReset(idempotencyKey, creditId).finally(() => {
+    pendingResets.delete(idempotencyKey);
+  });
+  pendingResets.set(idempotencyKey, operation);
+  return operation;
+}
+
+async function redeemCodexReset(idempotencyKey: string, creditId?: string): Promise<ResetOutcome> {
+  const proc = new CodexProcess();
+  try {
+    await proc.initializeOnly(homedir(), USAGE_RPC_TIMEOUT_MS);
+    return await proc.consumeRateLimitReset(idempotencyKey, creditId, USAGE_RPC_TIMEOUT_MS);
   } finally {
     proc.stop();
   }

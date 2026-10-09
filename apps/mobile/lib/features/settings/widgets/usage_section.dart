@@ -12,6 +12,7 @@ import '../../../theme/app_theme.dart';
 import '../models/usage_pace.dart';
 import '../state/settings_cubit.dart';
 import '../state/settings_state.dart';
+import 'usage_reset_card.dart';
 
 /// Settings セクション: Codex 利用量表示 + Claude 公式ページ導線
 class UsageSection extends StatefulWidget {
@@ -186,6 +187,14 @@ class _UsageSectionState extends State<UsageSection> {
             ),
           ),
         const SizedBox(height: 8),
+        if (codexInfo != null) ...[
+          UsageResetCard(
+            credits: codexInfo.resetCredits,
+            bridgeService: widget.bridgeService,
+            onRefresh: () => _fetchUsage(force: true),
+          ),
+          const SizedBox(height: 8),
+        ],
         const _ClaudeUsageLinksCard(),
       ],
     );

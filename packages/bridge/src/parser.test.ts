@@ -1,6 +1,20 @@
 import { describe, it, expect } from "vitest";
 import { normalizeToolResultContent, parseClientMessage } from "./parser.js";
 
+describe("consume_usage_reset validation", () => {
+  const valid = { type: "consume_usage_reset", requestId: "request-1", idempotencyKey: "attempt-1", creditId: "credit-1" };
+  it("accepts a correlated reset attempt with an optional credit ID", () => {
+    expect(parseClientMessage(JSON.stringify(valid))).toEqual(valid);
+    expect(parseClientMessage(JSON.stringify({ ...valid, creditId: undefined }))).not.toBeNull();
+  });
+  it.each([
+    { requestId: "" }, { idempotencyKey: " " }, { creditId: "" },
+    { creditId: 42 }, { idempotencyKey: "x".repeat(129) },
+  ])("rejects malformed reset attempts: %j", (override) => {
+    expect(parseClientMessage(JSON.stringify({ ...valid, ...override }))).toBeNull();
+  });
+});
+
 // ---- normalizeToolResultContent ----
 
 describe("normalizeToolResultContent", () => {

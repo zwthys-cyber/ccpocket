@@ -36,7 +36,7 @@ jobs:
 
       - name: Test usage display
         working-directory: apps/mobile
-        run: flutter test test/settings_usage_visibility_test.dart test/usage_pace_test.dart test/codex_usage_summary_test.dart
+        run: flutter test test/settings_usage_visibility_test.dart test/usage_pace_test.dart test/codex_usage_summary_test.dart test/usage_reset_card_test.dart
 
       - name: Build unsigned iOS app
         working-directory: apps/mobile
