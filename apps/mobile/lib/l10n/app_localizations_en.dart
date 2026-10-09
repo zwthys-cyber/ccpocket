@@ -3364,47 +3364,58 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-String get usageResetTitle => 'Limit resets';
+  String get usageResetTitle => 'Limit resets';
 
   @override
-String usageResetCount(int count) => '${count} reset opportunities available';
+  String usageResetCount(int count) {
+    return '$count reset opportunities available';
+  }
 
   @override
-String get usageResetDescription => 'Use an earned reset to restore eligible 5-hour or weekly limits.';
+  String get usageResetDescription =>
+      'Use an earned reset to restore eligible 5-hour or weekly limits.';
 
   @override
-String get usageResetUse => 'Use reset';
+  String get usageResetUse => 'Use reset';
 
   @override
-String get usageResetOpportunity => 'Rate-limit reset';
+  String get usageResetOpportunity => 'Rate-limit reset';
 
   @override
-String usageResetExpires(String time) => 'Expires ${time}';
+  String usageResetExpires(String time) {
+    return 'Expires $time';
+  }
 
   @override
-String usageResetGranted(String time) => 'Granted ${time}';
+  String usageResetGranted(String time) {
+    return 'Granted $time';
+  }
 
   @override
-String get usageResetNoExpiry => 'No expiration time provided';
+  String get usageResetNoExpiry => 'No expiration time provided';
 
   @override
-String get usageResetUnavailable => 'Reset information unavailable. Update the Bridge and Codex CLI if needed.';
+  String get usageResetUnavailable =>
+      'Reset information unavailable. Update the Bridge and Codex CLI if needed.';
 
   @override
-String get usageResetConfirm => 'This will consume one earned reset. Continue?';
+  String get usageResetConfirm =>
+      'This will consume one earned reset. Continue?';
 
   @override
-String get usageResetSuccess => 'Limits refreshed after reset.';
+  String get usageResetSuccess => 'Limits refreshed after reset.';
 
   @override
-String get usageResetNothing => 'No limit is currently eligible for a reset.';
+  String get usageResetNothing => 'No limit is currently eligible for a reset.';
 
   @override
-String get usageResetNoCredit => 'No reset opportunities are available.';
+  String get usageResetNoCredit => 'No reset opportunities are available.';
 
   @override
-String get usageResetUnsupported => 'Update the Bridge and Codex CLI to use resets.';
+  String get usageResetUnsupported =>
+      'Update the Bridge and Codex CLI to use resets.';
 
   @override
-String get usageResetFailed => 'Reset could not be confirmed. Refresh usage before retrying.';
+  String get usageResetFailed =>
+      'Reset could not be confirmed. Refresh usage before retrying.';
 }

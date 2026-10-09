@@ -6077,34 +6077,94 @@ abstract class AppLocalizations {
   /// **'{days}日{hours}時間'**
   String liteModeDurationDays(int days, int hours);
 
+  /// No description provided for @usageResetTitle.
+  ///
+  /// In ja, this message translates to:
+  /// **'Limit resets'**
   String get usageResetTitle;
 
+  /// No description provided for @usageResetCount.
+  ///
+  /// In ja, this message translates to:
+  /// **'{count} reset opportunities available'**
   String usageResetCount(int count);
 
+  /// No description provided for @usageResetDescription.
+  ///
+  /// In ja, this message translates to:
+  /// **'Use an earned reset to restore eligible 5-hour or weekly limits.'**
   String get usageResetDescription;
 
+  /// No description provided for @usageResetUse.
+  ///
+  /// In ja, this message translates to:
+  /// **'Use reset'**
   String get usageResetUse;
 
+  /// No description provided for @usageResetOpportunity.
+  ///
+  /// In ja, this message translates to:
+  /// **'Rate-limit reset'**
   String get usageResetOpportunity;
 
+  /// No description provided for @usageResetExpires.
+  ///
+  /// In ja, this message translates to:
+  /// **'Expires {time}'**
   String usageResetExpires(String time);
 
+  /// No description provided for @usageResetGranted.
+  ///
+  /// In ja, this message translates to:
+  /// **'Granted {time}'**
   String usageResetGranted(String time);
 
+  /// No description provided for @usageResetNoExpiry.
+  ///
+  /// In ja, this message translates to:
+  /// **'No expiration time provided'**
   String get usageResetNoExpiry;
 
+  /// No description provided for @usageResetUnavailable.
+  ///
+  /// In ja, this message translates to:
+  /// **'Reset information unavailable. Update the Bridge and Codex CLI if needed.'**
   String get usageResetUnavailable;
 
+  /// No description provided for @usageResetConfirm.
+  ///
+  /// In ja, this message translates to:
+  /// **'This will consume one earned reset. Continue?'**
   String get usageResetConfirm;
 
+  /// No description provided for @usageResetSuccess.
+  ///
+  /// In ja, this message translates to:
+  /// **'Limits refreshed after reset.'**
   String get usageResetSuccess;
 
+  /// No description provided for @usageResetNothing.
+  ///
+  /// In ja, this message translates to:
+  /// **'No limit is currently eligible for a reset.'**
   String get usageResetNothing;
 
+  /// No description provided for @usageResetNoCredit.
+  ///
+  /// In ja, this message translates to:
+  /// **'No reset opportunities are available.'**
   String get usageResetNoCredit;
 
+  /// No description provided for @usageResetUnsupported.
+  ///
+  /// In ja, this message translates to:
+  /// **'Update the Bridge and Codex CLI to use resets.'**
   String get usageResetUnsupported;
 
+  /// No description provided for @usageResetFailed.
+  ///
+  /// In ja, this message translates to:
+  /// **'Reset could not be confirmed. Refresh usage before retrying.'**
   String get usageResetFailed;
 }
 
