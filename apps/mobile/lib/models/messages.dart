@@ -5411,7 +5411,7 @@ class ClientMessage {
     'type': 'consume_usage_reset',
     'requestId': requestId,
     'idempotencyKey': idempotencyKey,
-    if (creditId != null) 'creditId': creditId,
+    'creditId': ?creditId,
   });
 
   factory ClientMessage.listRecordings() =>
