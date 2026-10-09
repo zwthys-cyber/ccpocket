@@ -8485,6 +8485,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
   });
 
   it("sends push notification once per permission toolUseId", async () => {
+    vi.stubEnv("BRIDGE_PUSH_RELAY_URL", "https://relay.example.com/push");
     const fetchMock = vi.fn(async () => new Response("", { status: 200 }));
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
     const mockAuth = {
@@ -8524,6 +8525,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
   });
 
   it("sends push notification for successful result and skips stopped result", async () => {
+    vi.stubEnv("BRIDGE_PUSH_RELAY_URL", "https://relay.example.com/push");
     const fetchMock = vi.fn(async () => new Response("", { status: 200 }));
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
     const mockAuth = {
@@ -8561,6 +8563,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
   });
 
   it("shares Goal policy with Push and uses distinct progress and completion copy", async () => {
+    vi.stubEnv("BRIDGE_PUSH_RELAY_URL", "https://relay.example.com/push");
     const fetchMock = vi.fn(async () => new Response("", { status: 200 }));
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
     const bridge = new BridgeWebSocketServer({ server: httpServer, firebaseAuth: {
@@ -8580,6 +8583,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
   });
 
   it("does not notify the relay without an active token registration", async () => {
+    vi.stubEnv("BRIDGE_PUSH_RELAY_URL", "https://relay.example.com/push");
     const fetchMock = vi.fn(async () => new Response("", { status: 200 }));
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
     const mockAuth = {
@@ -8604,6 +8608,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
   });
 
   it("excludes pending tokens from relay notification allowlists", async () => {
+    vi.stubEnv("BRIDGE_PUSH_RELAY_URL", "https://relay.example.com/push");
     const fetchMock = vi.fn(async () => new Response("", { status: 200 }));
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
     const mockAuth = {
