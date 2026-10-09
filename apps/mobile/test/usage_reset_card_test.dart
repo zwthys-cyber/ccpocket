@@ -75,7 +75,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
     expect(bridge.refreshed.isCompleted, isTrue,
-        reason: 'The mocked reset must complete and refresh usage.');
+        reason: 'The mocked reset must complete and refresh usage. Sent requests: ${bridge.sent.length}; response listeners: ${bridge.events.hasListener}.');
     await tester.pumpAndSettle();
   }
 

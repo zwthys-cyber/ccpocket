@@ -118,8 +118,10 @@ class _UsageResetCardState extends State<UsageResetCard> {
     } catch (_) {
       message = l.usageResetFailed;
     } finally {
-      await responseSub?.cancel();
-      await connectionSub?.cancel();
+      // Cancellation stops delivery immediately; stream cleanup must not delay
+      // displaying the result or refreshing the account's usage.
+      unawaited(responseSub?.cancel());
+      unawaited(connectionSub?.cancel());
       if (mounted) {
         setState(() {
           _busy = false;
