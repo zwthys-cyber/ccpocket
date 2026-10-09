@@ -35,6 +35,15 @@ class _UsageResetCardState extends State<UsageResetCard> {
     if (oldWidget.credits != widget.credits) _awaitingRefresh = false;
   }
 
+  String _creditTitle(UsageResetCredit credit, AppLocalizations l) {
+    final title = credit.title;
+    if (Localizations.localeOf(context).languageCode == 'zh' &&
+        title?.trim() == 'Full reset (Weekly + 5 hr)') {
+      return '完全重置（每周 + 5小时）';
+    }
+    return title ?? l.usageResetOpportunity;
+  }
+
   String _date(DateTime value) {
     final local = value.toLocal();
     final offset = local.timeZoneOffset;
@@ -161,7 +170,7 @@ class _UsageResetCardState extends State<UsageResetCard> {
               Text(l.usageResetDescription),
               for (final credit in available) ...[
                 const Divider(height: 24),
-                Text(credit.title ?? l.usageResetOpportunity),
+                Text(_creditTitle(credit, l)),
                 if (credit.grantedAt != null) Text(l.usageResetGranted(_date(credit.grantedAt!))),
                 Text(credit.expiresAt == null ? l.usageResetNoExpiry : l.usageResetExpires(_date(credit.expiresAt!))),
                 TextButton(
