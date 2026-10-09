@@ -97,7 +97,7 @@ jobs:
         # v5 uses the App Store Connect API backend by default. Keep processing
         # polling disabled because the upload succeeds, but the polling request
         # returns 401 with the current App Store Connect API key.
-        uses: apple-actions/upload-testflight-build@1fc69ca369a60b813eaaa2d936eda22794b52e17 # v5.4.0
+        uses: apple-actions/upload-testflight-build@65a84cdb671ee2ccfa93710cd58e8f7b5d251967 # v5.5.1
         with:
           app-path: ${{ steps.find_ipa.outputs.ipa_path }}
           issuer-id: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
