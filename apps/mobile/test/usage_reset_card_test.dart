@@ -14,6 +14,7 @@ class _Bridge extends BridgeService {
   final connections = StreamController<BridgeConnectionState>.broadcast();
   final sent = <Map<String, dynamic>>[];
   String? outcome;
+  Completer<void> refreshed = Completer<void>();
 
   @override
   bool get isConnected => true;
@@ -42,9 +43,13 @@ class _Bridge extends BridgeService {
 }
 
 void main() {
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    await SharedPreferences.getInstance();
+  });
 
   Future<void> pump(WidgetTester tester, _Bridge bridge, UsageResetCredits? credits, {VoidCallback? refresh}) async {
+    bridge.refreshed = Completer<void>();
     await tester.pumpWidget(MaterialApp(
       locale: const Locale('zh'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -52,9 +57,23 @@ void main() {
       home: Scaffold(body: UsageResetCard(
         credits: credits,
         bridgeService: bridge,
-        onRefresh: refresh ?? () {},
+        onRefresh: () {
+          if (!bridge.refreshed.isCompleted) bridge.refreshed.complete();
+          refresh?.call();
+        },
       )),
     ));
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> confirm(WidgetTester tester, _Bridge bridge) async {
+    // The action uses asynchronous preference storage. Allow its real async
+    // work to complete before waiting for the loading animation to settle.
+    await tester.runAsync(() async {
+      await tester.tap(find.widgetWithText(FilledButton, '使用重置次数'));
+      await tester.pump();
+      await bridge.refreshed.future.timeout(const Duration(seconds: 5));
+    });
     await tester.pumpAndSettle();
   }
 
@@ -75,8 +94,7 @@ void main() {
     await tester.tap(find.text('使用重置次数'));
     await tester.pumpAndSettle();
     expect(bridge.sent, isEmpty);
-    await tester.tap(find.widgetWithText(FilledButton, '使用重置次数'));
-    await tester.pumpAndSettle();
+    await confirm(tester, bridge);
     expect(bridge.sent.single['type'], 'consume_usage_reset');
     expect(bridge.sent.single['creditId'], isNull);
     expect(refreshes, 1);
@@ -91,8 +109,7 @@ void main() {
       await pump(tester, bridge, credits);
       await tester.tap(find.text('使用重置次数'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, '使用重置次数'));
-      await tester.pumpAndSettle();
+      await confirm(tester, bridge);
     }
     expect(bridge.sent, hasLength(2));
     expect(bridge.sent[0]['idempotencyKey'], bridge.sent[1]['idempotencyKey']);
@@ -113,8 +130,7 @@ void main() {
     await pump(tester, bridge, const UsageResetCredits(availableCount: 3));
     await tester.tap(find.text('使用重置次数'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, '使用重置次数'));
-    await tester.pumpAndSettle();
+    await confirm(tester, bridge);
     await tester.pumpWidget(const SizedBox());
     await pump(tester, bridge, const UsageResetCredits(
       availableCount: 2,
@@ -122,8 +138,7 @@ void main() {
     ));
     await tester.tap(find.text('使用重置次数'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, '使用重置次数'));
-    await tester.pumpAndSettle();
+    await confirm(tester, bridge);
     expect(bridge.sent[0]['idempotencyKey'], bridge.sent[1]['idempotencyKey']);
     expect(bridge.sent[1]['creditId'], isNull);
   });
