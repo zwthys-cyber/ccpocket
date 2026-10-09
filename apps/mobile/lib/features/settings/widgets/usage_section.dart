@@ -519,6 +519,15 @@ class _UsageBarState extends State<_UsageBar>
     final timeStr =
         '${local.month}/${local.day} ${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
 
+    if (AppLocalizations.of(context).localeName.startsWith('zh')) {
+      final remaining = StringBuffer();
+      if (days > 0) remaining.write('$days天');
+      if (hours > 0) remaining.write('$hours小时');
+      if (minutes > 0) remaining.write('$minutes分钟');
+      if (remaining.isEmpty) remaining.write('不到1分钟');
+      return '$timeStr（${remaining}后重置）';
+    }
+
     if (days > 0) {
       return '$timeStr (${days}d${hours > 0 ? '${hours}h' : ''}${minutes > 0 ? '${minutes}m' : ''})';
     }

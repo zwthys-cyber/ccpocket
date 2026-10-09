@@ -2172,10 +2172,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get usageFetchFailed => '获取失败';
 
   @override
-  String get usageFiveHour => '5 小时';
+  String get usageFiveHour => '5小时限额';
 
   @override
-  String get usageSevenDay => '7 天';
+  String get usageSevenDay => '每周限额';
 
   @override
   String get settingsUsageSectionTitle => '用量';

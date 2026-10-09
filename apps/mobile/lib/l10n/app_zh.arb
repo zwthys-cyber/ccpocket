@@ -936,8 +936,8 @@
 
   "usageConnectToView": "连接到 Bridge 后查看用量",
   "usageFetchFailed": "获取失败",
-  "usageFiveHour": "5 小时",
-  "usageSevenDay": "7 天",
+  "usageFiveHour": "5小时限额",
+  "usageSevenDay": "每周限额",
   "settingsUsageSectionTitle": "用量",
   "settingsUsageNoCodexData": "未找到 Codex 的用量数据。",
   "usageDisplayModeRemaining": "剩余",
