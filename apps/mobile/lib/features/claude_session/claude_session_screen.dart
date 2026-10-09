@@ -1,3 +1,7 @@
+import '../chat_session/widgets/lite_mode_controls.dart';
+import '../explore/explore_screen.dart';
+import '../file_browser/file_browser_reference.dart';
+
 import 'dart:async';
 
 import 'package:auto_route/auto_route.dart';
@@ -14,6 +18,7 @@ import '../../models/messages.dart';
 import '../../providers/bridge_cubits.dart';
 import '../../providers/machine_manager_cubit.dart';
 import '../../router/app_router.dart';
+import '../workspace/widgets/workspace_session_route_adapter.dart';
 import '../../router/session_stack_navigation.dart';
 import '../../services/bridge_service.dart';
 import '../../services/chat_message_handler.dart';
@@ -80,7 +85,6 @@ class _NoopListenable implements Listenable {
 ///
 /// When [isPending] is true, shows a loading overlay until [session_created]
 /// is received from the bridge, then swaps to the real session.
-@RoutePage()
 class ClaudeSessionScreen extends StatefulWidget {
   final String sessionId;
   final String? projectPath;
@@ -116,7 +120,7 @@ class ClaudeSessionScreen extends StatefulWidget {
   State<ClaudeSessionScreen> createState() => _ClaudeSessionScreenState();
 }
 
-@RoutePage(name: 'WorkspaceClaudeSessionRoute')
+@RoutePage(name: 'ClaudeSessionRoute')
 class WorkspaceClaudeSessionScreen extends StatelessWidget {
   final String sessionId;
   final String? projectPath;
@@ -147,18 +151,19 @@ class WorkspaceClaudeSessionScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClaudeSessionScreen(
-      sessionId: sessionId,
-      projectPath: projectPath,
-      workspace: workspace,
-      gitBranch: gitBranch,
-      worktreePath: worktreePath,
-      isPending: isPending,
-      initialPermissionMode: initialPermissionMode,
-      initialSandboxMode: initialSandboxMode,
-      pendingSessionCreated: pendingSessionCreated,
-      onBackToSessions: onBackToSessions,
-      hideSessionBackButton: hideSessionBackButton,
+    return WorkspaceSessionRouteAdapter(
+      selection: WorkspaceSessionSelection(
+        sessionId: sessionId,
+        provider: Provider.claude,
+        projectPath: projectPath,
+        workspace: workspace,
+        gitBranch: gitBranch,
+        worktreePath: worktreePath,
+        isPending: isPending,
+        permissionMode: initialPermissionMode,
+        sandboxMode: initialSandboxMode,
+        pendingSessionCreated: pendingSessionCreated,
+      ),
     );
   }
 }
@@ -229,7 +234,10 @@ class _ClaudeSessionScreenState extends State<ClaudeSessionScreen> {
       sessionId: _sessionId,
       provider: 'claude',
     );
-    if (ModalRoute.of(context)?.isCurrent ?? false) {
+    final shell = WorkspaceShellScreen.maybeOf(context);
+    if (shell != null) {
+      shell.updateLiveSession(widget.sessionId, _sessionId);
+    } else if (ModalRoute.of(context)?.isCurrent ?? false) {
       NotificationService.instance.setActiveSession(
         sessionId: _sessionId,
         provider: 'claude',
@@ -268,7 +276,11 @@ class _ClaudeSessionScreenState extends State<ClaudeSessionScreen> {
         _pendingSub = null;
         widget.pendingSessionCreated?.removeListener(_onPendingSessionCreated);
         final errorText = msg.message;
-        context.router.maybePop();
+        if (widget.onBackToSessions case final onBack?) {
+          onBack();
+        } else {
+          context.router.maybePop();
+        }
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(errorText)));
       }
@@ -694,7 +706,15 @@ class _ChatScreenBody extends HookWidget {
         onExploreResultChanged: handleExploreResult,
         onFilePeekOpened: handleFilePeekOpened,
       );
-      return () => shell?.unregisterSessionToolPaneBindings(sessionId);
+      final unregisterReference = FileBrowserReferences.register(
+        context.read<BridgeService>(),
+        sessionId,
+        chatInputController.insertFileReference,
+      );
+      return () {
+        unregisterReference();
+        shell?.unregisterSessionToolPaneBindings(sessionId);
+      };
     }, [sessionId]);
 
     final tokenUsage = _collectTokenUsage(sessionState.entries);
@@ -1005,16 +1025,13 @@ class _ChatScreenBody extends HookWidget {
                               );
                               return;
                             }
-                            final result = await context.router.push(
-                              ExploreRoute(
-                                sessionId: sessionId,
-                                projectPath: effectiveProjectPath,
-                                initialFiles: context
-                                    .read<FileListCubit>()
-                                    .state,
-                                initialPath: initialPath,
-                                recentPeekedFiles: recentPeekedFiles,
-                              ),
+                            final result = await openExplorerScreen(
+                              context,
+                              sessionId: sessionId,
+                              projectPath: effectiveProjectPath,
+                              initialFiles: context.read<FileListCubit>().state,
+                              initialPath: initialPath,
+                              recentPeekedFiles: recentPeekedFiles,
                             );
                             if (result is! ExploreScreenResult ||
                                 !context.mounted) {
@@ -1097,6 +1114,8 @@ class _ChatScreenBody extends HookWidget {
                         ),
                         onSelected: (value) {
                           switch (value) {
+                            case 'display_mode':
+                              showChatDisplayModeSheet(context, sessionId);
                             case 'history':
                               _showUserMessageHistory(
                                 context,
@@ -1127,6 +1146,19 @@ class _ChatScreenBody extends HookWidget {
                               .state
                               .terminalApp;
                           return [
+                            PopupMenuItem(
+                              key: const ValueKey('menu_display_mode'),
+                              value: 'display_mode',
+                              child: ListTile(
+                                leading: const Icon(
+                                  Icons.bolt_outlined,
+                                  size: 20,
+                                ),
+                                title: Text(l.chatDisplayMode),
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                            ),
                             PopupMenuItem(
                               key: const ValueKey('menu_rename'),
                               value: 'rename',
@@ -1317,6 +1349,9 @@ class _ChatScreenBody extends HookWidget {
                       );
                     },
                     content: ChatMessageList(
+                      liteMode: context.select<SettingsCubit, bool>(
+                        (cubit) => cubit.state.liteModeForSession(sessionId),
+                      ),
                       sessionId: sessionId,
                       scrollController: scroll.controller,
                       httpBaseUrl: context.read<BridgeService>().httpBaseUrl,
@@ -1345,6 +1380,7 @@ class _ChatScreenBody extends HookWidget {
                     ),
                   ),
                 ),
+                LiteModeActivityBar(sessionId: sessionId),
                 if (approval is ApprovalNone)
                   ChatInputWithOverlays(
                     sessionId: sessionId,
@@ -1551,6 +1587,27 @@ void _executeSideEffects(
               payload: sessionId,
             );
           }
+        }
+      case ChatSideEffect.notifyGoalProgress:
+      case ChatSideEffect.notifyGoalComplete:
+      case ChatSideEffect.notifyGoalBlocked:
+      case ChatSideEffect.notifyGoalBudgetLimited:
+      case ChatSideEffect.notifyGoalUsageLimited:
+        if (useLocalNotification) {
+          final title = switch (effect) {
+            ChatSideEffect.notifyGoalProgress => l.notifyGoalProgress,
+            ChatSideEffect.notifyGoalComplete => l.notifyGoalComplete,
+            ChatSideEffect.notifyGoalBlocked => l.notifyGoalBlocked,
+            ChatSideEffect.notifyGoalBudgetLimited => l.notifyGoalBudgetLimited,
+            ChatSideEffect.notifyGoalUsageLimited => l.notifyGoalUsageLimited,
+            _ => '',
+          };
+          NotificationService.instance.show(
+            title: title,
+            body: title,
+            id: 3,
+            payload: sessionId,
+          );
         }
       case ChatSideEffect.notifySessionComplete:
         if (useLocalNotification) {

@@ -11,8 +11,11 @@ const { codexInstances, sdkInstances, fakeDirs, fakeFiles } = vi.hoisted(
     codexInstances: [] as Array<{
       isWaitingForInput: boolean;
       start: ReturnType<typeof vi.fn>;
+      getGoal: ReturnType<typeof vi.fn>;
       stop: ReturnType<typeof vi.fn>;
       sendInputStructured: ReturnType<typeof vi.fn>;
+      noteManualInput: ReturnType<typeof vi.fn>;
+      getRecoveryState: ReturnType<typeof vi.fn>;
       steerInputStructured: ReturnType<typeof vi.fn>;
       emit: (event: string, ...args: unknown[]) => boolean;
     }>,
@@ -83,9 +86,12 @@ vi.mock("./codex-process.js", () => ({
       : effort,
   CodexProcess: class MockCodexProcess extends EventEmitter {
     public isWaitingForInput = false;
+    public getGoal = vi.fn(async () => null);
     public start = vi.fn((_: string, __?: unknown) => {});
     public stop = vi.fn(() => {});
     public sendInputStructured = vi.fn();
+    public noteManualInput = vi.fn();
+    public getRecoveryState = vi.fn(() => ({ phase: "off" }));
     public steerInputStructured = vi.fn(async () => {});
 
     constructor() {
@@ -112,6 +118,52 @@ vi.mock("./sdk-process.js", () => ({
 import { SessionManager } from "./session.js";
 
 describe("SessionManager codex path", () => {
+  it("preserves goal transitions queued during the initial lookup", async () => {
+    const forwarded: ServerMessage[] = [];
+    const manager = new SessionManager((_, msg) => forwarded.push(msg));
+    manager.create("/tmp/goal-order", undefined, undefined, undefined, "codex");
+    let resolveLookup!: (goal: null) => void;
+    codexInstances[0].getGoal.mockImplementationOnce(() => new Promise(resolve => { resolveLookup = resolve; }));
+    const goal = { threadId: "thread", objective: "Ship", status: "active",
+      tokenBudget: null, tokensUsed: 0, timeUsedSeconds: 0, createdAt: 1, updatedAt: 2 };
+    codexInstances[0].emit("message", { type: "system", subtype: "init" });
+    codexInstances[0].emit("message", { type: "goal_state", goal });
+    codexInstances[0].emit("message", { type: "status", status: "running" });
+    codexInstances[0].emit("message", { type: "goal_state", goal: { ...goal, status: "complete" } });
+    codexInstances[0].emit("message", { type: "result", subtype: "success" });
+    expect(forwarded).toEqual([]);
+    resolveLookup(null);
+    await vi.waitFor(() => expect(forwarded.at(-1)).toMatchObject({
+      type: "result", notification: "none",
+    }));
+    expect(forwarded.filter(msg => "notification" in msg && msg.notification === "goal_complete")).toHaveLength(1);
+    expect(forwarded.map(msg => msg.type)).toEqual(["goal_state", "system", "goal_state", "status", "goal_state", "result"]);
+  });
+
+  it("preserves ordinary completion on goal-unsupported app-servers", async () => {
+    const forwarded: ServerMessage[] = [];
+    const manager = new SessionManager((_, msg) => forwarded.push(msg));
+    manager.create("/tmp/goal-unsupported", undefined, undefined, undefined, "codex");
+    codexInstances[0].getGoal.mockRejectedValue(Object.assign(new Error("Method not found"), { code: -32601 }));
+    codexInstances[0].emit("message", { type: "system", subtype: "init" });
+    codexInstances[0].emit("message", { type: "result", subtype: "success" });
+    await vi.waitFor(() => expect(forwarded.at(-1)?.type).toBe("result"));
+    expect(forwarded.at(-1)).not.toHaveProperty("notification", "none");
+    expect(codexInstances[0].getGoal).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses success after transient lookup failure and retries", async () => {
+    const forwarded: ServerMessage[] = [];
+    const manager = new SessionManager((_, msg) => forwarded.push(msg));
+    manager.create("/tmp/goal-timeout", undefined, undefined, undefined, "codex");
+    codexInstances[0].getGoal.mockRejectedValueOnce(new Error("timed out"));
+    codexInstances[0].emit("message", { type: "result", subtype: "success" });
+    await vi.waitFor(() => expect(forwarded.at(-1)).toMatchObject({ notification: "none" }));
+    codexInstances[0].emit("message", { type: "result", subtype: "success" });
+    await vi.waitFor(() => expect(forwarded.filter(msg => msg.type === "result")).toHaveLength(2));
+    expect(forwarded.at(-1)).not.toHaveProperty("notification", "none");
+  });
+
   beforeEach(() => {
     codexInstances.length = 0;
     sdkInstances.length = 0;
@@ -185,7 +237,7 @@ describe("SessionManager codex path", () => {
     );
   });
 
-  it("re-derives permissions after incremental runtime settings", () => {
+  it("re-derives permissions after incremental runtime settings", async () => {
     const manager = new SessionManager(() => {});
     const sessionId = manager.create(
       "/tmp/project-codex-permissions",
@@ -207,8 +259,8 @@ describe("SessionManager codex path", () => {
       sandboxMode: "read-only",
     });
 
-    expect(manager.get(sessionId)?.codexSettings?.codexPermissionsMode)
-      .toBeUndefined();
+    await vi.waitFor(() => expect(manager.get(sessionId)?.codexSettings?.codexPermissionsMode)
+      .toBeUndefined());
     expect(manager.list()[0].codexSettings?.codexPermissionsMode).toBe(
       "custom",
     );
@@ -531,7 +583,7 @@ describe("SessionManager codex path", () => {
     expect(manager.getHistorySince(sessionB, 0)?.toSeq).toBe(1);
   });
 
-  it("updates codex session settings and broadcasts the resolved thread id", () => {
+  it("updates codex session settings and broadcasts the resolved thread id", async () => {
     const onSessionUpdated = vi.fn();
     const manager = new SessionManager(
       () => {},
@@ -572,8 +624,8 @@ describe("SessionManager codex path", () => {
       },
     });
 
+    await vi.waitFor(() => expect(manager.get(sessionId)?.claudeSessionId).toBe("thread-runtime"));
     const session = manager.get(sessionId);
-    expect(session?.claudeSessionId).toBe("thread-runtime");
     expect(onSessionUpdated).toHaveBeenCalledOnce();
     expect(onSessionUpdated).toHaveBeenCalledWith(sessionId);
     expect(session?.codexSettings).toMatchObject({
@@ -746,6 +798,17 @@ describe("SessionManager codex path", () => {
     manager.destroyAll();
   });
 
+  it("retains sessions waiting for automatic recovery when trimming idle sessions", () => {
+    const manager = new SessionManager(() => {});
+    const ids = Array.from({ length: 31 }, (_, i) => manager.create(`/tmp/pending-${i}`, undefined, undefined, undefined, "codex"));
+    codexInstances[0].getRecoveryState.mockReturnValue({ phase: "waiting" });
+    ids.forEach((id, i) => { manager.get(id)!.lastActivityAt = new Date(i * 1000); });
+    codexInstances.forEach((proc) => proc.emit("status", "idle"));
+    expect(manager.get(ids[0])).toBeDefined();
+    expect(manager.get(ids[1])).toBeUndefined();
+    manager.destroyAll();
+  });
+
   it("includes codex agent metadata in session summaries", () => {
     const manager = new SessionManager(() => {});
     const sessionId = manager.create(
@@ -808,7 +871,7 @@ describe("SessionManager codex path", () => {
     expect(summary).toBeDefined();
   });
 
-  it("defers process messages until the session is published", () => {
+  it("defers process messages until the session is published", async () => {
     const forwarded: ServerMessage[] = [];
     const manager = new SessionManager((_, msg) => forwarded.push(msg));
     const sessionId = manager.create(
@@ -836,10 +899,11 @@ describe("SessionManager codex path", () => {
     expect(manager.list()).toEqual([]);
     expect(manager.summary(sessionId)).toBeUndefined();
     expect(manager.releaseDeferredProcessMessages(sessionId)).toBe(true);
-    expect(forwarded.map((message) => message.type)).toEqual([
+    await vi.waitFor(() => expect(forwarded.map((message) => message.type)).toEqual([
+      "goal_state",
       "system",
       "status",
-    ]);
+    ]));
     expect(manager.list().map((session) => session.id)).toEqual([sessionId]);
     expect(manager.summary(sessionId)?.id).toBe(sessionId);
     expect(manager.releaseDeferredProcessMessages(sessionId)).toBe(false);
@@ -906,6 +970,7 @@ describe("SessionManager codex path", () => {
     expect(
       manager.list().find((s) => s.id === sessionId)?.queuedInput,
     ).toBeUndefined();
+    expect(proc.noteManualInput).toHaveBeenCalled();
     expect(proc.sendInputStructured).toHaveBeenCalledWith("Follow up", {
       images: [{ base64: "aGVsbG8=", mimeType: "image/png" }],
       skills: [{ name: "skill", path: "/skills/skill" }],
@@ -1127,6 +1192,7 @@ describe("SessionManager codex path", () => {
 
     expect(forwarded.map(message => message.type)).toEqual([
       "tool_result",
+      "goal_state",
       "result",
     ]);
     expect(

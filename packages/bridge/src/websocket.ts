@@ -1,3 +1,4 @@
+import { performanceMessage } from "./performance-mode.js";
 import type { Server as HttpServer } from "node:http";
 import { createHash, randomUUID } from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
@@ -6,6 +7,8 @@ import { lstat, readFile, readlink, realpath, stat, unlink } from "node:fs/promi
 import { resolve, extname, basename, relative, posix, win32 } from "node:path";
 import { promisify } from "node:util";
 import { WebSocketServer, WebSocket } from "ws";
+import { textPreview } from "./text-preview.js";
+import { consumeFinderProof, verifyFinderSocketProof, revealInFinder } from "./finder-reveal.js";
 import {
   SessionManager,
   MAX_HISTORY_PER_SESSION,
@@ -250,6 +253,7 @@ const CODEX_USER_TURN_UUID_RE = /^codex:user-turn:(\d+)$/;
 const OPT_IN_SERVER_MESSAGES = new Set<string>([
   "conversation_queue",
   "goal_state",
+  "codex_recovery_state",
   "guardian_approval",
   "prompt_history_status",
   "projects",
@@ -659,6 +663,7 @@ export function downloadMimeType(filePath: string): string {
   const mediaType = FILE_PEEK_MEDIA_TYPES[extension];
   if (mediaType) return mediaType.mimeType;
   const mimeTypes: Record<string, string> = {
+    ".glb": "model/gltf-binary",
     ".bmp": "image/bmp",
     ".csv": "text/csv",
     ".doc": "application/msword",
@@ -863,6 +868,20 @@ export class BridgeWebSocketServer {
   private readonly deltaBatchMaxChars: number;
   private deltaBatches = new Map<WebSocket, Map<string, DeltaBatch>>();
   private platform: NodeJS.Platform;
+  private deliveryPreferences = new WeakMap<
+    WebSocket,
+    { enabled: boolean; sessions: Record<string, boolean> }
+  >();
+  private activityTimes = new WeakMap<WebSocket, Map<string, number>>();
+
+  private performanceEnabled(ws: WebSocket, msg: Record<string, unknown>): boolean {
+    const prefs = this.deliveryPreferences.get(ws);
+    if (!prefs || typeof msg.sessionId !== "string") return false;
+    return Object.hasOwn(prefs.sessions, msg.sessionId)
+      ? prefs.sessions[msg.sessionId]
+      : prefs.enabled;
+  }
+
   private clientSupportedServerMessages = new WeakMap<WebSocket, Set<string>>();
   private clientProtocolVersions = new WeakMap<WebSocket, number>();
   private rejectedProtocolClients = new WeakSet<WebSocket>();
@@ -973,7 +992,15 @@ export class BridgeWebSocketServer {
       console.log("[ws] Push relay enabled (Firebase Anonymous Auth)");
     }
 
-    this.wss = new WebSocketServer({ server });
+    this.wss = new WebSocketServer({
+      server,
+      perMessageDeflate: {
+        serverNoContextTakeover: true,
+        clientNoContextTakeover: true,
+        threshold: 1024,
+        zlibDeflateOptions: { level: 3 },
+      },
+    });
 
     this.sessionManager = new SessionManager(
       (sessionId, msg) => {
@@ -2784,6 +2811,13 @@ export class BridgeWebSocketServer {
         ws,
         new Set(msg.supportedServerMessages ?? []),
       );
+      this.deliveryPreferences.set(ws, {
+        enabled: msg.performanceMode ?? false,
+        sessions: msg.sessionPerformanceModes ?? {},
+      });
+      if (msg.deliveryRevision !== undefined) {
+        this.send(ws, { type: "performance_mode_state", deliveryRevision: msg.deliveryRevision });
+      }
       this.sendPromptHistoryStatus(ws);
       return;
     }
@@ -4179,6 +4213,20 @@ export class BridgeWebSocketServer {
         break;
       }
 
+      case "set_codex_recovery":
+      case "cancel_codex_recovery": {
+        const session = this.resolveSession(msg.sessionId);
+        if (!session || session.provider !== "codex") {
+          this.send(ws, { type: "error", sessionId: msg.sessionId, errorCode: "codex_recovery_unsupported", message: "Automatic recovery requires an active Codex session." });
+          break;
+        }
+        const process = session.process as CodexProcess;
+        if (msg.type === "set_codex_recovery") process.setRecoveryEnabled(msg.enabled);
+        else process.cancelRecovery();
+        this.send(ws, { type: "codex_recovery_state", sessionId: session.id, recovery: process.getRecoveryState() });
+        break;
+      }
+
       case "get_goal": {
         const session = this.resolveSession(msg.sessionId);
         if (!session || session.provider !== "codex") {
@@ -4195,6 +4243,12 @@ export class BridgeWebSocketServer {
           session.codexGoal = goal;
           this.send(ws, { type: "goal_state", sessionId: session.id, goal });
         } catch (err) {
+          // An optional background refresh must not pollute the conversation or
+          // replace a known goal with null when its current state is unknown.
+          if (msg.background) {
+            console.warn(`[ws] Background goal lookup failed: ${errorMessageOf(err)}`);
+            break;
+          }
           this.send(ws, {
             type: "error",
             sessionId: msg.sessionId,
@@ -6109,11 +6163,13 @@ export class BridgeWebSocketServer {
             this.allowedDirs,
             this.platform,
             msg.includeHidden ?? false,
+            msg.includeFiles ?? false,
           );
           this.send(ws, {
             type: "directory_listing",
             path: listing.path,
             directories: listing.directories,
+            ...(listing.files ? { files: listing.files } : {}),
             requestId: msg.requestId,
           });
         } catch (error) {
@@ -6155,8 +6211,48 @@ export class BridgeWebSocketServer {
         break;
       }
 
+      case "reveal_file_local":
+      case "reveal_file": {
+        void (async () => {
+          const reply = (
+            errorCode?: "not_local_mac" | "path_not_allowed" | "reveal_failed",
+          ) => this.send(ws, {
+            type: "reveal_file_result",
+            requestId: msg.requestId,
+            ...(errorCode ? { errorCode } : {}),
+          });
+          if (
+            this.platform !== "darwin" ||
+            !(await (msg.type === "reveal_file_local"
+              ? verifyFinderSocketProof(msg.proofPort, msg.proofToken)
+              : consumeFinderProof(msg.proofPath, msg.proofToken)))
+          ) {
+            reply("not_local_mac");
+            return;
+          }
+          try {
+            const path = resolve(msg.projectPath, msg.filePath);
+            if (!this.isPathAllowed(path)) {
+              reply("path_not_allowed");
+              return;
+            }
+            const canonicalPath = await realpath(path);
+            if (!(await this.isCanonicalPathAllowed(canonicalPath))) {
+              reply("path_not_allowed");
+              return;
+            }
+            await revealInFinder(canonicalPath);
+            reply();
+          } catch {
+            reply("reveal_failed");
+          }
+        })();
+        break;
+      }
+
       case "read_file":
-      case "read_media_file": {
+      case "read_media_file":
+      case "read_model_file": {
         const responseMetadata = {
           ...projectRequestMetadata(msg),
           filePath: msg.filePath,
@@ -6240,6 +6336,41 @@ export class BridgeWebSocketServer {
               return;
             }
             const ext = extname(absPath).toLowerCase();
+            if (msg.type === "read_model_file") {
+              const error =
+                ext !== ".glb"
+                  ? "Unsupported 3D file type. Use a GLB file."
+                  : resolvedFileStat.size > 50 * 1024 * 1024
+                    ? "model_too_large"
+                    : !this.mediaStore
+                      ? "3D preview is unavailable on this Bridge."
+                      : undefined;
+              if (error) {
+                this.send(ws, {
+                  type: "file_content",
+                  ...responseMetadata,
+                  kind: "model",
+                  content: "",
+                  error,
+                });
+                return;
+              }
+              const ref = await this.mediaStore!.register(
+                canonicalPath,
+                "model/gltf-binary",
+                resolvedFileStat.size,
+              );
+              this.send(ws, {
+                type: "file_content",
+                ...responseMetadata,
+                kind: "model",
+                content: "",
+                mimeType: ref.mimeType,
+                sizeBytes: ref.sizeBytes,
+                mediaUrl: ref.url,
+              });
+              return;
+            }
             const mediaType = FILE_PEEK_MEDIA_TYPES[ext];
             if (mediaType) {
               if (!this.mediaStore) {
@@ -6346,19 +6477,15 @@ export class BridgeWebSocketServer {
               gradle: "groovy",
             };
             const language = languageMap[textExt] ?? (textExt || undefined);
-            const lines = raw.split("\n");
-            const truncated = lines.length > maxLines;
-            const content = truncated
-              ? lines.slice(0, maxLines).join("\n")
-              : raw;
+            const preview = textPreview(raw, maxLines);
             this.send(ws, {
               type: "file_content",
               ...responseMetadata,
               kind: "text",
-              content,
+              content: preview.content,
               language,
-              totalLines: lines.length,
-              truncated,
+              totalLines: preview.totalLines,
+              truncated: preview.truncated,
             });
           } catch (err) {
             this.send(ws, {
@@ -8168,6 +8295,7 @@ export class BridgeWebSocketServer {
       protocolVersion: BRIDGE_PROTOCOL_MAX_VERSION,
       minimumProtocolVersion: BRIDGE_PROTOCOL_MIN_VERSION,
       protocolCapabilities: [
+        "performance_mode_v1",
         "project_request_correlation_v1",
         "session_context_v1",
       ],
@@ -8211,6 +8339,7 @@ export class BridgeWebSocketServer {
       protocolVersion: BRIDGE_PROTOCOL_MAX_VERSION,
       minimumProtocolVersion: BRIDGE_PROTOCOL_MIN_VERSION,
       protocolCapabilities: [
+        "performance_mode_v1",
         "project_request_correlation_v1",
         "session_context_v1",
       ],
@@ -8259,10 +8388,15 @@ export class BridgeWebSocketServer {
   ): void {
     if (this.shouldBatchDelta(msg, exclude)) {
       this.trackSessionMessage(sessionId, msg);
-      const chunks = this.splitDeltaText(msg.text);
+      let chunks: DeltaTextChunk[] | undefined;
       for (const client of this.wss.clients) {
         if (client.readyState !== WebSocket.OPEN) continue;
         if (!this.shouldSendToClient(client, msg)) continue;
+        if (msg.type === "thinking_delta" && this.performanceEnabled(client, { sessionId })) {
+          this.send(client, { ...msg, sessionId } as Record<string, unknown>);
+          continue;
+        }
+        chunks ??= this.splitDeltaText(msg.text);
         this.queueDeltaForClient(client, sessionId, msg.type, chunks);
       }
       return;
@@ -8371,7 +8505,7 @@ export class BridgeWebSocketServer {
     if (client.readyState !== WebSocket.OPEN) return;
 
     for (const msg of batch.messages) {
-      client.send(JSON.stringify({ ...msg, sessionId }));
+      this.send(client, { ...msg, sessionId } as Record<string, unknown>);
     }
   }
 
@@ -8576,10 +8710,9 @@ export class BridgeWebSocketServer {
     matchesWorkspace: (session: unknown) => boolean,
     limit: number,
   ): Promise<unknown[]> {
-    const activeProcess = this.getActiveCodexProcess();
-    const process =
-      activeProcess ?? (await this.createStandaloneCodexProcess(undefined));
-    const isStandalone = activeProcess === null;
+    // A busy app-server can be blocked on a large thread/read or a running turn.
+    // Discovery must remain independent so one session cannot hide the list.
+    const process = await this.createStandaloneCodexProcess(undefined);
 
     try {
       const archivedIds = this.archiveStore.archivedIds();
@@ -8610,16 +8743,22 @@ export class BridgeWebSocketServer {
         cursor = result.nextCursor;
       } while (matchingThreads.length < limit && cursor != null);
 
-      const indexedById = await getCodexSessionIndexMetadata(
-        matchingThreads.map((thread) => thread.id),
-      );
-      return matchingThreads.map((thread) =>
-        this.enrichRecentSessionWorkspace(
-          codexThreadToRecentSession(thread, indexedById.get(thread.id)),
+      const [indexedById, threadNames] = await Promise.all([
+        getCodexSessionIndexMetadata(
+          matchingThreads.map((thread) => thread.id),
         ),
+        loadCodexSessionNames(),
+      ]);
+      return matchingThreads.map((thread) =>
+        this.enrichRecentSessionWorkspace({
+          ...codexThreadToRecentSession(thread, indexedById.get(thread.id)),
+          ...(threadNames.get(thread.id)
+            ? { name: threadNames.get(thread.id) }
+            : {}),
+        }),
       );
     } finally {
-      if (isStandalone) process.stop();
+      process.stop();
     }
   }
 
@@ -9142,10 +9281,7 @@ export class BridgeWebSocketServer {
   ): Promise<{ sessions: unknown[]; hasMore: boolean }> {
     const limit = msg.limit ?? 20;
     const offset = msg.offset ?? 0;
-    const process =
-      this.getActiveCodexProcess() ??
-      (await this.createStandaloneCodexProcess(msg.projectPath));
-    const isStandalone = process !== this.getActiveCodexProcess();
+    const process = await this.createStandaloneCodexProcess(msg.projectPath);
 
     try {
       const archivedIds = this.archiveStore.archivedIds();
@@ -9174,20 +9310,22 @@ export class BridgeWebSocketServer {
       } while (visibleThreads.length < targetCount && cursor != null);
 
       const pageThreads = visibleThreads.slice(offset, offset + limit);
-      const indexedById = await getCodexSessionIndexMetadata(
-        pageThreads.map((thread) => thread.id),
-      );
-      const sessions = pageThreads.map((thread) =>
-        codexThreadToRecentSession(thread, indexedById.get(thread.id)),
-      );
+      const [indexedById, threadNames] = await Promise.all([
+        getCodexSessionIndexMetadata(pageThreads.map((thread) => thread.id)),
+        loadCodexSessionNames(),
+      ]);
+      const sessions = pageThreads.map((thread) => ({
+        ...codexThreadToRecentSession(thread, indexedById.get(thread.id)),
+        ...(threadNames.get(thread.id)
+          ? { name: threadNames.get(thread.id) }
+          : {}),
+      }));
       return {
         sessions,
         hasMore: hasServerMore || visibleThreads.length > offset + limit,
       };
     } finally {
-      if (isStandalone) {
-        process.stop();
-      }
+      process.stop();
     }
   }
 
@@ -9370,6 +9508,28 @@ export class BridgeWebSocketServer {
       return;
     }
 
+    if ((msg.type === "result" || msg.type === "goal_state") && msg.notification) {
+      if (msg.notification === "none") return;
+      const kind = msg.notification;
+      const icon = kind === "goal_complete" ? "✅"
+        : kind === "goal_progress" ? "💬"
+        : kind === "goal_blocked" ? "⚠️" : "⏸";
+      for (const locale of this.getRegisteredLocales()) {
+        const copy = t(locale, kind);
+        void this.pushRelay.notify({
+          eventType: kind,
+          title: `${icon} ${copy}${label ? ` - ${label}` : ""}`,
+          body: copy,
+          locale,
+          tokenHashes: this.getActivePushTokenHashes(locale),
+          data: { sessionId, provider: "codex" },
+        }).catch((err) => {
+          console.warn(`[ws] Failed to send ${kind}: ${String(err)}`);
+        });
+      }
+      return;
+    }
+
     if (msg.type !== "result") return;
     if (msg.subtype === "stopped") return;
     if (msg.subtype !== "success" && msg.subtype !== "error") return;
@@ -9457,6 +9617,26 @@ export class BridgeWebSocketServer {
     msg: ServerMessage | Record<string, unknown>,
   ): ServerMessage | Record<string, unknown> | null {
     if (!this.shouldSendToClient(ws, msg)) return null;
+    if (this.performanceEnabled(ws, msg as Record<string, unknown>)) {
+      const projected = performanceMessage(msg as Record<string, unknown>);
+      if (projected) {
+        msg = projected;
+      } else {
+        const sessionId = (msg as Record<string, unknown>).sessionId as string;
+        const times = this.activityTimes.get(ws) ?? new Map<string, number>();
+        this.activityTimes.set(ws, times);
+        const now = Date.now();
+        if (now - (times.get(sessionId) ?? 0) < 1000) return null;
+        times.set(sessionId, now);
+        const historySeq = (msg as Record<string, unknown>).historySeq;
+        return {
+          type: "session_activity",
+          sessionId,
+          historySeq: typeof historySeq === "number" ? historySeq : undefined,
+          at: new Date(now).toISOString(),
+        };
+      }
+    }
     if (!("messages" in msg) || !Array.isArray(msg.messages)) return msg;
     const messages = msg.messages as unknown[];
 
@@ -9554,6 +9734,8 @@ export class BridgeWebSocketServer {
     sessionId: string,
     session: SessionInfo,
   ): void {
+    const recovery = (session.process as CodexProcess).getRecoveryState?.();
+    if (recovery) this.send(ws, { type: "codex_recovery_state", sessionId, recovery });
     if (session.codexGoal === undefined) return;
     this.send(ws, {
       type: "goal_state",

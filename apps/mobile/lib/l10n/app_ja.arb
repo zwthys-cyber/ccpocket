@@ -1,4 +1,9 @@
 {
+  "notifyGoalProgress": "中間応答・ゴール進行中",
+  "notifyGoalComplete": "ゴール達成",
+  "notifyGoalBlocked": "続行に対応が必要です",
+  "notifyGoalBudgetLimited": "トークン予算に達したため停止しました",
+  "notifyGoalUsageLimited": "利用上限に達したため停止しました",
   "@@locale": "ja",
 
   "appTitle": "CC Pocket",
@@ -1256,5 +1261,126 @@
   "tooltipEditSketch": "スケッチを編集",
   "tooltipAttachmentOptions": "長押しで添付メニューを開く",
   "sketchSelect": "選択",
-  "sketchDelete": "削除"
+  "sketchDelete": "削除",
+  "filePreviewModelLoadFailed": "3Dモデルを読み込めませんでした。画像や形状を含むGLBファイルを確認してください。",
+  "filePreviewModelTooLarge": "3Dプレビューは50 MB以下のGLBファイルに対応しています。",
+  "filePreviewModelGestures": "ドラッグで回転・ピンチで拡大縮小",
+  "filePreviewModelReset": "視点をリセット",
+  "filePreviewModelWarning": "一部の素材や機能を再現できない可能性があります。",
+  "saveToPhotos": "写真に保存",
+  "savedToPhotos": "写真に保存しました",
+  "saveToPhotosFailed": "写真に保存できませんでした。非対応の形式の可能性があります。",
+  "photosPermissionDenied": "画像・動画を保存するには、設定で写真の追加を許可してください。",
+  "browserTitle": "ファイル",
+  "browserSearch": "ファイル名・パスで検索",
+  "browserBack": "戻る",
+  "browserParent": "親フォルダ",
+  "browserClose": "閉じる",
+  "browserAddToChat": "チャットに追加",
+  "browserRecent": "最近開いたファイル",
+  "browserEmpty": "このフォルダは空です",
+  "browserNoResults": "一致するファイル・フォルダはありません",
+  "browserRetry": "再試行",
+  "browserTimeout": "応答がありません。接続を確認して再試行してください。",
+  "browserIndexLimited": "検索対象は取得済みの一覧です。すべての項目はフォルダを開いて確認できます。",
+  "browserLegacy": "フォルダ内容の取得にはBridgeを更新してください。取得済みの一覧を表示しています。",
+  "browserToggleList": "ファイル一覧の表示切替",
+  "browserRefresh": "更新",
+  "browserNotAllowed": "このフォルダは閲覧可能な範囲外です。",
+  "browserNotFound": "このパスは存在しません。",
+  "browserUnreadable": "このフォルダを読み取れません。",
+  "browserCopyPath": "パスをコピー",
+  "browserNoRecent": "開いたファイルがここに表示されます。",
+  "finderReveal": "Finderで表示",
+  "finderRevealLocalOnly": "このMacのBridgeであることを確認できませんでした。接続先を確認して、もう一度お試しください。",
+  "finderRevealUpdateBridge": "Finderで表示するにはBridgeを更新してください。",
+  "finderRevealFailed": "Finderで表示できませんでした。ファイルとBridgeの接続を確認してください。",
+  "performanceModeBridgeUpdate": "通信量を減らすにはBridgeの更新が必要です。現在は画面上の非表示のみ対応しています。",
+  "liteMode": "パフォーマンスモード",
+  "liteModeDescription": "Bridgeから送るツール履歴や途中の画像を削減します。生成画像・添付画像・Explorerの画像は表示します。",
+  "chatDisplayMode": "表示モード",
+  "standardMode": "標準",
+  "followDefaultMode": "設定に従う",
+  "liteModeRunning": "実行中",
+  "liteModeWaiting": "承認・回答待ち",
+  "liteModeIdle": "待機中",
+  "liteModeCompacting": "会話を整理中",
+  "liteModeStarting": "開始中",
+  "liteModeLastActivity": "受信{elapsed}前",
+  "liteModeObserved": "監視{elapsed}",
+  "@liteModeLastActivity": {
+    "placeholders": {
+      "elapsed": {
+        "type": "String"
+      }
+    }
+  },
+  "@liteModeObserved": {
+    "placeholders": {
+      "elapsed": {
+        "type": "String"
+      }
+    }
+  },
+  "demoTry": "接続せずに試す",
+  "demoTitle": "CC Pocketを体験",
+  "demoExit": "体験を終了",
+  "demoRestart": "もう一度試す",
+  "demoDisclaimer": "オフライン体験 · 応答はサンプルです。AIの利用やファイルの変更は行いません。",
+  "demoWelcome": "依頼を送り、変更を承認・拒否し、差分を確認する流れを試せます。PCやアカウントは不要です。",
+  "demoSuggestion": "挨拶のメッセージを親しみやすくして",
+  "demoInputHint": "メッセージを試す",
+  "demoInputHelp": "どんなメッセージでも同じサンプルが始まります。AIには送信されません。",
+  "demoSend": "サンプルの依頼を送る",
+  "demoProposal": "このサンプルでは、lib/welcome.dart の挨拶を「Hello」から「Hello, Pocket!」へ変更します。編集を許可するか選んでください。",
+  "demoApprovalTitle": "サンプルの編集を許可しますか？",
+  "demoApprovalDetail": "編集 · lib/welcome.dart\n変更するのはサンプルデータだけです。",
+  "demoReject": "拒否",
+  "demoApprove": "今回だけ許可",
+  "demoCompleted": "サンプルの編集が完了しました。下の差分で追加・削除された行を確認できます。実際のファイルは変更していません。",
+  "demoRejected": "編集を拒否しました。変更はありません。ツールの操作は自分で判断できます。",
+  "demoDiffSummary": "サンプル差分 · 1行追加、1行削除",
+  "demoFinish": "自分のBridgeに接続すると、実際のプロジェクトとAIエージェントで作業できます。",
+  "demoConnect": "自分のBridgeを設定する",
+  "liteModeDurationSeconds": "{seconds}秒",
+  "@liteModeDurationSeconds": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "liteModeDurationMinutes": "{minutes}分{seconds}秒",
+  "@liteModeDurationMinutes": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      },
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "liteModeDurationHours": "{hours}時間{minutes}分",
+  "@liteModeDurationHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      },
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "liteModeDurationDays": "{days}日{hours}時間",
+  "@liteModeDurationDays": {
+    "placeholders": {
+      "days": {
+        "type": "int"
+      },
+      "hours": {
+        "type": "int"
+      }
+    }
+  }
 }

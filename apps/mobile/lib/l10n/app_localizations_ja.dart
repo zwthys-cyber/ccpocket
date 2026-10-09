@@ -10,6 +10,21 @@ class AppLocalizationsJa extends AppLocalizations {
   AppLocalizationsJa([String locale = 'ja']) : super(locale);
 
   @override
+  String get notifyGoalProgress => '中間応答・ゴール進行中';
+
+  @override
+  String get notifyGoalComplete => 'ゴール達成';
+
+  @override
+  String get notifyGoalBlocked => '続行に対応が必要です';
+
+  @override
+  String get notifyGoalBudgetLimited => 'トークン予算に達したため停止しました';
+
+  @override
+  String get notifyGoalUsageLimited => '利用上限に達したため停止しました';
+
+  @override
   String get appTitle => 'CC Pocket';
 
   @override
@@ -2988,4 +3003,232 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get sketchDelete => '削除';
+
+  @override
+  String get filePreviewModelLoadFailed =>
+      '3Dモデルを読み込めませんでした。画像や形状を含むGLBファイルを確認してください。';
+
+  @override
+  String get filePreviewModelTooLarge => '3Dプレビューは50 MB以下のGLBファイルに対応しています。';
+
+  @override
+  String get filePreviewModelGestures => 'ドラッグで回転・ピンチで拡大縮小';
+
+  @override
+  String get filePreviewModelReset => '視点をリセット';
+
+  @override
+  String get filePreviewModelWarning => '一部の素材や機能を再現できない可能性があります。';
+
+  @override
+  String get saveToPhotos => '写真に保存';
+
+  @override
+  String get savedToPhotos => '写真に保存しました';
+
+  @override
+  String get saveToPhotosFailed => '写真に保存できませんでした。非対応の形式の可能性があります。';
+
+  @override
+  String get photosPermissionDenied => '画像・動画を保存するには、設定で写真の追加を許可してください。';
+
+  @override
+  String get browserTitle => 'ファイル';
+
+  @override
+  String get browserSearch => 'ファイル名・パスで検索';
+
+  @override
+  String get browserBack => '戻る';
+
+  @override
+  String get browserParent => '親フォルダ';
+
+  @override
+  String get browserClose => '閉じる';
+
+  @override
+  String get browserAddToChat => 'チャットに追加';
+
+  @override
+  String get browserRecent => '最近開いたファイル';
+
+  @override
+  String get browserEmpty => 'このフォルダは空です';
+
+  @override
+  String get browserNoResults => '一致するファイル・フォルダはありません';
+
+  @override
+  String get browserRetry => '再試行';
+
+  @override
+  String get browserTimeout => '応答がありません。接続を確認して再試行してください。';
+
+  @override
+  String get browserIndexLimited => '検索対象は取得済みの一覧です。すべての項目はフォルダを開いて確認できます。';
+
+  @override
+  String get browserLegacy => 'フォルダ内容の取得にはBridgeを更新してください。取得済みの一覧を表示しています。';
+
+  @override
+  String get browserToggleList => 'ファイル一覧の表示切替';
+
+  @override
+  String get browserRefresh => '更新';
+
+  @override
+  String get browserNotAllowed => 'このフォルダは閲覧可能な範囲外です。';
+
+  @override
+  String get browserNotFound => 'このパスは存在しません。';
+
+  @override
+  String get browserUnreadable => 'このフォルダを読み取れません。';
+
+  @override
+  String get browserCopyPath => 'パスをコピー';
+
+  @override
+  String get browserNoRecent => '開いたファイルがここに表示されます。';
+
+  @override
+  String get finderReveal => 'Finderで表示';
+
+  @override
+  String get finderRevealLocalOnly =>
+      'このMacのBridgeであることを確認できませんでした。接続先を確認して、もう一度お試しください。';
+
+  @override
+  String get finderRevealUpdateBridge => 'Finderで表示するにはBridgeを更新してください。';
+
+  @override
+  String get finderRevealFailed => 'Finderで表示できませんでした。ファイルとBridgeの接続を確認してください。';
+
+  @override
+  String get performanceModeBridgeUpdate =>
+      '通信量を減らすにはBridgeの更新が必要です。現在は画面上の非表示のみ対応しています。';
+
+  @override
+  String get liteMode => 'パフォーマンスモード';
+
+  @override
+  String get liteModeDescription =>
+      'Bridgeから送るツール履歴や途中の画像を削減します。生成画像・添付画像・Explorerの画像は表示します。';
+
+  @override
+  String get chatDisplayMode => '表示モード';
+
+  @override
+  String get standardMode => '標準';
+
+  @override
+  String get followDefaultMode => '設定に従う';
+
+  @override
+  String get liteModeRunning => '実行中';
+
+  @override
+  String get liteModeWaiting => '承認・回答待ち';
+
+  @override
+  String get liteModeIdle => '待機中';
+
+  @override
+  String get liteModeCompacting => '会話を整理中';
+
+  @override
+  String get liteModeStarting => '開始中';
+
+  @override
+  String liteModeLastActivity(String elapsed) {
+    return '受信$elapsed前';
+  }
+
+  @override
+  String liteModeObserved(String elapsed) {
+    return '監視$elapsed';
+  }
+
+  @override
+  String get demoTry => '接続せずに試す';
+
+  @override
+  String get demoTitle => 'CC Pocketを体験';
+
+  @override
+  String get demoExit => '体験を終了';
+
+  @override
+  String get demoRestart => 'もう一度試す';
+
+  @override
+  String get demoDisclaimer => 'オフライン体験 · 応答はサンプルです。AIの利用やファイルの変更は行いません。';
+
+  @override
+  String get demoWelcome => '依頼を送り、変更を承認・拒否し、差分を確認する流れを試せます。PCやアカウントは不要です。';
+
+  @override
+  String get demoSuggestion => '挨拶のメッセージを親しみやすくして';
+
+  @override
+  String get demoInputHint => 'メッセージを試す';
+
+  @override
+  String get demoInputHelp => 'どんなメッセージでも同じサンプルが始まります。AIには送信されません。';
+
+  @override
+  String get demoSend => 'サンプルの依頼を送る';
+
+  @override
+  String get demoProposal =>
+      'このサンプルでは、lib/welcome.dart の挨拶を「Hello」から「Hello, Pocket!」へ変更します。編集を許可するか選んでください。';
+
+  @override
+  String get demoApprovalTitle => 'サンプルの編集を許可しますか？';
+
+  @override
+  String get demoApprovalDetail => '編集 · lib/welcome.dart\n変更するのはサンプルデータだけです。';
+
+  @override
+  String get demoReject => '拒否';
+
+  @override
+  String get demoApprove => '今回だけ許可';
+
+  @override
+  String get demoCompleted =>
+      'サンプルの編集が完了しました。下の差分で追加・削除された行を確認できます。実際のファイルは変更していません。';
+
+  @override
+  String get demoRejected => '編集を拒否しました。変更はありません。ツールの操作は自分で判断できます。';
+
+  @override
+  String get demoDiffSummary => 'サンプル差分 · 1行追加、1行削除';
+
+  @override
+  String get demoFinish => '自分のBridgeに接続すると、実際のプロジェクトとAIエージェントで作業できます。';
+
+  @override
+  String get demoConnect => '自分のBridgeを設定する';
+
+  @override
+  String liteModeDurationSeconds(int seconds) {
+    return '$seconds秒';
+  }
+
+  @override
+  String liteModeDurationMinutes(int minutes, int seconds) {
+    return '$minutes分$seconds秒';
+  }
+
+  @override
+  String liteModeDurationHours(int hours, int minutes) {
+    return '$hours時間$minutes分';
+  }
+
+  @override
+  String liteModeDurationDays(int days, int hours) {
+    return '$days日$hours時間';
+  }
 }

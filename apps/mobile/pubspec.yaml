@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.131.1+249
+version: 1.140.1+264
 
 environment:
   sdk: ^3.13.0
@@ -70,7 +70,8 @@ dependencies:
   firebase_core: ^4.4.0
   firebase_messaging: ^16.1.1
   shorebird_code_push: ^2.0.5
-  purchases_flutter: ^9.13.1
+  # 10.2.3 includes RevenueCat iOS 5.78.0, which fixes Xcode 27 compilation.
+  purchases_flutter: ^10.2.3
   package_info_plus: ^9.0.0
   auto_route: ^11.1.0
   collection: ^1.19.1
@@ -93,6 +94,8 @@ dependencies:
   media_kit_libs_video: ^1.0.7
   file_selector: ^1.1.0
   flutter_painter: ^2.1.0
+  flutter_scene: 0.23.0
+  vector_math: ^2.2.0
 
 dependency_overrides:
   # Temporary: use 16KB page-aligned fork until irondash/irondash#77 is merged

@@ -46,6 +46,25 @@ describe("normalizeToolResultContent", () => {
 // ---- parseClientMessage ----
 
 describe("parseClientMessage", () => {
+  it("validates loopback Finder proofs without accepting a remote host or file path", () => {
+    const request = { type: "reveal_file_local", projectPath: "/p", filePath: "movie.mp4",
+      requestId: "reveal-2", proofPort: 54321, proofToken: "a".repeat(64) };
+    expect(parseClientMessage(JSON.stringify(request))).toEqual(request);
+    for (const patch of [{ proofPort: 0 }, { proofPort: 80 }, { proofPort: 65536 },
+      { proofPort: "12345" }, { proofPort: 1234.5 }, { proofHost: "example.com" },
+      { proofPath: "/some/file" }, { proofToken: "bad" }]) {
+      expect(parseClientMessage(JSON.stringify({ ...request, ...patch }))).toBeNull();
+    }
+  });
+  it("validates Finder reveal requests and their locality proof", () => {
+    const request = { type: "reveal_file", projectPath: "/p", filePath: "video.mp4",
+      requestId: "reveal-1", proofPath: "/tmp/ccpocket-finder-abc/proof", proofToken: "a".repeat(64) };
+    expect(parseClientMessage(JSON.stringify(request))).toEqual(request);
+    for (const patch of [{ proofToken: "bad" }, { requestId: "" }, { filePath: "x\0y" },
+      { proofPath: 5 }, { command: "open" }]) {
+      expect(parseClientMessage(JSON.stringify({ ...request, ...patch }))).toBeNull();
+    }
+  });
   it("parses start request correlation", () => {
     expect(
       parseClientMessage(
@@ -467,6 +486,9 @@ describe("parseClientMessage", () => {
   });
 
   it("parses Codex goal messages", () => {
+    expect(parseClientMessage('{"type":"get_goal","sessionId":"s1","background":true}'))
+      .toEqual({ type: "get_goal", sessionId: "s1", background: true });
+    expect(parseClientMessage('{"type":"get_goal","sessionId":"s1","background":"true"}')).toBeNull();
     expect(
       parseClientMessage('{"type":"get_goal","sessionId":"s1"}'),
     ).toEqual({ type: "get_goal", sessionId: "s1" });
@@ -910,6 +932,12 @@ describe("parseClientMessage", () => {
     });
   });
 
+  it("parses read_model_file and rejects missing paths", () => {
+    expect(parseClientMessage(JSON.stringify({ type: "read_model_file", projectPath: "/p", filePath: "model.glb", requestId: "preview-1" })))
+      .toEqual({ type: "read_model_file", projectPath: "/p", filePath: "model.glb", requestId: "preview-1" });
+    expect(parseClientMessage('{"type":"read_model_file","projectPath":"/p"}')).toBeNull();
+  });
+
   it("parses read_media_file message", () => {
     const msg = parseClientMessage(
       '{"type":"read_media_file","projectPath":"/p","filePath":"output.mp4"}',
@@ -987,10 +1015,16 @@ describe("parseClientMessage", () => {
     ).toBeNull();
   });
 
+  it("parses includeFiles and rejects non-boolean values", () => {
+    expect(parseClientMessage('{"type":"list_directory","path":"/workspace","includeFiles":true}'))
+      .toEqual({ type: "list_directory", path: "/workspace", includeFiles: true });
+    expect(parseClientMessage('{"type":"list_directory","path":"/workspace","includeFiles":"yes"}')).toBeNull();
+  });
+
   it("rejects list_directory with unknown fields", () => {
     expect(
       parseClientMessage(
-        '{"type":"list_directory","path":"/workspace","includeFiles":true}',
+        '{"type":"list_directory","path":"/workspace","unknownOption":true}',
       ),
     ).toBeNull();
   });
@@ -1443,5 +1477,14 @@ describe("parseClientMessage", () => {
         '{"type":"git_revert_hunks","projectPath":"/p","hunks":[{"file":"a.txt"}]}',
       ),
     ).toBeNull();
+  });
+});
+
+
+describe("recovery commands", () => {
+  it("requires an explicit boolean and nonempty session id", () => {
+    expect(parseClientMessage(JSON.stringify({ type: "set_codex_recovery", sessionId: "s1", enabled: false }))).toMatchObject({ enabled: false });
+    for (const enabled of ["true", null, undefined, 1]) expect(parseClientMessage(JSON.stringify({ type: "set_codex_recovery", sessionId: "s1", enabled }))).toBeNull();
+    expect(parseClientMessage(JSON.stringify({ type: "cancel_codex_recovery", sessionId: "" }))).toBeNull();
   });
 });

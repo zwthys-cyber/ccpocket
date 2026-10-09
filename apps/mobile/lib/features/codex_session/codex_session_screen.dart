@@ -1,3 +1,7 @@
+import '../chat_session/widgets/lite_mode_controls.dart';
+import '../explore/explore_screen.dart';
+import '../file_browser/file_browser_reference.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -52,10 +56,12 @@ import '../explore/state/explore_state.dart';
 import '../git/state/git_status_cubit.dart';
 import '../git/state/git_view_cache_service.dart';
 import '../../router/app_router.dart';
+import '../workspace/widgets/workspace_session_route_adapter.dart';
 import '../claude_session/widgets/rewind_message_list_sheet.dart'
     show UserMessageHistorySheet;
 import 'state/codex_session_cubit.dart';
 import 'widgets/codex_goal_card.dart';
+import 'widgets/codex_recovery_panel.dart';
 import 'widgets/codex_rewind_dialog.dart';
 import 'widgets/tool_suggestion_card.dart';
 
@@ -83,7 +89,6 @@ class _NoopListenable implements Listenable {
 /// Simpler than [ClaudeSessionScreen].
 /// Shares UI components (`ChatMessageList`, `ChatInputWithOverlays`, etc.)
 /// via [CodexSessionCubit] which extends [ChatSessionCubit].
-@RoutePage()
 class CodexSessionScreen extends StatefulWidget {
   final String sessionId;
   final String? projectPath;
@@ -123,7 +128,7 @@ class CodexSessionScreen extends StatefulWidget {
   State<CodexSessionScreen> createState() => _CodexSessionScreenState();
 }
 
-@RoutePage(name: 'WorkspaceCodexSessionRoute')
+@RoutePage(name: 'CodexSessionRoute')
 class WorkspaceCodexSessionScreen extends StatelessWidget {
   final String sessionId;
   final String? projectPath;
@@ -158,20 +163,21 @@ class WorkspaceCodexSessionScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CodexSessionScreen(
-      sessionId: sessionId,
-      projectPath: projectPath,
-      workspace: workspace,
-      gitBranch: gitBranch,
-      worktreePath: worktreePath,
-      isPending: isPending,
-      initialSandboxMode: initialSandboxMode,
-      initialPermissionMode: initialPermissionMode,
-      initialApprovalPolicy: initialApprovalPolicy,
-      initialApprovalsReviewer: initialApprovalsReviewer,
-      pendingSessionCreated: pendingSessionCreated,
-      onBackToSessions: onBackToSessions,
-      hideSessionBackButton: hideSessionBackButton,
+    return WorkspaceSessionRouteAdapter(
+      selection: WorkspaceSessionSelection(
+        sessionId: sessionId,
+        provider: Provider.codex,
+        projectPath: projectPath,
+        workspace: workspace,
+        gitBranch: gitBranch,
+        worktreePath: worktreePath,
+        isPending: isPending,
+        permissionMode: initialPermissionMode,
+        sandboxMode: initialSandboxMode,
+        pendingSessionCreated: pendingSessionCreated,
+        approvalPolicy: initialApprovalPolicy,
+        approvalsReviewer: initialApprovalsReviewer,
+      ),
     );
   }
 }
@@ -249,7 +255,10 @@ class _CodexSessionScreenState extends State<CodexSessionScreen> {
       sessionId: _sessionId,
       provider: 'codex',
     );
-    if (ModalRoute.of(context)?.isCurrent ?? false) {
+    final shell = WorkspaceShellScreen.maybeOf(context);
+    if (shell != null) {
+      shell.updateLiveSession(widget.sessionId, _sessionId);
+    } else if (ModalRoute.of(context)?.isCurrent ?? false) {
       NotificationService.instance.setActiveSession(
         sessionId: _sessionId,
         provider: 'codex',
@@ -286,7 +295,11 @@ class _CodexSessionScreenState extends State<CodexSessionScreen> {
         _pendingSub?.cancel();
         _pendingSub = null;
         widget.pendingSessionCreated?.removeListener(_onPendingSessionCreated);
-        context.router.maybePop();
+        if (widget.onBackToSessions case final onBack?) {
+          onBack();
+        } else {
+          context.router.maybePop();
+        }
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(msg.message)));
       }
@@ -755,7 +768,15 @@ class _CodexChatBody extends HookWidget {
         onExploreResultChanged: handleExploreResult,
         onFilePeekOpened: handleFilePeekOpened,
       );
-      return () => shell?.unregisterSessionToolPaneBindings(sessionId);
+      final unregisterReference = FileBrowserReferences.register(
+        context.read<BridgeService>(),
+        sessionId,
+        chatInputController.insertFileReference,
+      );
+      return () {
+        unregisterReference();
+        shell?.unregisterSessionToolPaneBindings(sessionId);
+      };
     }, [sessionId]);
 
     useEffect(() {
@@ -883,7 +904,7 @@ class _CodexChatBody extends HookWidget {
       if (bridge.isConnected) {
         final cubit = context.read<ChatSessionCubit>();
         cubit.refreshHistory();
-        cubit.requestGoal();
+        cubit.requestGoal(background: true);
         if (effectiveProjectPath != null) {
           bridge.requestFileList(effectiveProjectPath);
         }
@@ -1106,16 +1127,13 @@ class _CodexChatBody extends HookWidget {
                               );
                               return;
                             }
-                            final result = await context.router.push(
-                              ExploreRoute(
-                                sessionId: sessionId,
-                                projectPath: effectiveProjectPath,
-                                initialFiles: context
-                                    .read<FileListCubit>()
-                                    .state,
-                                initialPath: initialPath,
-                                recentPeekedFiles: recentPeekedFiles,
-                              ),
+                            final result = await openExplorerScreen(
+                              context,
+                              sessionId: sessionId,
+                              projectPath: effectiveProjectPath,
+                              initialFiles: context.read<FileListCubit>().state,
+                              initialPath: initialPath,
+                              recentPeekedFiles: recentPeekedFiles,
                             );
                             if (result is! ExploreScreenResult ||
                                 !context.mounted) {
@@ -1219,6 +1237,10 @@ class _CodexChatBody extends HookWidget {
                         ),
                         onSelected: (value) {
                           switch (value) {
+                            case 'recovery':
+                              showCodexRecoverySheet(context);
+                            case 'display_mode':
+                              showChatDisplayModeSheet(context, sessionId);
                             case 'history':
                               _showUserMessageHistory(
                                 context,
@@ -1250,6 +1272,29 @@ class _CodexChatBody extends HookWidget {
                               .terminalApp;
                           final l = AppLocalizations.of(context);
                           return [
+                            PopupMenuItem(
+                              key: const ValueKey('menu_display_mode'),
+                              value: 'display_mode',
+                              child: ListTile(
+                                leading: const Icon(
+                                  Icons.bolt_outlined,
+                                  size: 20,
+                                ),
+                                title: Text(l.chatDisplayMode),
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              key: ValueKey('menu_codex_recovery'),
+                              value: 'recovery',
+                              child: ListTile(
+                                leading: Icon(Icons.autorenew, size: 20),
+                                title: Text('Automatic recovery'),
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                            ),
                             const PopupMenuItem(
                               key: ValueKey('menu_rename'),
                               value: 'rename',
@@ -1449,6 +1494,9 @@ class _CodexChatBody extends HookWidget {
                       );
                     },
                     content: ChatMessageList(
+                      liteMode: context.select<SettingsCubit, bool>(
+                        (cubit) => cubit.state.liteModeForSession(sessionId),
+                      ),
                       sessionId: sessionId,
                       scrollController: scroll.controller,
                       httpBaseUrl: context.read<BridgeService>().httpBaseUrl,
@@ -1478,6 +1526,20 @@ class _CodexChatBody extends HookWidget {
                     ),
                   ),
                 ),
+                if (sessionState.recovery case final recovery?
+                    when recovery.enabled &&
+                        [
+                          'waiting',
+                          'blocked',
+                          'exhausted',
+                        ].contains(recovery.phase))
+                  CodexRecoveryStatus(
+                    recovery: recovery,
+                    onCancel: () =>
+                        context.read<ChatSessionCubit>().cancelCodexRecovery(),
+                    onSettings: () => showCodexRecoverySheet(context),
+                  ),
+                LiteModeActivityBar(sessionId: sessionId),
                 if (approval is ApprovalNone)
                   if (currentGoal != null)
                     CodexGoalCard(
@@ -1724,6 +1786,27 @@ void _executeSideEffects(
               payload: sessionId,
             );
           }
+        }
+      case ChatSideEffect.notifyGoalProgress:
+      case ChatSideEffect.notifyGoalComplete:
+      case ChatSideEffect.notifyGoalBlocked:
+      case ChatSideEffect.notifyGoalBudgetLimited:
+      case ChatSideEffect.notifyGoalUsageLimited:
+        if (useLocalNotification) {
+          final title = switch (effect) {
+            ChatSideEffect.notifyGoalProgress => l.notifyGoalProgress,
+            ChatSideEffect.notifyGoalComplete => l.notifyGoalComplete,
+            ChatSideEffect.notifyGoalBlocked => l.notifyGoalBlocked,
+            ChatSideEffect.notifyGoalBudgetLimited => l.notifyGoalBudgetLimited,
+            ChatSideEffect.notifyGoalUsageLimited => l.notifyGoalUsageLimited,
+            _ => '',
+          };
+          NotificationService.instance.show(
+            title: title,
+            body: title,
+            id: 3,
+            payload: sessionId,
+          );
         }
       case ChatSideEffect.notifySessionComplete:
         if (useLocalNotification) {

@@ -6,6 +6,139 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.140.1] - 2026-10-03
+
+### Changed
+- Compact the Performance mode activity indicator into a single line, with the full text available on long press.
+- Display observed and last-received durations with at most two units, including days for long-running goal sessions.
+
+## [1.140.0] - 2026-10-01
+
+### Added
+- Add an offline demo from the connection screen so anyone can try a sample prompt, tool approval, and code diff without setting up a Bridge or an AI account.
+- Localize the demo walkthrough in English, Japanese, Korean, and Simplified Chinese, with clear sample-only labeling and restart controls.
+
+## [1.139.0] - 2026-10-01
+
+### Added
+- Add Performance mode with a default setting and per-session overrides for Claude and Codex chats. Hide tool history and work-in-progress screenshots while retaining generated images, attachments, Explorer images, approvals, and questions.
+- Show session status, observed elapsed time, and recent agent activity without rebuilding the transcript every second.
+
+### Changed
+- Recommend Bridge 1.88.0 to reduce tool and image payloads before transmission. Older Bridges retain local display filtering and show an update notice.
+- Restore complete history when returning to standard mode, including safe handling of reconnects and rapid mode changes.
+
+### Fixed
+- Keep the Performance mode activity indicator within the safe area while approval controls are visible.
+
+## [1.138.0] - 2026-09-30
+
+### Added
+- Add Automatic recovery to the Codex session menu. It is off by default, applies to the current Bridge session, and permits at most five automatic submissions after usage-limit failures. Waiting state and cancellation remain available after reconnecting.
+- Explain potential additional usage and repeated work before enabling recovery; manual input, stopping, pending human decisions, and goal budgets prevent automatic submission.
+
+### Changed
+- Recommend Bridge 1.87.0 for automatic recovery, responsive recent-session discovery, and improved large-session metadata and transfer.
+
+## [1.137.1] - 2026-09-29
+
+### Fixed
+- Mark automatic Codex goal refreshes as background requests so Bridge 1.86.1 can keep lookup failures out of chat. Manual `/goal` failures remain visible.
+
+### Changed
+- Recommend Bridge 1.86.1 for background goal refresh handling.
+
+## [1.137.0] - 2026-09-29
+
+### Added
+- Underline chat markdown links on hover so they are easier to discover on desktop.
+
+### Changed
+- Recommend Bridge 1.86.0 for repository-based worktree session grouping and improved goal notifications.
+
+### Fixed
+- Autolink HTTP(S) URLs with single-label hosts such as `http://localhost:3000` in chat markdown.
+- Keep link hover underlines correct at text boundaries, after scrolling, and after resizing.
+- Paste clipboard images with Cmd+V on macOS in the default image paste shortcut mode while preserving normal text paste.
+- Distinguish goal progress from goal completion in chat notifications.
+
+## [1.136.1] - 2026-09-23
+
+### Fixed
+- Expand the native iOS image paste button across the attachment row so taps near either edge are accepted.
+
+## [1.136.0] - 2026-09-23
+
+### Changed
+- Use a Cupertino action sheet for iOS attachments with direct native paste support.
+- Recommend Bridge 1.85.1 for sandbox-compatible Finder integration.
+
+### Fixed
+- Fix Finder reveal incorrectly rejecting a Bridge on the same Mac when macOS protects the app container.
+
+## [1.135.0] - 2026-09-23
+
+### Added
+- Show original project files in Finder from macOS file previews when connected to a Bridge running on the same Mac.
+
+### Changed
+- Recommend Bridge 1.85.0 for Finder integration and more efficient large-media transfers and text previews.
+
+## [1.134.2] - 2026-09-22
+
+### Changed
+- Consolidate file browser actions at the top and move the close button to the top left.
+
+### Fixed
+- Paste clipboard images on iOS using native paste controls and the native context menu while preserving the attachment menu appearance.
+
+## [1.134.1] - 2026-09-22
+
+### Fixed
+- Synchronize macOS RevenueCat dependencies with the Flutter plugin to restore release builds.
+
+## [1.134.0] - 2026-09-22
+
+### Added
+- Save images and videos to the iOS Photos library from media previews.
+- Browse files through a shared Explorer and fullscreen file browser with navigation history.
+
+### Changed
+- Preserve workspace navigation, chat state, and scroll positions across adaptive layout changes.
+- Require Bridge 1.84.0 for directory listings that include files.
+
+### Fixed
+- Show the fast mode indicator in session lists.
+- Update RevenueCat dependencies for Xcode 27 compatibility.
+
+## [1.133.2] - 2026-09-21
+
+### Changed
+- Upgrade Shorebird to 1.6.122 and Flutter to 3.47.4 with Dart 3.13.3.
+
+## [1.133.1] - 2026-09-17
+
+### Fixed
+- Match session list header buttons to the chat AppBar in macOS multi-pane workspaces for consistent icon sizing and spacing.
+
+## [1.133.0] - 2026-09-17
+
+### Added
+- Cache downloaded GLB preview data in memory for five minutes, with a 100 MiB least-recently-used budget, to avoid downloading unchanged models on each preview.
+
+### Changed
+- Increase the GLB preview limit from 20 MiB to 50 MiB.
+- Require Bridge 1.83.0 for the larger limit and reusable model URLs; changed files receive fresh preview data.
+
+## [1.132.0] - 2026-09-17
+
+### Added
+- Preview self-contained GLB 3D models from chat file links and Explorer, with drag rotation, pinch or wheel zoom, automatic framing, and view reset.
+- Show loading failures, unsupported material warnings, a 20 MB preview limit, and update guidance for older Bridge versions.
+
+### Changed
+- Require Bridge 1.82.0 for GLB model previews.
+
 ## [1.131.1] - 2026-09-15
 
 ### Changed

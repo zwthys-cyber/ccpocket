@@ -1,3 +1,4 @@
+import { CodexRecovery } from "./codex-recovery.js";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
@@ -15,6 +16,7 @@ import {
   buildCodexSpawnSpec,
   type CodexTransport,
 } from "./codex-transport.js";
+import { compactCodexHistoryItem } from "./codex-history.js";
 import { codexThreadToSessionHistory } from "./sessions-index.js";
 import { codexCliJoinTarget } from "./codex-app-server-config.js";
 import {
@@ -29,6 +31,8 @@ export { buildCodexSpawnSpec };
 const DEFAULT_CODEX_MODEL = "gpt-5.5";
 const COMPLETION_FETCH_COOLDOWN_MS = 1000;
 const ARCHIVE_RPC_TIMEOUT_MS = 15_000;
+const MAX_STDOUT_LINE_CHARS = 64 * 1024 * 1024;
+const MAX_RETAINED_HISTORY_CHARS = 64 * 1024 * 1024;
 const UNKNOWN_AGENT_ITEM_ID = "__unknown_agent_message__";
 const CODEX_CLI_NOT_FOUND_MESSAGE =
   "Codex CLI is not installed or not available on PATH on the Bridge machine. Install it with `curl -fsSL https://chatgpt.com/codex/install.sh | sh`, then restart Bridge.";
@@ -62,6 +66,9 @@ export interface CodexProcessEvents {
 }
 
 interface PendingInput {
+  recoveryContinuation?: boolean;
+  recoveryEchoed?: boolean;
+  recoveryGeneration?: number;
   text: string;
   images?: Array<{
     base64: string;
@@ -377,6 +384,7 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
    * copied at most once instead of repeatedly rebuilding one growing string.
    */
   private stdoutLineChunks: string[] = [];
+  private stdoutLineChars = 0;
 
   // Collaboration mode & plan completion state
   private _approvalPolicy: CodexRpcApprovalPolicy | undefined = undefined;
@@ -558,15 +566,79 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
     });
   }
 
+  private manualInputVersion = 0;
+  private recoveryFailure: unknown = null;
+  private upstreamWillRetry = false;
+  private inputTurnStarted = false;
+  private recoveryNotice = "";
+  private readonly recovery = new CodexRecovery<PendingInput>({
+    changed: (recovery) => {
+      this.emitMessage({ type: "codex_recovery_state", recovery });
+      const notice = `${recovery.phase}:${recovery.reason}`;
+      if (notice !== this.recoveryNotice && ["waiting", "blocked", "exhausted"].includes(recovery.phase)) {
+        this.emitMessage({ type: "error", errorCode: "codex_recovery_notice", message:
+          recovery.phase === "waiting"
+            ? `Automatic recovery is waiting for the usage limit (${recovery.attempts}/${recovery.maxAttempts} attempts used). You can cancel or send a message. ${recovery.reason ?? ""}`
+            : `Automatic recovery ${recovery.phase}. ${recovery.reason ?? ""}` });
+      }
+      this.recoveryNotice = notice;
+    },
+    canResume: async () => {
+      if (!this.canDispatchRecovery()) return false;
+      const goal = await this.getGoal();
+      return this.canDispatchRecovery() && (goal === null ||
+        ((goal.status === "active" || goal.status === "usageLimited") &&
+          !(typeof goal.tokenBudget === "number" && goal.tokensUsed >= goal.tokenBudget)));
+    },
+    dispatch: (input) => {
+      if (!this.canDispatchRecovery()) return false;
+      const resolve = this.inputResolve!;
+      this.inputResolve = null;
+      resolve({ ...input, recoveryGeneration: this.recovery.version });
+      return true;
+    },
+    resetAt: async () => {
+      const response = await this.readRateLimits(3_000);
+      const limits = response.rateLimitsByLimitId?.codex ?? response.rateLimits;
+      const resets = [limits?.primary, limits?.secondary]
+        .filter((window) => window && window.usedPercent >= 100 && typeof window.resetsAt === "number" && Number.isFinite(window.resetsAt))
+        .map((window) => window!.resetsAt! * 1000);
+      return resets.length ? Math.max(...resets) : undefined;
+    },
+  });
+
+  getRecoveryState() { return this.recovery.state; }
+  setRecoveryEnabled(enabled: boolean): void { this.recovery.setEnabled(enabled); }
+  cancelRecovery(): void { this.manualInputVersion++; this.recovery.cancel(); }
+  noteManualInput(): void { this.manualInputVersion++; this.recovery.manualInput(); }
+
+  private canDispatchRecovery(): boolean {
+    return !this.stopped && this._threadId !== null && this.inputResolve !== null &&
+      this.pendingTurnId === null && this.pendingTurnCompletion === null &&
+      this.pendingApprovals.size === 0 && !this.hasBlockingUserInput() &&
+      this.pendingPlanCompletion === null && this._pendingPlanInput === null;
+  }
+
+  private goalLookup: Promise<CodexGoal | null> | undefined;
+
   /** Read the persisted goal attached to this Codex thread. */
-  async getGoal(): Promise<CodexGoal | null> {
+  async getGoal(timeoutMs = 3_000): Promise<CodexGoal | null> {
     if (!this._threadId) {
       throw new Error("No thread ID available for goal lookup");
     }
-    const response = (await this.request("thread/goal/get", {
-      threadId: this._threadId,
-    })) as Record<string, unknown>;
-    return response.goal == null ? null : parseCodexGoal(response.goal);
+    if (!this.goalLookup) {
+      this.goalLookup = this.request(
+        "thread/goal/get",
+        { threadId: this._threadId },
+        timeoutMs,
+      ).then((value) => {
+        const response = value as Record<string, unknown>;
+        return response.goal == null ? null : parseCodexGoal(response.goal);
+      }).finally(() => {
+        this.goalLookup = undefined;
+      });
+    }
+    return this.goalLookup;
   }
 
   /** Create or update the persisted goal attached to this Codex thread. */
@@ -574,6 +646,7 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
     objective?: string;
     status?: CodexGoalStatus;
   }): Promise<CodexGoal> {
+    this.cancelRecovery();
     if (!this._threadId) {
       throw new Error("No thread ID available for goal update");
     }
@@ -589,6 +662,7 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
 
   /** Remove the persisted goal attached to this Codex thread. */
   async clearGoal(): Promise<boolean> {
+    this.cancelRecovery();
     if (!this._threadId) {
       throw new Error("No thread ID available for goal clear");
     }
@@ -624,56 +698,134 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
     }
     if (!includeTurns) return thread;
 
-    const turns: unknown[] = [];
+    try {
+      // A single autonomous turn can contain thousands of screenshots/tool
+      // results. Page turn metadata separately, then hydrate by item count.
+      const turns = await this.readTurnPages(threadId, "notLoaded");
+      const byId = new Map<string, Record<string, unknown>>();
+      for (const turn of turns) {
+        if (typeof turn.id !== "string") throw new Error("Codex turn has no id");
+        turn.items = [];
+        byId.set(turn.id, turn);
+      }
+      let retainedChars = JSON.stringify(turns).length;
+      await this.readHistoryPages("thread/items/list", {
+        threadId, limit: 10, sortDirection: "asc",
+      }, (entries) => {
+        for (const rawEntry of entries) {
+          const entry = asRecord(rawEntry);
+          const item = asRecord(entry?.item);
+          const turn = typeof entry?.turnId === "string"
+            ? byId.get(entry.turnId) : undefined;
+          if (!item || !turn) {
+            throw new Error("Codex history changed while reading; retry opening the session");
+          }
+          const compacted = compactCodexHistoryItem(item);
+          retainedChars += compacted.chars;
+          this.checkHistorySize(retainedChars);
+          (turn.items as unknown[]).push(compacted.item);
+        }
+      });
+      for (const turn of turns) turn.itemsView = "full";
+      return { ...thread, turns };
+    } catch (err) {
+      if (
+        err instanceof CodexRpcError && err.code === -32600 &&
+        err.message.includes("is not materialized yet")
+      ) {
+        return { ...thread, turns: [] };
+      }
+      // Unsupported methods/views permit the compatibility path. Never retry
+      // a size/transport failure with a larger full-history response.
+      const unsupportedMetadataView = err instanceof CodexRpcError &&
+        err.code === -32602 && /unknown variant.*notLoaded/i.test(err.message);
+      if (!unsupportedMetadataView &&
+          (!(err instanceof CodexRpcError) || err.code !== -32601)) throw err;
+    }
+
+    try {
+      return { ...thread, turns: await this.readTurnPages(threadId, "full") };
+    } catch (err) {
+      if (!(err instanceof CodexRpcError) || err.code !== -32601) throw err;
+    }
+    const legacy = (await this.request("thread/read", {
+      threadId, includeTurns: true,
+    })) as Record<string, unknown>;
+    const legacyThread = asRecord(legacy.thread);
+    if (!legacyThread) throw new Error("thread/read returned no thread");
+    if (Array.isArray(legacyThread.turns)) {
+      let chars = 0;
+      for (const rawTurn of legacyThread.turns) {
+        const turn = asRecord(rawTurn);
+        if (!turn || !Array.isArray(turn.items)) continue;
+        turn.items = turn.items.map((rawItem) => {
+          const item = asRecord(rawItem);
+          if (!item) return rawItem;
+          const compacted = compactCodexHistoryItem(item);
+          chars += compacted.chars;
+          this.checkHistorySize(chars);
+          return compacted.item;
+        });
+      }
+    }
+    return legacyThread;
+  }
+
+  private checkHistorySize(chars: number): void {
+    if (chars > MAX_RETAINED_HISTORY_CHARS) {
+      throw new Error("Codex display history exceeds the Bridge 64 Mi-character limit");
+    }
+  }
+
+  private async readTurnPages(
+    threadId: string,
+    itemsView: "notLoaded" | "full",
+  ): Promise<Record<string, unknown>[]> {
+    const turns: Record<string, unknown>[] = [];
+    let retainedChars = 0;
+    await this.readHistoryPages("thread/turns/list", {
+      threadId, limit: itemsView === "full" ? 1 : 50,
+      sortDirection: "asc", itemsView,
+    }, (data) => {
+      for (const rawTurn of data) {
+        const turn = asRecord(rawTurn);
+        if (!turn) throw new Error("thread/turns/list returned an invalid turn");
+        if (itemsView === "full" && Array.isArray(turn.items)) {
+          turn.items = turn.items.map((rawItem) => {
+            const item = asRecord(rawItem);
+            return item ? compactCodexHistoryItem(item).item : rawItem;
+          });
+        }
+        retainedChars += JSON.stringify(turn).length;
+        this.checkHistorySize(retainedChars);
+        turns.push(turn);
+      }
+    });
+    return turns;
+  }
+
+  private async readHistoryPages(
+    method: string,
+    params: Record<string, unknown>,
+    consume: (data: unknown[]) => void,
+  ): Promise<void> {
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
     do {
-      let page: Record<string, unknown>;
-      try {
-        page = (await this.request("thread/turns/list", {
-          threadId,
-          ...(cursor !== undefined ? { cursor } : {}),
-          limit: 50,
-          sortDirection: "asc",
-          itemsView: "full",
-        })) as Record<string, unknown>;
-      } catch (err) {
-        // New threads have metadata but no persisted turn history yet.
-        if (
-          cursor === undefined &&
-          err instanceof CodexRpcError &&
-          err.code === -32600 &&
-          err.message.includes(
-            "is not materialized yet; thread/turns/list is unavailable before first user message",
-          )
-        ) {
-          return { ...thread, turns: [] };
-        }
-        // Older app-servers do not expose turn pagination.
-        if (!(err instanceof CodexRpcError) || err.code !== -32601) throw err;
-        const legacy = (await this.request("thread/read", {
-          threadId,
-          includeTurns: true,
-        })) as Record<string, unknown>;
-        if (!legacy.thread) throw new Error("thread/read returned no thread");
-        return legacy.thread as Record<string, unknown>;
-      }
-      if (!Array.isArray(page.data)) {
-        throw new Error("thread/turns/list returned invalid data");
-      }
-      turns.push(...page.data);
+      const page = (await this.request(method, {
+        ...params, ...(cursor !== undefined ? { cursor } : {}),
+      })) as Record<string, unknown>;
+      if (!Array.isArray(page.data)) throw new Error(`${method} returned invalid data`);
+      consume(page.data);
       if (page.nextCursor != null && typeof page.nextCursor !== "string") {
-        throw new Error("thread/turns/list returned an invalid cursor");
+        throw new Error(`${method} returned an invalid cursor`);
       }
       cursor = (page.nextCursor as string | null | undefined) ?? undefined;
       if (cursor !== undefined) {
-        if (seenCursors.has(cursor)) {
-          throw new Error("thread/turns/list returned a repeated cursor");
-        }
+        if (seenCursors.has(cursor)) throw new Error(`${method} returned a repeated cursor`);
         seenCursors.add(cursor);
       }
     } while (cursor !== undefined);
-    return { ...thread, turns };
   }
 
   /** Fork at a complete turn boundary without mutating the source history. */
@@ -881,6 +1033,7 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
 
   stop(): void {
     this.stopped = true;
+    this.recovery.setEnabled(false);
     this.rejectReadiness(new Error("codex app-server stopped"));
 
     if (this.inputResolve) {
@@ -890,6 +1043,8 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
 
     this.pendingApprovals.clear();
     this.pendingUserInputs.clear();
+    this.stdoutLineChunks = [];
+    this.stdoutLineChars = 0;
     this.cleanupSteerTempPaths();
     this.rejectAllPending(new Error("stopped"));
 
@@ -907,6 +1062,7 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
     options?: CodexStartOptions,
   ): void {
     this.stopped = false;
+    this.recovery.setEnabled(false);
     this._threadId = null;
     this._agentNickname = null;
     this._agentRole = null;
@@ -949,6 +1105,7 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
     this._pendingPlanInput = null;
     this._projectPath = projectPath;
     this.stdoutLineChunks = [];
+    this.stdoutLineChars = 0;
   }
 
   private launchAppServer(
@@ -1002,6 +1159,7 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
   }
 
   interrupt(): void {
+    this.cancelRecovery();
     if (!this._threadId || !this.pendingTurnId) return;
 
     void this.request("turn/interrupt", {
@@ -1017,6 +1175,7 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
   }
 
   sendInput(text: string): void {
+    this.noteManualInput();
     if (!this.inputResolve) {
       console.error("[codex-process] No pending input resolver for sendInput");
       return;
@@ -1030,6 +1189,7 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
     text: string,
     images: Array<{ base64: string; mimeType: string }>,
   ): void {
+    this.noteManualInput();
     if (!this.inputResolve) {
       console.error(
         "[codex-process] No pending input resolver for sendInputWithImages",
@@ -1056,6 +1216,7 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
       mentions?: Array<{ name: string; path: string }>;
     },
   ): void {
+    this.noteManualInput();
     if (!this.inputResolve) {
       console.error(
         "[codex-process] No pending input resolver for sendInputStructured",
@@ -1080,6 +1241,7 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
       mentions?: Array<{ name: string; path: string }>;
     },
   ): Promise<void> {
+    this.noteManualInput();
     if (!this._threadId || !this.pendingTurnId) {
       throw new Error("No active Codex turn to steer");
     }
@@ -1596,7 +1758,7 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
     options?: CodexStartOptions,
   ): Promise<void> {
     try {
-      await this.initializeRpcConnection();
+      const supportsPermissionProfiles = await this.initializeRpcConnection();
 
       const autoReviewDisabled =
         options?.autoReviewDisabledByPolicy === null
@@ -1664,7 +1826,20 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
         threadParams.approvalsReviewer = requestedApprovalsReviewer;
       }
       if (requestedSandboxMode) {
-        threadParams.sandbox = requestedSandboxMode;
+        // A legacy sandbox override does not persist the selected built-in
+        // profile. Desktop can restore its configured sandbox on resume.
+        // Keep legacy requests for older/unknown servers, which may silently
+        // ignore the new field. Never send permissions together with sandbox.
+        if (
+          supportsPermissionProfiles &&
+          effectiveCodexPermissionsMode === "fullAccess" &&
+          !options?.profile &&
+          requestedSandboxMode === "danger-full-access"
+        ) {
+          threadParams.permissions = ":danger-full-access";
+        } else {
+          threadParams.sandbox = requestedSandboxMode;
+        }
       }
       const threadConfig: Record<string, unknown> = {};
       const requestedModel = sanitizeCodexModel(options?.model);
@@ -1683,7 +1858,10 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
         // not the top-level thread/start payload.
         threadConfig.model_reasoning_effort = requestedReasoningEffort;
       }
-      if (options?.networkAccessEnabled !== undefined) {
+      if (
+        options?.networkAccessEnabled !== undefined &&
+        threadParams.permissions === undefined
+      ) {
         threadParams.sandboxPolicy = {
           type: normalizeSandboxMode(options?.sandboxMode ?? "workspace-write"),
           networkAccess: options.networkAccessEnabled,
@@ -1875,8 +2053,8 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
     );
   }
 
-  private async initializeRpcConnection(timeoutMs?: number): Promise<void> {
-    await this.request(
+  private async initializeRpcConnection(timeoutMs?: number): Promise<boolean> {
+    const response = (await this.request(
       "initialize",
       {
         clientInfo: {
@@ -1889,8 +2067,16 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
         },
       },
       timeoutMs,
-    );
+    )) as { userAgent?: string };
     this.notify("initialized", {});
+    // 0.157.0 is the oldest version verified for built-in permission profiles.
+    const version = response.userAgent?.match(
+      /^\S+\/(\d+)\.(\d+)\.(\d+)(?=\s|$)/,
+    );
+    return (
+      version != null &&
+      (Number(version[1]) > 0 || Number(version[2]) >= 157)
+    );
   }
 
   async readProfileConfig(
@@ -2196,9 +2382,20 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
         continue;
       }
 
+      const manualVersion = this.manualInputVersion;
+      this.recoveryFailure = null;
+      this.upstreamWillRetry = false;
+      this.inputTurnStarted = false;
+      let startFailure: unknown = null;
       const { input, tempPaths } = await this.toRpcInput(pendingInput);
-      if (!input) {
+      if (!input || (pendingInput.recoveryGeneration !== undefined &&
+          (pendingInput.recoveryGeneration !== this.recovery.version || !this.recovery.state.enabled))) {
+        await Promise.all(tempPaths.map((path) => rm(path, { force: true }).catch(() => {})));
         continue;
+      }
+      if (pendingInput.recoveryContinuation && !pendingInput.recoveryEchoed) {
+        pendingInput.recoveryEchoed = true;
+        this.emitMessage({ type: "user_input", text: pendingInput.text, timestamp: new Date().toISOString() });
       }
 
       this.setStatus("running");
@@ -2271,6 +2468,8 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
             reject(err instanceof Error ? err : new Error(String(err)));
           });
       }).catch((err) => {
+        // Only a confirmed turn/start rejection can replay original attachments.
+        if (err instanceof CodexRpcError && !this.inputTurnStarted && !this.pendingTurnId) startFailure = err;
         if (!this.stopped) {
           const message = err instanceof Error ? err.message : String(err);
           this.emitMessage({ type: "error", message });
@@ -2288,34 +2487,55 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
         tempPaths.map((path) => rm(path, { force: true }).catch(() => {})),
       );
       void completion;
+      if (!this.stopped && manualVersion === this.manualInputVersion && !this.upstreamWillRetry) {
+        const failure = startFailure ?? this.recoveryFailure;
+        if (failure) this.recovery.schedule(failure, startFailure ? pendingInput : {
+          text: "Automatic recovery: Continue exactly where you left off. Do not repeat completed work. If the task is already complete, stop.",
+          recoveryContinuation: true,
+        });
+      }
     }
   }
 
   private handleStdoutChunk(chunk: string): void {
+    if (this.stopped) return;
     let lineStart = 0;
-
     while (lineStart < chunk.length) {
       const newlineIndex = chunk.indexOf("\n", lineStart);
-      if (newlineIndex < 0) {
-        this.stdoutLineChunks.push(chunk.slice(lineStart));
+      const end = newlineIndex < 0 ? chunk.length : newlineIndex;
+      const fragment = chunk.slice(lineStart, end);
+      this.stdoutLineChars += fragment.length;
+      if (this.stdoutLineChars > MAX_STDOUT_LINE_CHARS) {
+        this.failStdout(new Error(
+          "Codex app-server response exceeds the Bridge 64 Mi-character limit " +
+          `(pending: ${[...this.pendingRpc.values()].map((rpc) => rpc.method).join(", ") || "notification"}). ` +
+          "Only this Codex connection was closed; Bridge is still running.",
+        ));
         return;
       }
-
-      const lineFragment = chunk.slice(lineStart, newlineIndex);
-      const line =
-        this.stdoutLineChunks.length === 0
-          ? lineFragment.trim()
-          : this.completeStdoutLine(lineFragment);
+      if (newlineIndex < 0) {
+        this.stdoutLineChunks.push(fragment);
+        return;
+      }
+      let line: string;
+      try {
+        // Guard both fragmented and single-chunk records before joining, and
+        // keep allocation errors inside the connection's failure boundary.
+        this.stdoutLineChunks.push(fragment);
+        line = this.stdoutLineChunks.join("").trim();
+      } catch (err) {
+        this.failStdout(err instanceof Error ? err : new Error(String(err)));
+        return;
+      }
+      this.stdoutLineChunks = [];
+      this.stdoutLineChars = 0;
       lineStart = newlineIndex + 1;
       if (!line) continue;
-
       try {
         const envelope = JSON.parse(line) as JsonRpcEnvelope;
         this.handleRpcEnvelope(envelope);
       } catch (err) {
-        console.warn(
-          `[codex-process] failed to parse app-server JSON line: ${line.slice(0, 200)}`,
-        );
+        console.warn("[codex-process] failed to parse app-server JSON line");
         if (!this.stopped) {
           this.emitMessage({
             type: "error",
@@ -2326,11 +2546,12 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
     }
   }
 
-  private completeStdoutLine(finalChunk: string): string {
-    this.stdoutLineChunks.push(finalChunk);
-    const line = this.stdoutLineChunks.join("").trim();
-    this.stdoutLineChunks = [];
-    return line;
+  private failStdout(error: Error): void {
+    console.error(`[codex-process] ${error.message}`);
+    this.rejectReadiness(error);
+    this.rejectAllPending(error);
+    this.emitMessage({ type: "error", message: error.message });
+    this.stop();
   }
 
   private handleRpcEnvelope(envelope: JsonRpcEnvelope): void {
@@ -2595,6 +2816,8 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
       }
 
       case "turn/started": {
+        this.inputTurnStarted = true;
+        this.recovery.cancel();
         const turn = params.turn as Record<string, unknown> | undefined;
         if (typeof turn?.id === "string") {
           this.pendingTurnId = turn.id;
@@ -2621,6 +2844,9 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
 
       case "thread/goal/updated": {
         try {
+          const goal = parseCodexGoal(params.goal);
+          if (!["active", "usageLimited"].includes(goal.status) ||
+              (typeof goal.tokenBudget === "number" && goal.tokensUsed >= goal.tokenBudget)) this.cancelRecovery();
           this.emitMessage({
             type: "goal_state",
             goal: parseCodexGoal(params.goal),
@@ -2634,6 +2860,7 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
       }
 
       case "thread/goal/cleared": {
+        this.cancelRecovery();
         this.emitMessage({ type: "goal_state", goal: null });
         break;
       }
@@ -2813,6 +3040,7 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
         const error = asRecord(params.error);
         const message = stringValue(error?.message) ?? "Codex runtime error";
         if (params.willRetry === true) {
+          this.upstreamWillRetry = true;
           console.warn(`[codex-process] Codex will retry: ${message}`);
           break;
         }
@@ -2858,6 +3086,13 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
 
     if (status === "failed") {
       const errorObj = turn?.error as Record<string, unknown> | undefined;
+      // A terminal failure ends upstream retry ownership. Warnings alone never
+      // schedule work, and an explicitly retrying terminal payload is excluded.
+      if (this.pendingTurnCompletion && errorObj?.willRetry !== true &&
+          (!this.pendingTurnId || !turn?.id || turn.id === this.pendingTurnId)) {
+        this.upstreamWillRetry = false;
+        this.recoveryFailure = errorObj;
+      }
       const message =
         typeof errorObj?.message === "string"
           ? errorObj.message

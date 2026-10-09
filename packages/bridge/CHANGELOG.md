@@ -4,6 +4,92 @@ All notable changes to `@ccpocket/bridge` will be documented in this file.
 
 ## [Unreleased]
 
+## [1.88.0] - 2026-10-01
+
+### Added
+- Add opt-in Performance mode with per-client defaults and per-session overrides. Remove tool payloads, incidental screenshots, and thinking before WebSocket serialization while retaining generated images, attachments, approvals, plans, and lightweight activity updates.
+
+### Changed
+- Apply delivery filtering to live events, batched deltas, and restored histories without changing canonical agent history or other clients' delivery.
+- Acknowledge delivery preference changes and mark intentional history sequence gaps so clients can safely switch modes, reconnect, and restore full history in standard mode.
+
+## [1.87.0] - 2026-09-30
+
+### Added
+- Add opt-in, per-session Codex usage-limit recovery with reset-aware waiting, at most five automatic submissions per manual-input cycle, and cancellation and goal-budget guards.
+
+### Changed
+- Compress WebSocket traffic for supporting clients and use bounded tail reads for recent Codex session metadata while preserving paginated full history.
+
+### Fixed
+- Isolate recent Codex session discovery from active sessions so listing does not block behind an ongoing turn.
+- Restore local session names and the latest continuation metadata, including legacy image lookup compatibility.
+
+## [1.86.2] - 2026-09-30
+
+### Fixed
+- Preserve the Full Access permission profile when Codex sessions created or resumed in ccpocket are reopened in Desktop on Codex 0.157.0 or newer, while retaining legacy requests for older servers.
+
+## [1.86.1] - 2026-09-29
+
+### Fixed
+- Keep failed background Codex goal lookups out of chat while preserving the last known goal and reporting manual lookup errors.
+- Share concurrent Codex goal lookups and allow retry after failures.
+
+## [1.86.0] - 2026-09-29
+
+### Changed
+- Group Recent Sessions started in worktrees under their repository instead of showing each worktree as a separate project. Covers Claude Code worktrees (`<repo>/.claude/worktrees/<name>`), sibling git worktrees (resolved with git), and Codex sessions whose worktree was deleted (matched by the recorded repository URL). Resume still targets the worktree directory.
+
+### Fixed
+- Distinguish goal progress from goal completion in session and push notifications, avoiding premature completion alerts.
+- Keep repository-filtered recent sessions independent of listing order, preserve monorepo subdirectory groups, and refresh cached repository information.
+
+## [1.85.2] - 2026-09-28
+
+### Fixed
+- Prevent Bridge crashes when reopening large Codex sessions by loading history in small item pages and isolating oversized app-server responses to the affected connection.
+- Bound large tool outputs, diffs, and inline images in the displayed history while preserving the original Codex history and conversation text. Retain compatibility with older history APIs.
+
+## [1.85.1] - 2026-09-23
+
+### Fixed
+- Verify Finder locality through a short-lived loopback connection so sandboxed macOS apps can reveal files without external access to their protected container. Retain compatibility with legacy clients.
+
+## [1.85.0] - 2026-09-23
+
+### Added
+- Reveal allowed project files in Finder using a short-lived, single-use local proof to prevent accidentally opening Finder on a remote Mac.
+
+### Changed
+- Improve large-media HTTP transfer throughput with bounded 256 KiB read buffers.
+- Reduce large-text preview processing allocations while preserving exact line counts and truncation behavior.
+
+## [1.84.0] - 2026-09-22
+
+### Added
+- Support optional file entries in directory listings while preserving directory-only responses for existing clients and enforcing allowed-directory and symlink restrictions.
+
+## [1.83.1] - 2026-09-21
+
+### Fixed
+- Update sharp to 0.35.4 for security fixes.
+
+## [1.83.0] - 2026-09-17
+
+### Added
+- Reuse temporary preview URLs for unchanged GLB files so clients can cache model downloads. Issue new URLs when file identity, size, or timestamps change.
+
+### Changed
+- Increase the GLB preview limit from 20 MiB to 50 MiB.
+- Reject outdated model URLs after file changes while preserving path authorization checks.
+
+## [1.82.0] - 2026-09-17
+
+### Added
+- Serve GLB model previews through a dedicated `read_model_file` request with project-scoped responses and temporary media URLs.
+- Enforce a 20 MB model preview limit and reuse existing file path authorization and symlink protections.
+
 ## [1.81.5] - 2026-09-10
 
 ### Changed

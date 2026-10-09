@@ -1968,7 +1968,32 @@ void main() {
     expect(update.sideEffects, isEmpty);
   });
 
+  test('file browser probe errors stay out of the conversation', () {
+    final update = handler.handle(
+      const ErrorMessage(
+        message: 'Selected path is not a directory',
+        errorCode: 'not_a_directory',
+        requestId: 'browser-directory-42',
+      ),
+      isBackground: false,
+    );
+    expect(update.entriesToAdd, isEmpty);
+    expect(update.sideEffects, isEmpty);
+  });
+
   group('Unsupported message handling', () {
+    for (final action in ['set_codex_recovery', 'cancel_codex_recovery']) {
+      test('$action shows bridge update hint', () {
+        final update = handler.handle(
+          ErrorMessage(message: action, errorCode: 'unsupported_message'),
+          isBackground: false,
+        );
+        final message =
+            (update.entriesToAdd.single as ServerChatEntry).message
+                as ErrorMessage;
+        expect(message.errorCode, 'bridge_update_required');
+      });
+    }
     test('set_codex_model shows bridge update hint', () {
       final update = handler.handle(
         const ErrorMessage(

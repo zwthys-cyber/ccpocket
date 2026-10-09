@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { renameSession as renameClaudeSdkSession } from "@anthropic-ai/claude-agent-sdk";
 import { isAutoRenamePromptText } from "./auto-rename.js";
 import { normalizeCodexServiceTierForClient } from "./codex-service-tier.js";
+import { createRepositoryRootResolver } from "./repository-root.js";
 
 export interface SessionIndexEntry {
   sessionId: string;
@@ -202,18 +203,85 @@ export function pathToSlug(p: string): string {
 /**
  * Normalize a worktree cwd back to the main project path.
  * e.g. /path/to/project-worktrees/branch → /path/to/project
+ *      /path/to/project/.claude/worktrees/name → /path/to/project (Claude Code)
  */
 export function normalizeWorktreePath(p: string): string {
-  const match = p.match(/^(.+)-worktrees[\\/][^\\/]+$/);
+  const match =
+    p.match(/^(.+)-worktrees[\\/][^\\/]+$/) ??
+    p.match(/^(.+)[\\/]\.claude[\\/]worktrees[\\/][^\\/]+$/);
   return match?.[1] ?? p;
 }
 
 /**
  * Check if a directory slug represents a worktree directory for a given project slug.
- * e.g. "-Users-x-proj-worktrees-branch" is a worktree dir for "-Users-x-proj".
+ * e.g. "-Users-x-proj-worktrees-branch" and "-Users-x-proj--claude-worktrees-name"
+ * are worktree dirs for "-Users-x-proj".
  */
 export function isWorktreeSlug(dirSlug: string, projectSlug: string): boolean {
-  return dirSlug.startsWith(projectSlug + "-worktrees-");
+  return (
+    dirSlug.startsWith(projectSlug + "-worktrees-") ||
+    dirSlug.startsWith(projectSlug + "--claude-worktrees-")
+  );
+}
+
+// ---- Repository grouping ----
+//
+// Path patterns cannot tell a sibling worktree (`~/work/app-feature`) from an
+// unrelated repository with a similar name (`~/work/app-stats`), so sessions
+// whose cwd still exists are grouped by asking git for the main worktree.
+// Codex sessions whose worktree was already deleted fall back to the
+// `git.repository_url` Codex records, matched against local checkouts.
+
+const repositoryRoots = createRepositoryRootResolver();
+
+/** Codex `session_meta.git.repository_url`, kept off the wire-visible entry. */
+const codexRepositoryUrls = new WeakMap<SessionIndexEntry, string>();
+
+const REPOSITORY_RESOLVE_CONCURRENCY = 8;
+
+function assignRepositoryRoot(
+  entry: SessionIndexEntry,
+  cwd: string,
+  root: string,
+): void {
+  if (root === entry.projectPath) return;
+  entry.projectPath = root;
+  if (cwd !== root) entry.resumeCwd = cwd;
+}
+
+async function groupEntriesByRepository(
+  entries: SessionIndexEntry[],
+): Promise<void> {
+  const unresolved: SessionIndexEntry[] = [];
+  const knownRoots = new Set<string>();
+  await parallelMap(entries, REPOSITORY_RESOLVE_CONCURRENCY, async (entry) => {
+    const cwd = entry.resumeCwd ?? entry.projectPath;
+    if (!cwd) return;
+    const root = await repositoryRoots.resolvePath(cwd);
+    if (root) {
+      knownRoots.add(root);
+      assignRepositoryRoot(entry, cwd, root);
+    } else if (codexRepositoryUrls.has(entry)) {
+      // A null root also means an existing monorepo subdirectory or a git
+      // error. Only a missing cwd may use the deleted-worktree fallback.
+      try {
+        await stat(cwd);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "ENOENT" || code === "ENOTDIR") unresolved.push(entry);
+      }
+    }
+  });
+
+  if (unresolved.length === 0 || knownRoots.size === 0) return;
+  await parallelMap(unresolved, REPOSITORY_RESOLVE_CONCURRENCY, async (entry) => {
+    const cwd = entry.resumeCwd ?? entry.projectPath;
+    const root = await repositoryRoots.resolveRepositoryUrl(
+      codexRepositoryUrls.get(entry)!,
+      knownRoots,
+    );
+    if (root) assignRepositoryRoot(entry, cwd, root);
+  });
 }
 
 /** Concurrency limit for parallel file reads to avoid fd exhaustion. */
@@ -224,6 +292,7 @@ const HEAD_BYTES = 16384; // 16KB — covers first user entry + metadata
 const TAIL_BYTES = 8192;  // 8KB — covers last entries for modified/lastPrompt
 const CODEX_HEAD_BYTES = 131072; // 128KB — Codex turn_context can be large
 const CODEX_TAIL_BYTES = 16384;
+const CODEX_MAX_TAIL_BYTES = 4 * 1024 * 1024;
 
 /**
  * Run async tasks with a concurrency limit.
@@ -934,9 +1003,12 @@ export async function getAllRecentSessions(
   }
   markDuration(durations, "loadClaudeProjectDirs", loadProjectDirsStartedAt);
 
-  // Compute worktree slug prefix for projectPath filtering
-  const projectSlug = filterProjectPath
-    ? pathToSlug(filterProjectPath)
+  const normalizedFilterPath = filterProjectPath
+    ? normalizeWorktreePath(filterProjectPath)
+    : null;
+  const filterRepositoryRoot = normalizedFilterPath
+    ? (await repositoryRoots.resolvePath(normalizedFilterPath)) ??
+      normalizedFilterPath
     : null;
 
   // --- Load Claude and Codex sessions in parallel ---
@@ -945,17 +1017,9 @@ export async function getAllRecentSessions(
   const claudeEntriesPromise = (async (): Promise<SessionIndexEntry[]> => {
     if (!shouldLoadClaude) return [];
 
-    // Filter directories first (sync), then process in parallel
-    const relevantDirs: string[] = [];
-    for (const dirName of projectDirs) {
-      if (dirName.startsWith(".")) continue;
-      const isProjectDir = projectSlug ? dirName === projectSlug : false;
-      const isWorktreeDir = projectSlug
-        ? isWorktreeSlug(dirName, projectSlug)
-        : false;
-      if (filterProjectPath && !isProjectDir && !isWorktreeDir) continue;
-      relevantDirs.push(dirName);
-    }
+    // A sibling worktree can have any slug. Load before filtering so the
+    // first project-filtered request works without an earlier global listing.
+    const relevantDirs = projectDirs.filter((dirName) => !dirName.startsWith("."));
     perfStats.claudeProjectDirs = relevantDirs.length;
 
     // Process directories in parallel
@@ -1061,8 +1125,9 @@ export async function getAllRecentSessions(
       filesRead: 0,
       entriesReturned: 0,
     };
+    // Codex files are all parsed anyway; the project filter is applied after
+    // repository grouping so sibling worktree sessions match their repository.
     const codexEntries = await getAllRecentCodexSessions({
-      projectPath: filterProjectPath,
       perfStats: codexPerf,
     });
     perfStats.codexFilesTotal = codexPerf.filesTotal;
@@ -1106,6 +1171,10 @@ export async function getAllRecentSessions(
   }
   entries.push(...seen.values());
 
+  const groupStartedAt = process.hrtime.bigint();
+  await groupEntriesByRepository(entries);
+  markDuration(durations, "groupByRepository", groupStartedAt);
+
   // Filter out archived sessions
   const archivedIds = options.archivedSessionIds;
   let filtered = archivedIds
@@ -1113,6 +1182,15 @@ export async function getAllRecentSessions(
     : [...entries];
   perfStats.counts.beforeArchive = entries.length;
   perfStats.counts.afterArchive = filtered.length;
+
+  // Apply the same repository filter to both providers after grouping.
+  if (normalizedFilterPath) {
+    filtered = filtered.filter(
+      (e) =>
+        e.projectPath === normalizedFilterPath ||
+        e.projectPath === filterRepositoryRoot,
+    );
+  }
 
   // Filter by provider
   if (options.provider) {
@@ -1174,7 +1252,9 @@ export async function getAllRecentSessions(
   if (needLastPrompt.length > 0) {
     const projectsDir = join(homedir(), ".claude", "projects");
     await parallelMap(needLastPrompt, PARALLEL_FILE_READ_LIMIT, async (entry) => {
-      const slug = pathToSlug(entry.projectPath);
+      // After repository grouping, projectPath is the repository root but the
+      // JSONL still lives under the worktree cwd (resumeCwd), so prefer it.
+      const slug = pathToSlug(entry.resumeCwd ?? entry.projectPath);
       const jsonlPath = join(projectsDir, slug, `${entry.sessionId}.jsonl`);
       const lp = await extractLastPromptFromTail(jsonlPath);
       if (lp && lp !== entry.firstPrompt) {
@@ -1191,7 +1271,6 @@ export async function getAllRecentSessions(
 }
 
 interface CodexRecentOptions {
-  projectPath?: string;
   perfStats?: CodexRecentPerfStats;
 }
 
@@ -1251,6 +1330,7 @@ function parseCodexSessionJsonl(raw: string, fallbackSessionId: string): CodexSe
   let projectPath = "";
   let resumeCwd = "";
   let gitBranch = "";
+  let repositoryUrl = "";
   let created = "";
   let modified = "";
   let firstPrompt = "";
@@ -1316,6 +1396,9 @@ function parseCodexSessionJsonl(raw: string, fallbackSessionId: string): CodexSe
         const git = payload.git as Record<string, unknown> | undefined;
         if (git && typeof git.branch === "string") {
           gitBranch = git.branch;
+        }
+        if (git && typeof git.repository_url === "string") {
+          repositoryUrl = git.repository_url;
         }
         if (typeof payload.agent_nickname === "string" && payload.agent_nickname.length > 0) {
           agentNickname = payload.agent_nickname;
@@ -1405,11 +1488,25 @@ function parseCodexSessionJsonl(raw: string, fallbackSessionId: string): CodexSe
 
     if (entry.type === "response_item") {
       const payload = entry.payload as Record<string, unknown> | undefined;
-      if (!payload || payload.type !== "message" || payload.role !== "assistant") {
+      if (!payload || payload.type !== "message") {
         continue;
       }
       const content = payload.content;
       if (!Array.isArray(content)) continue;
+      if (payload.role === "user") {
+        const text = (content as Array<Record<string, unknown>>)
+          .filter((item) => item.type === "input_text" && typeof item.text === "string")
+          .map((item) => item.text as string)
+          .join("\n")
+          .trim();
+        if (text && !isCodexInjectedUserContext(text)) {
+          hasMessages = true;
+          if (!firstPrompt) firstPrompt = text;
+          lastPrompt = text;
+        }
+        continue;
+      }
+      if (payload.role !== "assistant") continue;
       const text = (content as Array<Record<string, unknown>>)
         .filter((item) => item.type === "output_text" && typeof item.text === "string")
         .map((item) => item.text as string)
@@ -1449,25 +1546,59 @@ function parseCodexSessionJsonl(raw: string, fallbackSessionId: string): CodexSe
       }
     : undefined;
 
-  return {
-    threadId,
-    entry: {
-      sessionId: threadId,
-      provider: "codex",
-      ...(agentNickname ? { agentNickname } : {}),
-      ...(agentRole ? { agentRole } : {}),
-      summary: summary || undefined,
-      firstPrompt,
-      ...(lastPrompt && lastPrompt !== firstPrompt ? { lastPrompt } : {}),
-      created,
-      modified,
-      gitBranch,
-      projectPath,
-      ...(resumeCwd && resumeCwd !== projectPath ? { resumeCwd } : {}),
-      isSidechain: false,
-      codexSettings,
-    },
+  const entry: SessionIndexEntry = {
+    sessionId: threadId,
+    provider: "codex",
+    ...(agentNickname ? { agentNickname } : {}),
+    ...(agentRole ? { agentRole } : {}),
+    summary: summary || undefined,
+    firstPrompt,
+    ...(lastPrompt && lastPrompt !== firstPrompt ? { lastPrompt } : {}),
+    created,
+    modified,
+    gitBranch,
+    projectPath,
+    ...(resumeCwd && resumeCwd !== projectPath ? { resumeCwd } : {}),
+    isSidechain: false,
+    codexSettings,
   };
+  if (repositoryUrl) codexRepositoryUrls.set(entry, repositoryUrl);
+  return { threadId, entry };
+}
+
+function hasCodexUserMessage(raw: string): boolean {
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    let entry: Record<string, unknown>;
+    try {
+      entry = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const payload = entry.payload as Record<string, unknown> | undefined;
+    if (
+      entry.type === "event_msg"
+      && payload?.type === "user_message"
+      && typeof payload.message === "string"
+      && !isCodexInjectedUserContext(payload.message)
+    ) {
+      return true;
+    }
+    if (
+      entry.type === "response_item"
+      && payload?.type === "message"
+      && payload.role === "user"
+      && Array.isArray(payload.content)
+    ) {
+      const text = (payload.content as Array<Record<string, unknown>>)
+        .filter((item) => item.type === "input_text" && typeof item.text === "string")
+        .map((item) => item.text as string)
+        .join("\n")
+        .trim();
+      if (text && !isCodexInjectedUserContext(text)) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -1500,14 +1631,23 @@ async function parseCodexSessionJsonlFast(
     const headBuf = Buffer.alloc(CODEX_HEAD_BYTES);
     await fh.read(headBuf, 0, CODEX_HEAD_BYTES, 0);
 
-    const tailBuf = Buffer.alloc(CODEX_TAIL_BYTES);
-    await fh.read(tailBuf, 0, CODEX_TAIL_BYTES, fileSize - CODEX_TAIL_BYTES);
-    const tailRaw = tailBuf.toString("utf-8");
-    const firstNewline = tailRaw.indexOf("\n");
-    const cleanTail = firstNewline >= 0 ? tailRaw.slice(firstNewline + 1) : "";
-
-    const partialRaw = `${headBuf.toString("utf-8")}\n${cleanTail}`;
-    return parseCodexSessionJsonl(partialRaw, fallbackSessionId);
+    let tailBytes = CODEX_TAIL_BYTES;
+    while (true) {
+      const tailBuf = Buffer.alloc(tailBytes);
+      await fh.read(tailBuf, 0, tailBytes, fileSize - tailBytes);
+      const tailRaw = tailBuf.toString("utf-8");
+      const firstNewline = tailRaw.indexOf("\n");
+      const cleanTail = firstNewline >= 0 ? tailRaw.slice(firstNewline + 1) : "";
+      const partialRaw = `${headBuf.toString("utf-8")}\n${cleanTail}`;
+      const parsed = parseCodexSessionJsonl(partialRaw, fallbackSessionId);
+      if (
+        hasCodexUserMessage(cleanTail)
+        || tailBytes >= Math.min(fileSize, CODEX_MAX_TAIL_BYTES)
+      ) {
+        return parsed;
+      }
+      tailBytes = Math.min(tailBytes * 2, fileSize, CODEX_MAX_TAIL_BYTES);
+    }
   } finally {
     await fh.close();
   }
@@ -1680,8 +1820,12 @@ export async function loadCodexSessionNames(): Promise<Map<string, string>> {
     if (!line.trim()) continue;
     try {
       const entry = JSON.parse(line) as { id?: string; thread_name?: string };
-      if (entry.id && entry.thread_name) {
-        names.set(entry.id, entry.thread_name);
+      if (entry.id && typeof entry.thread_name === "string") {
+        if (entry.thread_name) {
+          names.set(entry.id, entry.thread_name);
+        } else {
+          names.delete(entry.id);
+        }
       }
     } catch {
       // skip malformed
@@ -1833,9 +1977,6 @@ async function getAllRecentCodexSessions(options: CodexRecentOptions = {}): Prom
   const files = await listCodexSessionFiles();
   const entries: SessionIndexEntry[] = [];
   options.perfStats && (options.perfStats.filesTotal = files.length);
-  const normalizedProjectPath = options.projectPath
-    ? normalizeWorktreePath(options.projectPath)
-    : null;
 
   // Load thread names from session_index.jsonl
   const threadNames = await loadCodexSessionNames();
@@ -1855,9 +1996,6 @@ async function getAllRecentCodexSessions(options: CodexRecentOptions = {}): Prom
   for (const parsed of parsedResults) {
     options.perfStats && (options.perfStats.filesRead += 1);
     if (!parsed) continue;
-    if (normalizedProjectPath && parsed.entry.projectPath !== normalizedProjectPath) {
-      continue;
-    }
     // Attach thread name if available
     const threadName = threadNames.get(parsed.threadId);
     if (threadName) {
@@ -1893,7 +2031,12 @@ function matchingCodexThreadIdFromFilePath(
   const fallbackSessionId = basename(filePath, ".jsonl");
   if (wantedThreadIds.has(fallbackSessionId)) return fallbackSessionId;
   for (const threadId of wantedThreadIds) {
-    if (fallbackSessionId.endsWith(`-${threadId}`)) return threadId;
+    if (
+      fallbackSessionId.endsWith(`-${threadId}`)
+      || fallbackSessionId.includes(`-${threadId}_`)
+    ) {
+      return threadId;
+    }
   }
   return null;
 }
@@ -1906,28 +2049,39 @@ export async function getCodexSessionIndexMetadata(
   if (wantedThreadIds.size === 0) return result;
 
   const files = await listCodexSessionFiles();
-  const targets: string[] = [];
-  const matchedThreadIds = new Set<string>();
-  for (const filePath of files) {
-    const threadId = matchingCodexThreadIdFromFilePath(filePath, wantedThreadIds);
-    if (!threadId || matchedThreadIds.has(threadId)) continue;
-    targets.push(filePath);
-    matchedThreadIds.add(threadId);
-    if (matchedThreadIds.size === wantedThreadIds.size) break;
-  }
+  const targets = files.filter((filePath) =>
+    matchingCodexThreadIdFromFilePath(filePath, wantedThreadIds) !== null,
+  );
 
   const parsedResults = await parallelMap(
     targets,
     PARALLEL_FILE_READ_LIMIT,
     async (filePath) => {
       const fallbackSessionId = basename(filePath, ".jsonl");
-      return parseCodexSessionJsonlFast(filePath, fallbackSessionId);
+      const parsed = await parseCodexSessionJsonlFast(filePath, fallbackSessionId);
+      if (!parsed || !wantedThreadIds.has(parsed.threadId)) return null;
+      try {
+        return { parsed, modified: (await stat(filePath)).mtimeMs };
+      } catch {
+        return null;
+      }
     },
   );
 
-  for (const parsed of parsedResults) {
-    if (!parsed || !wantedThreadIds.has(parsed.threadId)) continue;
-    result.set(parsed.threadId, {
+  const newestByThread = new Map<
+    string,
+    { parsed: CodexSessionParseResult; modified: number }
+  >();
+  for (const candidate of parsedResults) {
+    if (!candidate) continue;
+    const existing = newestByThread.get(candidate.parsed.threadId);
+    if (!existing || candidate.modified > existing.modified) {
+      newestByThread.set(candidate.parsed.threadId, candidate);
+    }
+  }
+
+  for (const [threadId, { parsed }] of newestByThread) {
+    result.set(threadId, {
       ...(parsed.entry.codexSettings
         ? { codexSettings: parsed.entry.codexSettings }
         : {}),
@@ -2718,14 +2872,46 @@ async function findSessionJsonlPath(sessionId: string): Promise<string | null> {
 
 async function findCodexSessionJsonlPath(threadId: string): Promise<string | null> {
   const files = await listCodexSessionFiles();
+  const candidates = files.filter((filePath) => {
+    const fallbackSessionId = basename(filePath, ".jsonl");
+    return fallbackSessionId === threadId ||
+      fallbackSessionId.endsWith(`-${threadId}`) ||
+      fallbackSessionId.includes(`-${threadId}_`);
+  });
+  const matches = await parallelMap(candidates, PARALLEL_FILE_READ_LIMIT, async (filePath) => {
+    let file;
+    try {
+      file = await open(filePath, "r");
+      const metadata = await file.stat();
+      const buffer = Buffer.alloc(Math.min(metadata.size, CODEX_HEAD_BYTES));
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+      // History/image lookup must not depend on list metadata (cwd or text).
+      // Older rollouts have no session_meta, so retain the filename fallback.
+      for (const line of buffer.subarray(0, bytesRead).toString("utf-8").split("\n")) {
+        try {
+          const entry = JSON.parse(line);
+          if (entry?.type === "session_meta" && typeof entry.payload?.id === "string") {
+            if (entry.payload.id !== threadId) return null;
+            break;
+          }
+        } catch {
+          // Ignore partial or malformed header records.
+        }
+      }
+      return { filePath, modified: metadata.mtimeMs };
+    } catch {
+      return null;
+    } finally {
+      await file?.close();
+    }
+  });
+  const newest = matches
+    .filter((match): match is { filePath: string; modified: number } => match !== null)
+    .sort((a, b) => b.modified - a.modified)[0];
+  if (newest) return newest.filePath;
+
   for (const filePath of files) {
     const fallbackSessionId = basename(filePath, ".jsonl");
-    if (
-      fallbackSessionId === threadId ||
-      fallbackSessionId.endsWith(`-${threadId}`)
-    ) {
-      return filePath;
-    }
     let raw: string;
     try {
       raw = await readFile(filePath, "utf-8");

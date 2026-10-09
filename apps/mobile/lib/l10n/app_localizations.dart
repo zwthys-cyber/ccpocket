@@ -102,6 +102,36 @@ abstract class AppLocalizations {
     Locale('zh'),
   ];
 
+  /// No description provided for @notifyGoalProgress.
+  ///
+  /// In ja, this message translates to:
+  /// **'中間応答・ゴール進行中'**
+  String get notifyGoalProgress;
+
+  /// No description provided for @notifyGoalComplete.
+  ///
+  /// In ja, this message translates to:
+  /// **'ゴール達成'**
+  String get notifyGoalComplete;
+
+  /// No description provided for @notifyGoalBlocked.
+  ///
+  /// In ja, this message translates to:
+  /// **'続行に対応が必要です'**
+  String get notifyGoalBlocked;
+
+  /// No description provided for @notifyGoalBudgetLimited.
+  ///
+  /// In ja, this message translates to:
+  /// **'トークン予算に達したため停止しました'**
+  String get notifyGoalBudgetLimited;
+
+  /// No description provided for @notifyGoalUsageLimited.
+  ///
+  /// In ja, this message translates to:
+  /// **'利用上限に達したため停止しました'**
+  String get notifyGoalUsageLimited;
+
   /// No description provided for @appTitle.
   ///
   /// In ja, this message translates to:
@@ -5626,6 +5656,426 @@ abstract class AppLocalizations {
   /// In ja, this message translates to:
   /// **'削除'**
   String get sketchDelete;
+
+  /// No description provided for @filePreviewModelLoadFailed.
+  ///
+  /// In ja, this message translates to:
+  /// **'3Dモデルを読み込めませんでした。画像や形状を含むGLBファイルを確認してください。'**
+  String get filePreviewModelLoadFailed;
+
+  /// No description provided for @filePreviewModelTooLarge.
+  ///
+  /// In ja, this message translates to:
+  /// **'3Dプレビューは50 MB以下のGLBファイルに対応しています。'**
+  String get filePreviewModelTooLarge;
+
+  /// No description provided for @filePreviewModelGestures.
+  ///
+  /// In ja, this message translates to:
+  /// **'ドラッグで回転・ピンチで拡大縮小'**
+  String get filePreviewModelGestures;
+
+  /// No description provided for @filePreviewModelReset.
+  ///
+  /// In ja, this message translates to:
+  /// **'視点をリセット'**
+  String get filePreviewModelReset;
+
+  /// No description provided for @filePreviewModelWarning.
+  ///
+  /// In ja, this message translates to:
+  /// **'一部の素材や機能を再現できない可能性があります。'**
+  String get filePreviewModelWarning;
+
+  /// No description provided for @saveToPhotos.
+  ///
+  /// In ja, this message translates to:
+  /// **'写真に保存'**
+  String get saveToPhotos;
+
+  /// No description provided for @savedToPhotos.
+  ///
+  /// In ja, this message translates to:
+  /// **'写真に保存しました'**
+  String get savedToPhotos;
+
+  /// No description provided for @saveToPhotosFailed.
+  ///
+  /// In ja, this message translates to:
+  /// **'写真に保存できませんでした。非対応の形式の可能性があります。'**
+  String get saveToPhotosFailed;
+
+  /// No description provided for @photosPermissionDenied.
+  ///
+  /// In ja, this message translates to:
+  /// **'画像・動画を保存するには、設定で写真の追加を許可してください。'**
+  String get photosPermissionDenied;
+
+  /// No description provided for @browserTitle.
+  ///
+  /// In ja, this message translates to:
+  /// **'ファイル'**
+  String get browserTitle;
+
+  /// No description provided for @browserSearch.
+  ///
+  /// In ja, this message translates to:
+  /// **'ファイル名・パスで検索'**
+  String get browserSearch;
+
+  /// No description provided for @browserBack.
+  ///
+  /// In ja, this message translates to:
+  /// **'戻る'**
+  String get browserBack;
+
+  /// No description provided for @browserParent.
+  ///
+  /// In ja, this message translates to:
+  /// **'親フォルダ'**
+  String get browserParent;
+
+  /// No description provided for @browserClose.
+  ///
+  /// In ja, this message translates to:
+  /// **'閉じる'**
+  String get browserClose;
+
+  /// No description provided for @browserAddToChat.
+  ///
+  /// In ja, this message translates to:
+  /// **'チャットに追加'**
+  String get browserAddToChat;
+
+  /// No description provided for @browserRecent.
+  ///
+  /// In ja, this message translates to:
+  /// **'最近開いたファイル'**
+  String get browserRecent;
+
+  /// No description provided for @browserEmpty.
+  ///
+  /// In ja, this message translates to:
+  /// **'このフォルダは空です'**
+  String get browserEmpty;
+
+  /// No description provided for @browserNoResults.
+  ///
+  /// In ja, this message translates to:
+  /// **'一致するファイル・フォルダはありません'**
+  String get browserNoResults;
+
+  /// No description provided for @browserRetry.
+  ///
+  /// In ja, this message translates to:
+  /// **'再試行'**
+  String get browserRetry;
+
+  /// No description provided for @browserTimeout.
+  ///
+  /// In ja, this message translates to:
+  /// **'応答がありません。接続を確認して再試行してください。'**
+  String get browserTimeout;
+
+  /// No description provided for @browserIndexLimited.
+  ///
+  /// In ja, this message translates to:
+  /// **'検索対象は取得済みの一覧です。すべての項目はフォルダを開いて確認できます。'**
+  String get browserIndexLimited;
+
+  /// No description provided for @browserLegacy.
+  ///
+  /// In ja, this message translates to:
+  /// **'フォルダ内容の取得にはBridgeを更新してください。取得済みの一覧を表示しています。'**
+  String get browserLegacy;
+
+  /// No description provided for @browserToggleList.
+  ///
+  /// In ja, this message translates to:
+  /// **'ファイル一覧の表示切替'**
+  String get browserToggleList;
+
+  /// No description provided for @browserRefresh.
+  ///
+  /// In ja, this message translates to:
+  /// **'更新'**
+  String get browserRefresh;
+
+  /// No description provided for @browserNotAllowed.
+  ///
+  /// In ja, this message translates to:
+  /// **'このフォルダは閲覧可能な範囲外です。'**
+  String get browserNotAllowed;
+
+  /// No description provided for @browserNotFound.
+  ///
+  /// In ja, this message translates to:
+  /// **'このパスは存在しません。'**
+  String get browserNotFound;
+
+  /// No description provided for @browserUnreadable.
+  ///
+  /// In ja, this message translates to:
+  /// **'このフォルダを読み取れません。'**
+  String get browserUnreadable;
+
+  /// No description provided for @browserCopyPath.
+  ///
+  /// In ja, this message translates to:
+  /// **'パスをコピー'**
+  String get browserCopyPath;
+
+  /// No description provided for @browserNoRecent.
+  ///
+  /// In ja, this message translates to:
+  /// **'開いたファイルがここに表示されます。'**
+  String get browserNoRecent;
+
+  /// No description provided for @finderReveal.
+  ///
+  /// In ja, this message translates to:
+  /// **'Finderで表示'**
+  String get finderReveal;
+
+  /// No description provided for @finderRevealLocalOnly.
+  ///
+  /// In ja, this message translates to:
+  /// **'このMacのBridgeであることを確認できませんでした。接続先を確認して、もう一度お試しください。'**
+  String get finderRevealLocalOnly;
+
+  /// No description provided for @finderRevealUpdateBridge.
+  ///
+  /// In ja, this message translates to:
+  /// **'Finderで表示するにはBridgeを更新してください。'**
+  String get finderRevealUpdateBridge;
+
+  /// No description provided for @finderRevealFailed.
+  ///
+  /// In ja, this message translates to:
+  /// **'Finderで表示できませんでした。ファイルとBridgeの接続を確認してください。'**
+  String get finderRevealFailed;
+
+  /// No description provided for @performanceModeBridgeUpdate.
+  ///
+  /// In ja, this message translates to:
+  /// **'通信量を減らすにはBridgeの更新が必要です。現在は画面上の非表示のみ対応しています。'**
+  String get performanceModeBridgeUpdate;
+
+  /// No description provided for @liteMode.
+  ///
+  /// In ja, this message translates to:
+  /// **'パフォーマンスモード'**
+  String get liteMode;
+
+  /// No description provided for @liteModeDescription.
+  ///
+  /// In ja, this message translates to:
+  /// **'Bridgeから送るツール履歴や途中の画像を削減します。生成画像・添付画像・Explorerの画像は表示します。'**
+  String get liteModeDescription;
+
+  /// No description provided for @chatDisplayMode.
+  ///
+  /// In ja, this message translates to:
+  /// **'表示モード'**
+  String get chatDisplayMode;
+
+  /// No description provided for @standardMode.
+  ///
+  /// In ja, this message translates to:
+  /// **'標準'**
+  String get standardMode;
+
+  /// No description provided for @followDefaultMode.
+  ///
+  /// In ja, this message translates to:
+  /// **'設定に従う'**
+  String get followDefaultMode;
+
+  /// No description provided for @liteModeRunning.
+  ///
+  /// In ja, this message translates to:
+  /// **'実行中'**
+  String get liteModeRunning;
+
+  /// No description provided for @liteModeWaiting.
+  ///
+  /// In ja, this message translates to:
+  /// **'承認・回答待ち'**
+  String get liteModeWaiting;
+
+  /// No description provided for @liteModeIdle.
+  ///
+  /// In ja, this message translates to:
+  /// **'待機中'**
+  String get liteModeIdle;
+
+  /// No description provided for @liteModeCompacting.
+  ///
+  /// In ja, this message translates to:
+  /// **'会話を整理中'**
+  String get liteModeCompacting;
+
+  /// No description provided for @liteModeStarting.
+  ///
+  /// In ja, this message translates to:
+  /// **'開始中'**
+  String get liteModeStarting;
+
+  /// No description provided for @liteModeLastActivity.
+  ///
+  /// In ja, this message translates to:
+  /// **'受信{elapsed}前'**
+  String liteModeLastActivity(String elapsed);
+
+  /// No description provided for @liteModeObserved.
+  ///
+  /// In ja, this message translates to:
+  /// **'監視{elapsed}'**
+  String liteModeObserved(String elapsed);
+
+  /// No description provided for @demoTry.
+  ///
+  /// In ja, this message translates to:
+  /// **'接続せずに試す'**
+  String get demoTry;
+
+  /// No description provided for @demoTitle.
+  ///
+  /// In ja, this message translates to:
+  /// **'CC Pocketを体験'**
+  String get demoTitle;
+
+  /// No description provided for @demoExit.
+  ///
+  /// In ja, this message translates to:
+  /// **'体験を終了'**
+  String get demoExit;
+
+  /// No description provided for @demoRestart.
+  ///
+  /// In ja, this message translates to:
+  /// **'もう一度試す'**
+  String get demoRestart;
+
+  /// No description provided for @demoDisclaimer.
+  ///
+  /// In ja, this message translates to:
+  /// **'オフライン体験 · 応答はサンプルです。AIの利用やファイルの変更は行いません。'**
+  String get demoDisclaimer;
+
+  /// No description provided for @demoWelcome.
+  ///
+  /// In ja, this message translates to:
+  /// **'依頼を送り、変更を承認・拒否し、差分を確認する流れを試せます。PCやアカウントは不要です。'**
+  String get demoWelcome;
+
+  /// No description provided for @demoSuggestion.
+  ///
+  /// In ja, this message translates to:
+  /// **'挨拶のメッセージを親しみやすくして'**
+  String get demoSuggestion;
+
+  /// No description provided for @demoInputHint.
+  ///
+  /// In ja, this message translates to:
+  /// **'メッセージを試す'**
+  String get demoInputHint;
+
+  /// No description provided for @demoInputHelp.
+  ///
+  /// In ja, this message translates to:
+  /// **'どんなメッセージでも同じサンプルが始まります。AIには送信されません。'**
+  String get demoInputHelp;
+
+  /// No description provided for @demoSend.
+  ///
+  /// In ja, this message translates to:
+  /// **'サンプルの依頼を送る'**
+  String get demoSend;
+
+  /// No description provided for @demoProposal.
+  ///
+  /// In ja, this message translates to:
+  /// **'このサンプルでは、lib/welcome.dart の挨拶を「Hello」から「Hello, Pocket!」へ変更します。編集を許可するか選んでください。'**
+  String get demoProposal;
+
+  /// No description provided for @demoApprovalTitle.
+  ///
+  /// In ja, this message translates to:
+  /// **'サンプルの編集を許可しますか？'**
+  String get demoApprovalTitle;
+
+  /// No description provided for @demoApprovalDetail.
+  ///
+  /// In ja, this message translates to:
+  /// **'編集 · lib/welcome.dart\n変更するのはサンプルデータだけです。'**
+  String get demoApprovalDetail;
+
+  /// No description provided for @demoReject.
+  ///
+  /// In ja, this message translates to:
+  /// **'拒否'**
+  String get demoReject;
+
+  /// No description provided for @demoApprove.
+  ///
+  /// In ja, this message translates to:
+  /// **'今回だけ許可'**
+  String get demoApprove;
+
+  /// No description provided for @demoCompleted.
+  ///
+  /// In ja, this message translates to:
+  /// **'サンプルの編集が完了しました。下の差分で追加・削除された行を確認できます。実際のファイルは変更していません。'**
+  String get demoCompleted;
+
+  /// No description provided for @demoRejected.
+  ///
+  /// In ja, this message translates to:
+  /// **'編集を拒否しました。変更はありません。ツールの操作は自分で判断できます。'**
+  String get demoRejected;
+
+  /// No description provided for @demoDiffSummary.
+  ///
+  /// In ja, this message translates to:
+  /// **'サンプル差分 · 1行追加、1行削除'**
+  String get demoDiffSummary;
+
+  /// No description provided for @demoFinish.
+  ///
+  /// In ja, this message translates to:
+  /// **'自分のBridgeに接続すると、実際のプロジェクトとAIエージェントで作業できます。'**
+  String get demoFinish;
+
+  /// No description provided for @demoConnect.
+  ///
+  /// In ja, this message translates to:
+  /// **'自分のBridgeを設定する'**
+  String get demoConnect;
+
+  /// No description provided for @liteModeDurationSeconds.
+  ///
+  /// In ja, this message translates to:
+  /// **'{seconds}秒'**
+  String liteModeDurationSeconds(int seconds);
+
+  /// No description provided for @liteModeDurationMinutes.
+  ///
+  /// In ja, this message translates to:
+  /// **'{minutes}分{seconds}秒'**
+  String liteModeDurationMinutes(int minutes, int seconds);
+
+  /// No description provided for @liteModeDurationHours.
+  ///
+  /// In ja, this message translates to:
+  /// **'{hours}時間{minutes}分'**
+  String liteModeDurationHours(int hours, int minutes);
+
+  /// No description provided for @liteModeDurationDays.
+  ///
+  /// In ja, this message translates to:
+  /// **'{days}日{hours}時間'**
+  String liteModeDurationDays(int days, int hours);
 }
 
 class _AppLocalizationsDelegate

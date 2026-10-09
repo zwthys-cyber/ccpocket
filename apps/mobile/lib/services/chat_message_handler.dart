@@ -21,9 +21,24 @@ enum ChatSideEffect {
   notifyApprovalRequired,
   notifyAskQuestion,
   notifySessionComplete,
+  notifyGoalProgress,
+  notifyGoalComplete,
+  notifyGoalBlocked,
+  notifyGoalBudgetLimited,
+  notifyGoalUsageLimited,
   collapseToolResults,
   clearPlanFeedback,
 }
+
+/// Unknown future notification kinds must not imply success.
+ChatSideEffect? goalNotificationEffect(String? kind) => switch (kind) {
+  'goal_progress' => ChatSideEffect.notifyGoalProgress,
+  'goal_complete' => ChatSideEffect.notifyGoalComplete,
+  'goal_blocked' => ChatSideEffect.notifyGoalBlocked,
+  'goal_budget_limited' => ChatSideEffect.notifyGoalBudgetLimited,
+  'goal_usage_limited' => ChatSideEffect.notifyGoalUsageLimited,
+  _ => null,
+};
 
 /// Result of processing a single [ServerMessage].
 class ChatStateUpdate {
@@ -147,6 +162,8 @@ const _unsupportedActions = <String, UnsupportedAction>{
   'set_codex_model': UnsupportedAction.showUpdateHint,
   'set_codex_speed': UnsupportedAction.showUpdateHint,
   'set_goal': UnsupportedAction.showUpdateHint,
+  'set_codex_recovery': UnsupportedAction.showUpdateHint,
+  'cancel_codex_recovery': UnsupportedAction.showUpdateHint,
   'clear_goal': UnsupportedAction.showUpdateHint,
   'mutate_prompt_history': UnsupportedAction.showUpdateHint,
   'import_prompt_history_v1': UnsupportedAction.showUpdateHint,
@@ -326,6 +343,10 @@ class ChatMessageHandler {
         // per-session chat transcript.
         return const ChatStateUpdate();
       case ErrorMessage(:final message, :final errorCode):
+        // Directory probes and listing failures belong to the file browser.
+        if (msg.requestId?.startsWith('browser-directory-') ?? false) {
+          return const ChatStateUpdate();
+        }
         if (errorCode == 'goal_get_failed') {
           logger.warning('[handler] goal lookup unavailable: $message');
           return const ChatStateUpdate();
@@ -960,7 +981,13 @@ class ChatMessageHandler {
     final effects = <ChatSideEffect>{ChatSideEffect.lightHaptic};
     final isStopped = subtype == 'stopped';
     if (isBackground && !isStopped) {
-      effects.add(ChatSideEffect.notifySessionComplete);
+      final notification = msg is ResultMessage ? msg.notification : null;
+      if (notification == null) {
+        effects.add(ChatSideEffect.notifySessionComplete);
+      } else {
+        final effect = goalNotificationEffect(notification);
+        if (effect != null) effects.add(effect);
+      }
     }
     if (isStopped) {
       currentStreaming = null;

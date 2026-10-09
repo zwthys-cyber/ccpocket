@@ -10,6 +10,21 @@ class AppLocalizationsZh extends AppLocalizations {
   AppLocalizationsZh([String locale = 'zh']) : super(locale);
 
   @override
+  String get notifyGoalProgress => '中间回复 · 目标进行中';
+
+  @override
+  String get notifyGoalComplete => '目标已达成';
+
+  @override
+  String get notifyGoalBlocked => '需要处理才能继续';
+
+  @override
+  String get notifyGoalBudgetLimited => '已停止：达到令牌预算';
+
+  @override
+  String get notifyGoalUsageLimited => '已停止：达到使用上限';
+
+  @override
   String get appTitle => 'CC Pocket';
 
   @override
@@ -2953,4 +2968,227 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get sketchDelete => '删除';
+
+  @override
+  String get filePreviewModelLoadFailed => '无法加载3D模型。请确认GLB包含几何体和内嵌资源。';
+
+  @override
+  String get filePreviewModelTooLarge => '3D预览支持不超过50 MB的GLB文件。';
+
+  @override
+  String get filePreviewModelGestures => '拖动旋转 · 双指缩放';
+
+  @override
+  String get filePreviewModelReset => '重置视角';
+
+  @override
+  String get filePreviewModelWarning => '部分材质或功能可能无法准确显示。';
+
+  @override
+  String get saveToPhotos => '保存到照片';
+
+  @override
+  String get savedToPhotos => '已保存到照片';
+
+  @override
+  String get saveToPhotosFailed => '无法保存到照片，可能是不支持的格式。';
+
+  @override
+  String get photosPermissionDenied => '请在设置中允许添加照片，以保存图片和视频。';
+
+  @override
+  String get browserTitle => '文件';
+
+  @override
+  String get browserSearch => '搜索文件名和路径';
+
+  @override
+  String get browserBack => '返回';
+
+  @override
+  String get browserParent => '上级文件夹';
+
+  @override
+  String get browserClose => '关闭';
+
+  @override
+  String get browserAddToChat => '添加到聊天';
+
+  @override
+  String get browserRecent => '最近打开的文件';
+
+  @override
+  String get browserEmpty => '此文件夹为空';
+
+  @override
+  String get browserNoResults => '没有匹配的文件或文件夹';
+
+  @override
+  String get browserRetry => '重试';
+
+  @override
+  String get browserTimeout => '请求超时。请检查连接后重试。';
+
+  @override
+  String get browserIndexLimited => '搜索范围为已加载的文件列表。打开文件夹可查看全部项目。';
+
+  @override
+  String get browserLegacy => '请更新 Bridge 以查看完整文件夹内容。当前显示已加载的列表。';
+
+  @override
+  String get browserToggleList => '显示或隐藏文件列表';
+
+  @override
+  String get browserRefresh => '刷新';
+
+  @override
+  String get browserNotAllowed => '此文件夹超出了允许浏览的范围。';
+
+  @override
+  String get browserNotFound => '此路径已不存在。';
+
+  @override
+  String get browserUnreadable => '无法读取此文件夹。';
+
+  @override
+  String get browserCopyPath => '复制路径';
+
+  @override
+  String get browserNoRecent => '打开的文件将显示在这里。';
+
+  @override
+  String get finderReveal => '在 Finder 中显示';
+
+  @override
+  String get finderRevealLocalOnly => '无法确认 Bridge 是否运行在此 Mac 上。请检查连接后重试。';
+
+  @override
+  String get finderRevealUpdateBridge => '请更新 Bridge，以在 Finder 中显示文件。';
+
+  @override
+  String get finderRevealFailed => '无法在 Finder 中显示文件。请检查文件和 Bridge 连接。';
+
+  @override
+  String get performanceModeBridgeUpdate => '请更新Bridge以减少网络流量。当前仅在界面上隐藏详情。';
+
+  @override
+  String get liteMode => '性能模式';
+
+  @override
+  String get liteModeDescription => '减少Bridge发送的工具历史和工作过程图片。保留生成图片、附件和资源管理器图片。';
+
+  @override
+  String get chatDisplayMode => '显示模式';
+
+  @override
+  String get standardMode => '标准';
+
+  @override
+  String get followDefaultMode => '跟随设置';
+
+  @override
+  String get liteModeRunning => '运行中';
+
+  @override
+  String get liteModeWaiting => '等待批准或回答';
+
+  @override
+  String get liteModeIdle => '空闲';
+
+  @override
+  String get liteModeCompacting => '正在整理对话';
+
+  @override
+  String get liteModeStarting => '正在启动';
+
+  @override
+  String liteModeLastActivity(String elapsed) {
+    return '$elapsed前收到';
+  }
+
+  @override
+  String liteModeObserved(String elapsed) {
+    return '监测$elapsed';
+  }
+
+  @override
+  String get demoTry => '无需连接即可体验';
+
+  @override
+  String get demoTitle => '体验 CC Pocket';
+
+  @override
+  String get demoExit => '退出体验';
+
+  @override
+  String get demoRestart => '重新体验';
+
+  @override
+  String get demoDisclaimer => '离线体验 · 使用示例回复，不消耗 AI 用量，也不修改文件。';
+
+  @override
+  String get demoWelcome => '试试发送请求、批准或拒绝修改，再查看差异的流程。无需电脑或账号。';
+
+  @override
+  String get demoSuggestion => '让欢迎语更亲切一些';
+
+  @override
+  String get demoInputHint => '试着输入消息';
+
+  @override
+  String get demoInputHelp => '任何消息都会启动相同的示例流程，不会发送给 AI。';
+
+  @override
+  String get demoSend => '发送示例请求';
+
+  @override
+  String get demoProposal =>
+      '此示例将把 lib/welcome.dart 中的欢迎语从“Hello”改为“Hello, Pocket!”。请选择是否允许编辑。';
+
+  @override
+  String get demoApprovalTitle => '允许此次示例编辑吗？';
+
+  @override
+  String get demoApprovalDetail => '编辑 · lib/welcome.dart\n仅修改示例数据。';
+
+  @override
+  String get demoReject => '拒绝';
+
+  @override
+  String get demoApprove => '允许一次';
+
+  @override
+  String get demoCompleted => '示例编辑已完成。请在下方查看新增和删除的行。没有修改任何实际文件。';
+
+  @override
+  String get demoRejected => '已拒绝编辑，没有任何修改。工具操作由你决定。';
+
+  @override
+  String get demoDiffSummary => '示例差异 · 新增 1 行，删除 1 行';
+
+  @override
+  String get demoFinish => '连接自己的 Bridge 后，即可使用真实项目和 AI 智能体开展工作。';
+
+  @override
+  String get demoConnect => '设置我的 Bridge';
+
+  @override
+  String liteModeDurationSeconds(int seconds) {
+    return '$seconds秒';
+  }
+
+  @override
+  String liteModeDurationMinutes(int minutes, int seconds) {
+    return '$minutes分$seconds秒';
+  }
+
+  @override
+  String liteModeDurationHours(int hours, int minutes) {
+    return '$hours小时$minutes分';
+  }
+
+  @override
+  String liteModeDurationDays(int days, int hours) {
+    return '$days天$hours小时';
+  }
 }

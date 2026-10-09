@@ -10,6 +10,21 @@ class AppLocalizationsEn extends AppLocalizations {
   AppLocalizationsEn([String locale = 'en']) : super(locale);
 
   @override
+  String get notifyGoalProgress => 'Intermediate response · Goal in progress';
+
+  @override
+  String get notifyGoalComplete => 'Goal achieved';
+
+  @override
+  String get notifyGoalBlocked => 'Action needed to continue';
+
+  @override
+  String get notifyGoalBudgetLimited => 'Stopped: token budget reached';
+
+  @override
+  String get notifyGoalUsageLimited => 'Stopped: usage limit reached';
+
+  @override
   String get appTitle => 'CC Pocket';
 
   @override
@@ -3103,4 +3118,248 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sketchDelete => 'Delete';
+
+  @override
+  String get filePreviewModelLoadFailed =>
+      'Could not load the 3D model. Check that the GLB contains geometry and embedded resources.';
+
+  @override
+  String get filePreviewModelTooLarge =>
+      '3D previews support GLB files up to 50 MB.';
+
+  @override
+  String get filePreviewModelGestures => 'Drag to rotate · Pinch to zoom';
+
+  @override
+  String get filePreviewModelReset => 'Reset view';
+
+  @override
+  String get filePreviewModelWarning =>
+      'Some materials or features may not display accurately.';
+
+  @override
+  String get saveToPhotos => 'Save to Photos';
+
+  @override
+  String get savedToPhotos => 'Saved to Photos';
+
+  @override
+  String get saveToPhotosFailed =>
+      'Could not save to Photos. The format may not be supported.';
+
+  @override
+  String get photosPermissionDenied =>
+      'Allow adding photos in Settings to save images and videos.';
+
+  @override
+  String get browserTitle => 'Files';
+
+  @override
+  String get browserSearch => 'Search file names and paths';
+
+  @override
+  String get browserBack => 'Back';
+
+  @override
+  String get browserParent => 'Parent folder';
+
+  @override
+  String get browserClose => 'Close';
+
+  @override
+  String get browserAddToChat => 'Add to chat';
+
+  @override
+  String get browserRecent => 'Recently opened';
+
+  @override
+  String get browserEmpty => 'This folder is empty';
+
+  @override
+  String get browserNoResults => 'No matching files or folders';
+
+  @override
+  String get browserRetry => 'Retry';
+
+  @override
+  String get browserTimeout =>
+      'The request timed out. Check the connection and retry.';
+
+  @override
+  String get browserIndexLimited =>
+      'Search covers the loaded file index. Browse folders to see all entries.';
+
+  @override
+  String get browserLegacy =>
+      'Update Bridge for complete folder contents. Showing indexed entries.';
+
+  @override
+  String get browserToggleList => 'Show or hide file list';
+
+  @override
+  String get browserRefresh => 'Refresh';
+
+  @override
+  String get browserNotAllowed =>
+      'This folder is outside the allowed browsing area.';
+
+  @override
+  String get browserNotFound => 'This path no longer exists.';
+
+  @override
+  String get browserUnreadable => 'This folder cannot be read.';
+
+  @override
+  String get browserCopyPath => 'Copy path';
+
+  @override
+  String get browserNoRecent => 'Files you open will appear here.';
+
+  @override
+  String get finderReveal => 'Show in Finder';
+
+  @override
+  String get finderRevealLocalOnly =>
+      'Could not verify that the Bridge is on this Mac. Check the connection and try again.';
+
+  @override
+  String get finderRevealUpdateBridge =>
+      'Update the Bridge to show files in Finder.';
+
+  @override
+  String get finderRevealFailed =>
+      'Could not show the file in Finder. Check the file and Bridge connection.';
+
+  @override
+  String get performanceModeBridgeUpdate =>
+      'Update Bridge to reduce network traffic. This Bridge only supports hiding details on screen.';
+
+  @override
+  String get liteMode => 'Performance mode';
+
+  @override
+  String get liteModeDescription =>
+      'Reduce tool history and work-in-progress images sent by Bridge. Keep generated images, attachments, and Explorer images.';
+
+  @override
+  String get chatDisplayMode => 'Display mode';
+
+  @override
+  String get standardMode => 'Standard';
+
+  @override
+  String get followDefaultMode => 'Use default setting';
+
+  @override
+  String get liteModeRunning => 'Running';
+
+  @override
+  String get liteModeWaiting => 'Waiting for approval or input';
+
+  @override
+  String get liteModeIdle => 'Idle';
+
+  @override
+  String get liteModeCompacting => 'Compacting conversation';
+
+  @override
+  String get liteModeStarting => 'Starting';
+
+  @override
+  String liteModeLastActivity(String elapsed) {
+    return 'Received $elapsed ago';
+  }
+
+  @override
+  String liteModeObserved(String elapsed) {
+    return 'Observed $elapsed';
+  }
+
+  @override
+  String get demoTry => 'Try without connecting';
+
+  @override
+  String get demoTitle => 'Try CC Pocket';
+
+  @override
+  String get demoExit => 'Exit demo';
+
+  @override
+  String get demoRestart => 'Start again';
+
+  @override
+  String get demoDisclaimer =>
+      'Offline demo · Sample responses. No AI usage or file changes.';
+
+  @override
+  String get demoWelcome =>
+      'Send a request, approve or reject a change, then review the diff. No computer or account needed.';
+
+  @override
+  String get demoSuggestion => 'Make the welcome message friendlier';
+
+  @override
+  String get demoInputHint => 'Try a message';
+
+  @override
+  String get demoInputHelp =>
+      'Any message starts the same sample workflow. It is not sent to AI.';
+
+  @override
+  String get demoSend => 'Send sample request';
+
+  @override
+  String get demoProposal =>
+      'In this sample, I will change the greeting in lib/welcome.dart from “Hello” to “Hello, Pocket!”. Choose whether to allow the edit.';
+
+  @override
+  String get demoApprovalTitle => 'Allow this sample edit?';
+
+  @override
+  String get demoApprovalDetail =>
+      'Edit · lib/welcome.dart\nOnly sample data will change.';
+
+  @override
+  String get demoReject => 'Reject';
+
+  @override
+  String get demoApprove => 'Allow once';
+
+  @override
+  String get demoCompleted =>
+      'The sample edit is complete. Review the added and removed lines below. No real file was changed.';
+
+  @override
+  String get demoRejected =>
+      'The edit was rejected. Nothing changed. You control tool actions.';
+
+  @override
+  String get demoDiffSummary => 'Sample diff · 1 addition, 1 deletion';
+
+  @override
+  String get demoFinish =>
+      'Connect your own Bridge to work with real projects and AI agents.';
+
+  @override
+  String get demoConnect => 'Set up my Bridge';
+
+  @override
+  String liteModeDurationSeconds(int seconds) {
+    return '${seconds}s';
+  }
+
+  @override
+  String liteModeDurationMinutes(int minutes, int seconds) {
+    return '${minutes}m ${seconds}s';
+  }
+
+  @override
+  String liteModeDurationHours(int hours, int minutes) {
+    return '${hours}h ${minutes}m';
+  }
+
+  @override
+  String liteModeDurationDays(int days, int hours) {
+    return '${days}d ${hours}h';
+  }
 }

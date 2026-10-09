@@ -13,6 +13,8 @@ import '../../../widgets/workspace_pane_chrome.dart';
 class SessionListSliverAppBar extends StatelessWidget {
   final VoidCallback onTitleTap;
   final VoidCallback onDisconnect;
+  final VoidCallback? onOpenSettings;
+  final VoidCallback? onOpenGallery;
   final bool forceElevated;
   final double? toolbarHeight;
   final String? bridgeLabel;
@@ -21,6 +23,8 @@ class SessionListSliverAppBar extends StatelessWidget {
     super.key,
     required this.onTitleTap,
     required this.onDisconnect,
+    this.onOpenSettings,
+    this.onOpenGallery,
     this.forceElevated = false,
     this.toolbarHeight,
     this.bridgeLabel,
@@ -47,13 +51,15 @@ class SessionListSliverAppBar extends StatelessWidget {
             smallSize: 8,
             child: const Icon(Icons.settings),
           ),
-          onPressed: () => context.router.navigate(SettingsRoute()),
+          onPressed:
+              onOpenSettings ?? () => context.router.navigate(SettingsRoute()),
           tooltip: l.settings,
         ),
         IconButton(
           key: const ValueKey('gallery_button'),
           icon: const Icon(Icons.collections),
-          onPressed: () => context.router.navigate(GalleryRoute()),
+          onPressed:
+              onOpenGallery ?? () => context.router.navigate(GalleryRoute()),
           tooltip: l.gallery,
         ),
         IconButton(
@@ -99,12 +105,13 @@ class SessionListPaneHeader extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final narrow = constraints.maxWidth < 300;
-        final actionGap = chrome.useMacOSAdaptiveChrome && !narrow ? 8.0 : 0.0;
 
         return SizedBox(
           height: chrome.toolbarHeight,
           child: Padding(
-            padding: chrome.headerPadding(trailing: narrow ? 0 : 8),
+            padding: chrome.headerPadding(
+              trailing: chrome.useMacOSAdaptiveChrome || !narrow ? 8 : 0,
+            ),
             child: Row(
               children: [
                 if (!chrome.useMacOSAdaptiveChrome)
@@ -135,8 +142,6 @@ class SessionListPaneHeader extends StatelessWidget {
                   ),
                   compact: chrome.useMacOSAdaptiveChrome,
                 ),
-                if (openGallery != null || disconnect != null)
-                  SizedBox(width: actionGap),
                 if (openGallery != null)
                   _PaneHeaderActionButton(
                     key: const ValueKey('gallery_button'),
@@ -145,8 +150,6 @@ class SessionListPaneHeader extends StatelessWidget {
                     icon: const Icon(Icons.collections_outlined),
                     compact: chrome.useMacOSAdaptiveChrome,
                   ),
-                if (openGallery != null && disconnect != null)
-                  SizedBox(width: actionGap),
                 if (disconnect != null)
                   _PaneHeaderActionButton(
                     key: const ValueKey('disconnect_button'),
@@ -233,15 +236,14 @@ class _PaneHeaderActionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return IconButton(
-      style: compact
-          ? resolveWorkspacePaneChrome(
-              platform: Theme.of(context).platform,
-              isAdaptiveWorkspace: true,
-              isLeftPaneVisible: true,
-              slot: WorkspacePaneSlot.left,
-            ).compactButtonStyle()
+      // Match the chat AppBar actions in the adjacent pane.
+      iconSize: compact ? 18 : null,
+      color: compact ? Theme.of(context).colorScheme.onSurfaceVariant : null,
+      padding: compact ? EdgeInsets.zero : null,
+      constraints: compact
+          ? const BoxConstraints(minWidth: 32, minHeight: 32)
           : null,
-      visualDensity: VisualDensity.compact,
+      visualDensity: compact ? null : VisualDensity.compact,
       onPressed: onPressed,
       tooltip: tooltip,
       icon: icon,

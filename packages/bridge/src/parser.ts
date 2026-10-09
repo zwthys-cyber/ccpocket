@@ -1,3 +1,5 @@
+import type { CodexRecoveryState } from "./codex-recovery.js";
+import type { GoalNotification } from "./goal-notifications.js";
 import type { GalleryImageInfo } from "./gallery-store.js";
 import type { ImageRef } from "./image-store.js";
 import type {
@@ -105,6 +107,9 @@ export type ClientMessage =
       protocolVersion?: number;
       minimumProtocolVersion?: number;
       supportedServerMessages?: string[];
+      deliveryRevision?: number;
+      performanceMode?: boolean;
+      sessionPerformanceModes?: Record<string, boolean>;
     }
   | {
       type: "start";
@@ -195,7 +200,9 @@ export type ClientMessage =
       serviceTier: string;
       sessionId?: string;
     }
-  | { type: "get_goal"; sessionId: string }
+  | { type: "set_codex_recovery"; sessionId: string; enabled: boolean }
+  | { type: "cancel_codex_recovery"; sessionId: string }
+  | { type: "get_goal"; sessionId: string; background?: boolean }
   | {
       type: "set_goal";
       sessionId: string;
@@ -285,10 +292,32 @@ export type ClientMessage =
       requestId?: string;
     }
   | {
+      type: "reveal_file_local";
+      projectPath: string;
+      filePath: string;
+      requestId: string;
+      proofPort: number;
+      proofToken: string;
+    }
+  | {
+      type: "reveal_file";
+      projectPath: string;
+      filePath: string;
+      requestId: string;
+      proofPath: string;
+      proofToken: string;
+    }
+  | {
       type: "read_file";
       projectPath: string;
       filePath: string;
       maxLines?: number;
+      requestId?: string;
+    }
+  | {
+      type: "read_model_file";
+      projectPath: string;
+      filePath: string;
       requestId?: string;
     }
   | {
@@ -325,6 +354,7 @@ export type ClientMessage =
       path: string;
       requestId?: string;
       includeHidden?: boolean;
+      includeFiles?: boolean;
     }
   | {
       type: "get_diff";
@@ -632,6 +662,7 @@ export type ServerMessage =
     }
   | {
       type: "result";
+      notification?: GoalNotification;
       subtype: string;
       result?: string;
       error?: string;
@@ -687,10 +718,13 @@ export type ServerMessage =
       sessionId: string;
       context: Record<string, unknown>;
     }
+  | { type: "session_activity"; sessionId?: string; at: string; historySeq?: number }
+  | { type: "performance_mode_state"; deliveryRevision: number }
   | { type: "status"; status: ProcessStatus }
   | { type: "history"; messages: ServerMessage[] }
   | {
       type: "history_delta";
+      filtered?: boolean;
       sessionId?: string;
       fromSeq: number;
       toSeq: number;
@@ -699,6 +733,7 @@ export type ServerMessage =
     }
   | {
       type: "history_snapshot";
+      filtered?: boolean;
       sessionId?: string;
       fromSeq: number;
       toSeq: number;
@@ -712,8 +747,10 @@ export type ServerMessage =
       limit: number;
       items: QueuedInputItem[];
     }
+  | { type: "codex_recovery_state"; sessionId?: string; recovery: CodexRecoveryState }
   | {
       type: "goal_state";
+      notification?: GoalNotification;
       sessionId?: string;
       goal: CodexGoal | null;
     }
@@ -727,11 +764,16 @@ export type ServerMessage =
   | { type: "stream_delta"; text: string }
   | { type: "thinking_delta"; text: string }
   | {
+      type: "reveal_file_result";
+      requestId: string;
+      errorCode?: "not_local_mac" | "path_not_allowed" | "reveal_failed";
+    }
+  | {
       type: "file_content";
       projectPath?: string;
       requestId?: string;
       filePath: string;
-      kind?: "text" | "image" | "audio" | "video";
+      kind?: "text" | "image" | "audio" | "video" | "model";
       content: string;
       language?: string;
       error?: string;
@@ -803,6 +845,7 @@ export type ServerMessage =
       type: "directory_listing";
       path: string;
       directories: Array<{ name: string; path: string }>;
+      files?: Array<{ name: string; path: string }>;
       requestId?: string;
     }
   | {
@@ -1301,6 +1344,21 @@ export function parseClientMessage(data: string): ClientMessage | null {
 
     switch (msg.type) {
       case "client_capabilities":
+        if (
+          msg.deliveryRevision !== undefined &&
+          (!Number.isSafeInteger(msg.deliveryRevision) || Number(msg.deliveryRevision) < 0)
+        ) return null;
+        if (
+          msg.performanceMode !== undefined && typeof msg.performanceMode !== "boolean"
+        ) return null;
+        if (
+          msg.sessionPerformanceModes !== undefined && (
+            msg.sessionPerformanceModes === null ||
+            typeof msg.sessionPerformanceModes !== "object" ||
+            Array.isArray(msg.sessionPerformanceModes) ||
+            Object.values(msg.sessionPerformanceModes).some((value) => typeof value !== "boolean")
+          )
+        ) return null;
         if (msg.appVersion !== undefined && typeof msg.appVersion !== "string")
           return null;
         if (
@@ -1474,7 +1532,17 @@ export function parseClientMessage(data: string): ClientMessage | null {
         if (msg.sessionId !== undefined && typeof msg.sessionId !== "string")
           return null;
         break;
+      case "set_codex_recovery":
+        if (typeof msg.enabled !== "boolean") return null;
+        if (typeof msg.sessionId !== "string" || !msg.sessionId) return null;
+        break;
+      case "cancel_codex_recovery":
+        if (typeof msg.sessionId !== "string" || !msg.sessionId) return null;
+        break;
       case "get_goal":
+        if (msg.background !== undefined && typeof msg.background !== "boolean") return null;
+        if (typeof msg.sessionId !== "string") return null;
+        break;
       case "clear_goal":
         if (typeof msg.sessionId !== "string") return null;
         break;
@@ -1685,8 +1753,31 @@ export function parseClientMessage(data: string): ClientMessage | null {
         )
           return null;
         break;
+      case "reveal_file_local":
+        if (
+          !hasOnlyKeys(["type", "projectPath", "filePath", "requestId", "proofPort", "proofToken"]) ||
+          ![msg.projectPath, msg.filePath, msg.requestId].every(
+            (value) => typeof value === "string" && value.trim().length > 0 &&
+              value.length <= 4096 && !value.includes("\0"),
+          ) ||
+          typeof msg.proofPort !== "number" || !Number.isInteger(msg.proofPort) || msg.proofPort < 1024 || msg.proofPort > 65535 ||
+          typeof msg.proofToken !== "string" || !/^[a-f0-9]{64}$/.test(msg.proofToken)
+        ) return null;
+        break;
+      case "reveal_file":
+        if (
+          !hasOnlyKeys(["type", "projectPath", "filePath", "requestId", "proofPath", "proofToken"]) ||
+          ![msg.projectPath, msg.filePath, msg.requestId, msg.proofPath].every(
+            (value) => typeof value === "string" && value.trim().length > 0 &&
+              value.length <= 4096 && !value.includes("\0"),
+          ) ||
+          typeof msg.proofToken !== "string" ||
+          !/^[a-f0-9]{64}$/.test(msg.proofToken)
+        ) return null;
+        break;
       case "read_file":
       case "read_media_file":
+      case "read_model_file":
         if (typeof msg.projectPath !== "string") return null;
         if (typeof msg.filePath !== "string") return null;
         break;
@@ -1760,7 +1851,8 @@ export function parseClientMessage(data: string): ClientMessage | null {
         if (typeof msg.projectPath !== "string") return null;
         break;
       case "list_directory":
-        if (!hasOnlyKeys(["type", "path", "requestId", "includeHidden"]))
+        if (msg.includeFiles !== undefined && typeof msg.includeFiles !== "boolean") return null;
+        if (!hasOnlyKeys(["type", "path", "requestId", "includeHidden", "includeFiles"]))
           return null;
         if (
           typeof msg.path !== "string" ||

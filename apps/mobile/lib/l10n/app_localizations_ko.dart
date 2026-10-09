@@ -10,6 +10,21 @@ class AppLocalizationsKo extends AppLocalizations {
   AppLocalizationsKo([String locale = 'ko']) : super(locale);
 
   @override
+  String get notifyGoalProgress => '중간 응답 · 목표 진행 중';
+
+  @override
+  String get notifyGoalComplete => '목표 달성';
+
+  @override
+  String get notifyGoalBlocked => '계속하려면 조치가 필요합니다';
+
+  @override
+  String get notifyGoalBudgetLimited => '토큰 예산에 도달하여 중지됨';
+
+  @override
+  String get notifyGoalUsageLimited => '사용 한도에 도달하여 중지됨';
+
+  @override
   String get appTitle => 'CC Pocket';
 
   @override
@@ -3011,4 +3026,235 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get sketchDelete => '삭제';
+
+  @override
+  String get filePreviewModelLoadFailed =>
+      '3D 모델을 불러올 수 없습니다. 형상과 리소스가 포함된 GLB 파일인지 확인하세요.';
+
+  @override
+  String get filePreviewModelTooLarge => '3D 미리보기는 50 MB 이하의 GLB 파일을 지원합니다.';
+
+  @override
+  String get filePreviewModelGestures => '드래그하여 회전 · 핀치하여 확대/축소';
+
+  @override
+  String get filePreviewModelReset => '시점 초기화';
+
+  @override
+  String get filePreviewModelWarning => '일부 재질이나 기능이 정확하게 표시되지 않을 수 있습니다.';
+
+  @override
+  String get saveToPhotos => '사진에 저장';
+
+  @override
+  String get savedToPhotos => '사진에 저장했습니다';
+
+  @override
+  String get saveToPhotosFailed => '사진에 저장하지 못했습니다. 지원하지 않는 형식일 수 있습니다.';
+
+  @override
+  String get photosPermissionDenied => '이미지와 동영상을 저장하려면 설정에서 사진 추가를 허용하세요.';
+
+  @override
+  String get browserTitle => '파일';
+
+  @override
+  String get browserSearch => '파일 이름 및 경로 검색';
+
+  @override
+  String get browserBack => '뒤로';
+
+  @override
+  String get browserParent => '상위 폴더';
+
+  @override
+  String get browserClose => '닫기';
+
+  @override
+  String get browserAddToChat => '채팅에 추가';
+
+  @override
+  String get browserRecent => '최근에 연 파일';
+
+  @override
+  String get browserEmpty => '폴더가 비어 있습니다';
+
+  @override
+  String get browserNoResults => '일치하는 파일이나 폴더가 없습니다';
+
+  @override
+  String get browserRetry => '다시 시도';
+
+  @override
+  String get browserTimeout => '응답 시간이 초과되었습니다. 연결을 확인하고 다시 시도하세요.';
+
+  @override
+  String get browserIndexLimited =>
+      '검색은 불러온 파일 목록을 대상으로 합니다. 모든 항목을 보려면 폴더를 여세요.';
+
+  @override
+  String get browserLegacy => '전체 폴더 내용을 보려면 Bridge를 업데이트하세요. 불러온 목록을 표시합니다.';
+
+  @override
+  String get browserToggleList => '파일 목록 표시 전환';
+
+  @override
+  String get browserRefresh => '새로고침';
+
+  @override
+  String get browserNotAllowed => '탐색이 허용된 범위 밖의 폴더입니다.';
+
+  @override
+  String get browserNotFound => '이 경로는 더 이상 존재하지 않습니다.';
+
+  @override
+  String get browserUnreadable => '폴더를 읽을 수 없습니다.';
+
+  @override
+  String get browserCopyPath => '경로 복사';
+
+  @override
+  String get browserNoRecent => '연 파일이 여기에 표시됩니다.';
+
+  @override
+  String get finderReveal => 'Finder에서 보기';
+
+  @override
+  String get finderRevealLocalOnly =>
+      'Bridge가 이 Mac에서 실행 중인지 확인하지 못했습니다. 연결을 확인한 후 다시 시도하세요.';
+
+  @override
+  String get finderRevealUpdateBridge => 'Finder에서 파일을 보려면 Bridge를 업데이트하세요.';
+
+  @override
+  String get finderRevealFailed =>
+      'Finder에서 파일을 표시하지 못했습니다. 파일과 Bridge 연결을 확인하세요.';
+
+  @override
+  String get performanceModeBridgeUpdate =>
+      '통신량을 줄이려면 Bridge를 업데이트하세요. 현재는 화면에서만 세부 정보를 숨깁니다.';
+
+  @override
+  String get liteMode => '성능 모드';
+
+  @override
+  String get liteModeDescription =>
+      'Bridge가 전송하는 도구 기록과 작업 중 이미지를 줄입니다. 생성 이미지, 첨부 파일, 탐색기 이미지는 표시합니다.';
+
+  @override
+  String get chatDisplayMode => '표시 모드';
+
+  @override
+  String get standardMode => '표준';
+
+  @override
+  String get followDefaultMode => '기본 설정 사용';
+
+  @override
+  String get liteModeRunning => '실행 중';
+
+  @override
+  String get liteModeWaiting => '승인 또는 응답 대기 중';
+
+  @override
+  String get liteModeIdle => '대기 중';
+
+  @override
+  String get liteModeCompacting => '대화 정리 중';
+
+  @override
+  String get liteModeStarting => '시작 중';
+
+  @override
+  String liteModeLastActivity(String elapsed) {
+    return '수신 $elapsed 전';
+  }
+
+  @override
+  String liteModeObserved(String elapsed) {
+    return '관찰 $elapsed';
+  }
+
+  @override
+  String get demoTry => '연결 없이 체험';
+
+  @override
+  String get demoTitle => 'CC Pocket 체험';
+
+  @override
+  String get demoExit => '체험 종료';
+
+  @override
+  String get demoRestart => '다시 체험';
+
+  @override
+  String get demoDisclaimer => '오프라인 체험 · 샘플 응답입니다. AI 사용이나 파일 변경은 없습니다.';
+
+  @override
+  String get demoWelcome =>
+      '요청을 보내고 변경을 승인하거나 거부한 뒤 차이를 확인해 보세요. 컴퓨터나 계정이 필요하지 않습니다.';
+
+  @override
+  String get demoSuggestion => '환영 메시지를 더 친근하게 바꿔 줘';
+
+  @override
+  String get demoInputHint => '메시지 체험';
+
+  @override
+  String get demoInputHelp => '어떤 메시지든 동일한 샘플을 시작합니다. AI로 전송되지 않습니다.';
+
+  @override
+  String get demoSend => '샘플 요청 보내기';
+
+  @override
+  String get demoProposal =>
+      '이 샘플에서는 lib/welcome.dart의 인사말을 “Hello”에서 “Hello, Pocket!”으로 변경합니다. 편집을 허용할지 선택하세요.';
+
+  @override
+  String get demoApprovalTitle => '샘플 편집을 허용할까요?';
+
+  @override
+  String get demoApprovalDetail => '편집 · lib/welcome.dart\n샘플 데이터만 변경합니다.';
+
+  @override
+  String get demoReject => '거부';
+
+  @override
+  String get demoApprove => '한 번 허용';
+
+  @override
+  String get demoCompleted =>
+      '샘플 편집이 완료되었습니다. 아래에서 추가 및 삭제된 줄을 확인하세요. 실제 파일은 변경되지 않았습니다.';
+
+  @override
+  String get demoRejected => '편집을 거부했습니다. 변경된 내용이 없습니다. 도구 작업은 직접 결정할 수 있습니다.';
+
+  @override
+  String get demoDiffSummary => '샘플 차이 · 1줄 추가, 1줄 삭제';
+
+  @override
+  String get demoFinish => '자신의 Bridge에 연결하면 실제 프로젝트와 AI 에이전트로 작업할 수 있습니다.';
+
+  @override
+  String get demoConnect => '내 Bridge 설정';
+
+  @override
+  String liteModeDurationSeconds(int seconds) {
+    return '$seconds초';
+  }
+
+  @override
+  String liteModeDurationMinutes(int minutes, int seconds) {
+    return '$minutes분 $seconds초';
+  }
+
+  @override
+  String liteModeDurationHours(int hours, int minutes) {
+    return '$hours시간 $minutes분';
+  }
+
+  @override
+  String liteModeDurationDays(int days, int hours) {
+    return '$days일 $hours시간';
+  }
 }

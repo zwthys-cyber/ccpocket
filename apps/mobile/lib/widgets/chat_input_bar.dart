@@ -8,6 +8,7 @@ import '../l10n/app_localizations.dart';
 import '../models/image_paste_shortcut.dart';
 import '../models/messages.dart';
 import '../services/native_paste_bridge.dart';
+import 'ios_image_paste_context_menu.dart';
 import '../utils/platform_helper.dart';
 import '../utils/diff_parser.dart';
 import 'bubbles/image_preview.dart';
@@ -60,6 +61,9 @@ class ChatInputBar extends StatelessWidget {
   /// Callback to paste an image from the text field context menu.
   final Future<void> Function()? onPasteImageFromContextMenu;
 
+  /// Receives an image already read by the iOS system paste menu action.
+  final void Function(Uint8List bytes, String mimeType)? onNativePasteImage;
+
   /// Returns whether the clipboard currently contains a supported image.
   final Future<bool> Function()? hasImageInClipboard;
 
@@ -103,6 +107,7 @@ class ChatInputBar extends StatelessWidget {
     this.hintText,
     this.onPasteImage,
     this.onPasteImageFromContextMenu,
+    this.onNativePasteImage,
     this.hasImageInClipboard,
     this.imagePasteShortcut = ImagePasteShortcut.ctrlV,
     this.onCompletionKeyEvent,
@@ -153,6 +158,7 @@ class ChatInputBar extends StatelessWidget {
             hasInputText: hasInputText,
             onPasteImage: onPasteImage,
             onPasteImageFromContextMenu: onPasteImageFromContextMenu,
+            onNativePasteImage: onNativePasteImage,
             hasImageInClipboard: hasImageInClipboard,
             imagePasteShortcut: imagePasteShortcut,
             onCompletionKeyEvent: onCompletionKeyEvent,
@@ -723,6 +729,7 @@ class _InputTextField extends StatefulWidget {
     required this.hasInputText,
     this.onPasteImage,
     this.onPasteImageFromContextMenu,
+    this.onNativePasteImage,
     this.hasImageInClipboard,
     required this.imagePasteShortcut,
     this.onCompletionKeyEvent,
@@ -741,6 +748,7 @@ class _InputTextField extends StatefulWidget {
 
   /// Callback to paste an image from the long-press context menu.
   final Future<void> Function()? onPasteImageFromContextMenu;
+  final void Function(Uint8List bytes, String mimeType)? onNativePasteImage;
 
   /// Returns whether the clipboard currently contains a supported image.
   final Future<bool> Function()? hasImageInClipboard;
@@ -912,7 +920,7 @@ class _InputTextFieldState extends State<_InputTextField>
   /// Image paste shortcuts attach clipboard images without blocking normal
   /// Cmd+V text paste unless the legacy Cmd+V mode is selected.
   ///
-  /// In the default Ctrl+V mode on Windows/Linux, normal text paste stays
+  /// In the default mode (Cmd+V on macOS, Ctrl+V elsewhere), text paste stays
   /// native while clipboard images are still probed asynchronously.
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
@@ -952,7 +960,7 @@ class _InputTextFieldState extends State<_InputTextField>
         HardwareKeyboard.instance.isControlPressed;
     if (widget.onPasteImage != null && _isImagePasteShortcut(event)) {
       if (widget.imagePasteShortcut == ImagePasteShortcut.ctrlV) {
-        // Keep native text paste on Windows/Linux, and independently attach
+        // Keep native text paste on all platforms, and independently attach
         // clipboard images such as screenshots when present.
         unawaited(_handleImagePasteOnly());
         return KeyEventResult.ignored;
@@ -1092,15 +1100,23 @@ class _InputTextFieldState extends State<_InputTextField>
       return false;
     }
     final hardware = HardwareKeyboard.instance;
+    final isMacOS = defaultTargetPlatform == TargetPlatform.macOS;
     return switch (widget.imagePasteShortcut) {
+      // On macOS the native paste modifier is Cmd, not Ctrl. Accept Cmd+V
+      // so screenshots on the clipboard get attached alongside a normal paste.
+      // Cmd+Alt+V is left alone so it stays available as a native paste.
       ImagePasteShortcut.ctrlV =>
-        !hardware.isMetaPressed &&
-            _isControlStyleTextShortcut(
-              event,
-              key: LogicalKeyboardKey.keyV,
-              controlCharacter: 0x16,
-              allowNullCharacter: false,
-            ),
+        isMacOS
+            ? (hardware.isMetaPressed &&
+                  !hardware.isControlPressed &&
+                  !hardware.isAltPressed)
+            : (!hardware.isMetaPressed &&
+                  _isControlStyleTextShortcut(
+                    event,
+                    key: LogicalKeyboardKey.keyV,
+                    controlCharacter: 0x16,
+                    allowNullCharacter: false,
+                  )),
       ImagePasteShortcut.commandV =>
         hardware.isMetaPressed && !hardware.isControlPressed,
     };
@@ -1158,10 +1174,19 @@ class _InputTextFieldState extends State<_InputTextField>
           ),
         );
       }
-      return SystemContextMenu.editableText(
+      final systemMenu = SystemContextMenu.editableText(
         editableTextState: editableTextState,
         items: items,
       );
+      final onNativeImage = widget.onNativePasteImage;
+      if (_hasImageInClipboard && onNativeImage != null) {
+        return IOSImagePasteContextMenu(
+          editableTextState: editableTextState,
+          onImage: onNativeImage,
+          fallback: systemMenu,
+        );
+      }
+      return systemMenu;
     }
 
     final items = List<ContextMenuButtonItem>.of(

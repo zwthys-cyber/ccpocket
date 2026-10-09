@@ -1,4 +1,6 @@
 import { createServer } from "node:http";
+import { once } from "node:events";
+import { WebSocket } from "ws";
 import { createHash } from "node:crypto";
 import {
   mkdirSync,
@@ -22,9 +24,13 @@ const {
   extractMessageImagesMock,
   getAllRecentSessionsMock,
   getCodexSessionIndexMetadataMock,
+  loadCodexSessionNamesMock,
   saveCodexSessionProfileMock,
   generateCommitMessageMock,
   gitCommitMock,
+  consumeFinderProofMock,
+  verifyFinderSocketProofMock,
+  revealInFinderMock,
 } = vi.hoisted(() => ({
   getSessionHistoryMock: vi.fn(),
   getCodexSessionHistoryMock: vi.fn(),
@@ -32,9 +38,19 @@ const {
   extractMessageImagesMock: vi.fn(),
   getAllRecentSessionsMock: vi.fn(),
   getCodexSessionIndexMetadataMock: vi.fn(),
+  loadCodexSessionNamesMock: vi.fn(),
   saveCodexSessionProfileMock: vi.fn(),
   generateCommitMessageMock: vi.fn(),
   gitCommitMock: vi.fn(),
+  consumeFinderProofMock: vi.fn(),
+  verifyFinderSocketProofMock: vi.fn(),
+  revealInFinderMock: vi.fn(),
+}));
+
+vi.mock("./finder-reveal.js", () => ({
+  consumeFinderProof: consumeFinderProofMock,
+  verifyFinderSocketProof: verifyFinderSocketProofMock,
+  revealInFinder: revealInFinderMock,
 }));
 
 vi.mock("./sessions-index.js", () => ({
@@ -45,6 +61,7 @@ vi.mock("./sessions-index.js", () => ({
   codexUserTurnUuid: (ordinal: number) => `codex:user-turn:${ordinal}`,
   getAllRecentSessions: getAllRecentSessionsMock,
   getCodexSessionIndexMetadata: getCodexSessionIndexMetadataMock,
+  loadCodexSessionNames: loadCodexSessionNamesMock,
   saveCodexSessionProfile: saveCodexSessionProfileMock,
   renameClaudeSession: vi.fn().mockResolvedValue(true),
   renameCodexSession: vi.fn().mockResolvedValue(true),
@@ -480,9 +497,13 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     extractMessageImagesMock.mockReset();
     getAllRecentSessionsMock.mockReset();
     getCodexSessionIndexMetadataMock.mockReset();
+    loadCodexSessionNamesMock.mockReset().mockResolvedValue(new Map());
     saveCodexSessionProfileMock.mockReset();
     generateCommitMessageMock.mockReset();
     gitCommitMock.mockReset();
+    consumeFinderProofMock.mockReset().mockResolvedValue(true);
+    verifyFinderSocketProofMock.mockReset().mockResolvedValue(true);
+    revealInFinderMock.mockReset().mockResolvedValue(undefined);
     getAllRecentSessionsMock.mockResolvedValue({ sessions: [], hasMore: false });
     getCodexSessionIndexMetadataMock.mockResolvedValue(new Map());
     getCodexSessionHistoryMock.mockResolvedValue([]);
@@ -496,6 +517,151 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     vi.unstubAllEnvs();
     vi.useRealTimers();
     httpServer.close();
+  });
+
+  it("restores recovery over a real reconnect and cancels it through the protocol", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    vi.spyOn(bridge as any, "refreshConnectionMetadata").mockImplementation(() => {});
+    const manager = (bridge as any).sessionManager;
+    const id = manager.create("/tmp/recovery-test", undefined, undefined, undefined, "codex");
+    const session = manager.get(id);
+    const proc = new CodexProcess("linux");
+    (proc as any)._threadId = "recovery-thread";
+    session.process = proc; session.claudeSessionId = "recovery-thread";
+    vi.spyOn(proc, "readRateLimits").mockResolvedValue({ rateLimits: {} });
+    vi.spyOn(proc, "readThread").mockResolvedValue({ id: "recovery-thread", turns: [] });
+    proc.on("message", (message) => (bridge as any).broadcastSessionMessage(id, message));
+    httpServer.listen(0, "127.0.0.1"); await once(httpServer, "listening");
+    const port = (httpServer.address() as { port: number }).port;
+    const sockets: WebSocket[] = [];
+    async function connect() {
+      const socket = new WebSocket(`ws://127.0.0.1:${port}`); sockets.push(socket);
+      const messages: any[] = [];
+      socket.on("message", (data) => messages.push(JSON.parse(data.toString())));
+      await once(socket, "open");
+      socket.send(JSON.stringify({ type: "client_capabilities", protocolVersion: 1, minimumProtocolVersion: 1, supportedServerMessages: ["codex_recovery_state"] }));
+      return { socket, messages };
+    }
+    try {
+      const first = await connect();
+      first.socket.send(JSON.stringify({ type: "set_codex_recovery", sessionId: id, enabled: true }));
+      await vi.waitFor(() => expect(proc.getRecoveryState().enabled).toBe(true));
+      (proc as any).recovery.schedule({ code: 429, retryAfterSeconds: 3600 }, { text: "task" });
+      await vi.waitFor(() => expect(first.messages.some((m) => m.type === "codex_recovery_state" && m.recovery.phase === "waiting")).toBe(true));
+      first.socket.close(); await once(first.socket, "close");
+      expect(proc.getRecoveryState().phase).toBe("waiting");
+      const second = await connect();
+      second.socket.send(JSON.stringify({ type: "get_history", sessionId: id }));
+      await vi.waitFor(() => expect(second.messages.some((m) => m.type === "codex_recovery_state" && m.recovery.phase === "waiting")).toBe(true));
+      second.socket.send(JSON.stringify({ type: "cancel_codex_recovery", sessionId: id }));
+      await vi.waitFor(() => expect(proc.getRecoveryState().phase).toBe("armed"));
+      expect(proc.getRecoveryState().retryAt).toBeNull();
+    } finally {
+      sockets.forEach((socket) => socket.terminate());
+      for (const socket of (bridge as any).wss.clients) socket.terminate();
+      proc.stop(); bridge.close();
+    }
+  });
+
+  it("delivers projected history over real sockets and restores details after reconnect", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const internal = bridge as any;
+    vi.spyOn(internal, "refreshConnectionMetadata").mockImplementation(() => {});
+    const manager = internal.sessionManager;
+    const id = manager.create("/tmp/performance-test");
+    const session = manager.get(id);
+    const full = { type: "tool_result", toolUseId: "t1", content: "screenshot".repeat(100_000), images: [{ url: "/images/simulator" }] };
+    session.history = [full];
+    httpServer.listen(0, "127.0.0.1");
+    await once(httpServer, "listening");
+    const port = (httpServer.address() as { port: number }).port;
+    const sockets: WebSocket[] = [];
+    async function connect(enabled: boolean) {
+      const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+      sockets.push(socket);
+      const messages: any[] = [];
+      socket.on("message", (data) => messages.push(JSON.parse(data.toString())));
+      await once(socket, "open");
+      socket.send(JSON.stringify({ type: "client_capabilities", performanceMode: enabled, deliveryRevision: 1 }));
+      await vi.waitFor(() => expect(messages.some((m) => m.type === "performance_mode_state")).toBe(true));
+      socket.send(JSON.stringify({ type: "get_history", sessionId: id }));
+      await vi.waitFor(() => expect(messages.some((m) => m.type === "history")).toBe(true));
+      return { socket, messages };
+    }
+    try {
+      const first = await connect(true);
+      const projected = first.messages.find((m) => m.type === "history");
+      expect(projected.messages).toEqual([{ type: "tool_result", toolUseId: "t1", content: "" }]);
+      expect(JSON.stringify(projected).length).toBeLessThan(200);
+      first.socket.close();
+      await once(first.socket, "close");
+      const second = await connect(true);
+      expect(second.messages.find((m) => m.type === "history").messages).toEqual(projected.messages);
+      const standard = await connect(false);
+      expect(standard.messages.find((m) => m.type === "history").messages).toEqual([full]);
+      expect(session.history).toEqual([full]);
+    } finally {
+      sockets.forEach((socket) => socket.terminate());
+      for (const socket of internal.wss.clients) socket.terminate();
+      bridge.close();
+    }
+  });
+
+  it.each([true, false])("delivers complete history with compression negotiated=%s", async (compressed) => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    // Exercise real transport without starting background agent processes.
+    vi.spyOn(bridge as any, "handleConnection").mockImplementation(() => {});
+    const payload = { type: "history", messages: Array.from({ length: 150 }, (_, i) => ({ text: `message-${i}: ${"history ".repeat(200)}` })) };
+    const wss = (bridge as any).wss;
+    wss.on("connection", (socket: WebSocket) => socket.send(JSON.stringify(payload)));
+    httpServer.listen(0, "127.0.0.1");
+    await once(httpServer, "listening");
+    const address = httpServer.address() as { port: number };
+    const client = new WebSocket(`ws://127.0.0.1:${address.port}`, { perMessageDeflate: compressed });
+    try {
+      const [data] = await once(client, "message");
+      expect(JSON.parse(data.toString())).toEqual(payload);
+      expect(client.extensions.includes("permessage-deflate")).toBe(compressed);
+    } finally {
+      client.terminate();
+      for (const socket of wss.clients) socket.terminate();
+      bridge.close();
+    }
+  });
+
+  it("preserves more than 100 canonical messages and stable user identities", async () => {
+    const history = Array.from({ length: 150 }, (_, i) => ({
+      role: "user", uuid: `codex:user-turn:${i + 1}`,
+      content: [{ type: "text", text: `prompt ${i + 1}` }],
+    }));
+    codexThreadToSessionHistoryMock.mockReturnValue(history);
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const manager = (bridge as any).sessionManager;
+    const id = manager.create("/tmp/project-codex", undefined, undefined, undefined, "codex");
+    const session = manager.get(id);
+    session.claudeSessionId = "thread-large";
+    try {
+      const entries = await (bridge as any).codexCanonicalHistoryEntries(session);
+      expect(entries).toHaveLength(150);
+      expect(entries[0].message.userMessageUuid).toBe("codex:user-turn:1");
+      expect(entries[149].message.userMessageUuid).toBe("codex:user-turn:150");
+      expect(session.codexOrderedHistoryEntries).toHaveLength(100);
+    } finally {
+      bridge.close();
+    }
+  });
+
+  it("stops dedicated discovery after a list failure", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const stop = vi.fn();
+    const listThreads = vi.fn().mockRejectedValue(new Error("discovery failed"));
+    vi.spyOn(bridge as any, "createStandaloneCodexProcess").mockResolvedValue({ listThreads, stop });
+    try {
+      await expect((bridge as any).listRecentCodexThreads({ type: "list_recent_sessions", provider: "codex" })).rejects.toThrow("discovery failed");
+      expect(stop).toHaveBeenCalledTimes(1);
+    } finally {
+      bridge.close();
+    }
   });
 
   it("acknowledges push registration only after relay success", async () => {
@@ -5252,6 +5418,41 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     }
   });
 
+  it.skipIf(process.platform === "win32")("reveals an allowed local file and rejects remote proofs and escaping symlinks", async () => {
+    const projectPath = mkdtempSync(resolve(tmpdir(), "ccpocket-bridge-"));
+    const outside = mkdtempSync(resolve(tmpdir(), "ccpocket-outside-"));
+    writeFileSync(resolve(projectPath, "movie.mp4"), "fixture");
+    writeFileSync(resolve(outside, "secret.mp4"), "fixture");
+    symlinkSync(resolve(outside, "secret.mp4"), resolve(projectPath, "link.mp4"));
+    const bridge = new BridgeWebSocketServer({ server: httpServer, allowedDirs: [projectPath], platform: "darwin" });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+    const request = { type: "reveal_file", projectPath, filePath: "movie.mp4", requestId: "finder-1", proofPath: "/proof", proofToken: "a".repeat(64) };
+    const send = async (patch = {}) => {
+      ws.send.mockClear();
+      await (bridge as any).handleClientMessage({ ...request, ...patch }, ws);
+      await expect.poll(() => ws.send.mock.calls.length).toBe(1);
+      return JSON.parse(ws.send.mock.calls[0][0]);
+    };
+    try {
+      expect(await send()).toEqual({ type: "reveal_file_result", requestId: "finder-1" });
+      expect(revealInFinderMock).toHaveBeenCalledTimes(1);
+      expect(revealInFinderMock.mock.calls[0][0]).toMatch(/\/movie\.mp4$/);
+      expect(await send({ type: "reveal_file_local", proofPort: 54321 })).toEqual({ type: "reveal_file_result", requestId: "finder-1" });
+      expect(verifyFinderSocketProofMock).toHaveBeenCalledWith(54321, request.proofToken);
+      verifyFinderSocketProofMock.mockResolvedValue(false);
+      expect(await send({ type: "reveal_file_local", proofPort: 54321 })).toMatchObject({ errorCode: "not_local_mac" });
+      expect(await send({ filePath: "link.mp4" })).toMatchObject({ errorCode: "path_not_allowed" });
+      expect(await send({ filePath: resolve(outside, "secret.mp4") })).toMatchObject({ errorCode: "path_not_allowed" });
+      consumeFinderProofMock.mockResolvedValue(false);
+      expect(await send()).toMatchObject({ errorCode: "not_local_mac" });
+      expect(revealInFinderMock).toHaveBeenCalledTimes(2);
+    } finally {
+      bridge.close();
+      rmSync(projectPath, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
   it("returns base64 image data for image file peek", async () => {
     const projectPath = mkdtempSync(resolve(tmpdir(), "ccpocket-bridge-"));
     const pngBase64 =
@@ -5404,6 +5605,78 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     } finally {
       bridge.close();
       rmSync(projectPath, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["model.GLB", 32, undefined],
+    ["limit.glb", 50 * 1024 * 1024, undefined],
+    ["large.glb", 50 * 1024 * 1024 + 1, "model_too_large"],
+    ["source.blend", 32, "Unsupported 3D file type. Use a GLB file."],
+  ] as const)("handles GLB preview request for %s", async (filePath, size, error) => {
+    const projectPath = mkdtempSync(resolve(tmpdir(), "ccpocket-glb-"));
+    writeFileSync(resolve(projectPath, filePath), Buffer.alloc(size));
+    const mediaStore = new MediaStore();
+    const register = vi.spyOn(mediaStore, "register");
+    const bridge = new BridgeWebSocketServer({
+      server: httpServer,
+      allowedDirs: [projectPath],
+      mediaStore,
+    });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+
+    try {
+      await (bridge as any).handleClientMessage({
+        type: "read_model_file", projectPath, filePath, requestId: "model-1",
+      }, ws);
+      await expect.poll(() => ws.send.mock.calls.length).toBeGreaterThan(0);
+      const response = JSON.parse(ws.send.mock.calls[0][0]);
+      expect(response).toMatchObject({
+        type: "file_content", projectPath, filePath, requestId: "model-1",
+        kind: "model", content: "",
+      });
+      if (error) {
+        expect(response.error).toBe(error);
+        expect(response.mediaUrl).toBeUndefined();
+        expect(register).not.toHaveBeenCalled();
+      } else {
+        expect(response.error).toBeUndefined();
+        expect(response.mimeType).toBe("model/gltf-binary");
+        expect(response.sizeBytes).toBe(size);
+        expect(response.mediaUrl).toMatch(/^\/api\/media\/[a-f0-9]{48}$/);
+        expect(register).toHaveBeenCalledOnce();
+      }
+    } finally {
+      bridge.close();
+      rmSync(projectPath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects GLB preview symlinks outside the allowed directory", async () => {
+    const root = mkdtempSync(resolve(tmpdir(), "ccpocket-glb-policy-"));
+    const projectPath = resolve(root, "project");
+    mkdirSync(projectPath);
+    writeFileSync(resolve(root, "private.glb"), "private");
+    symlinkSync(resolve(root, "private.glb"), resolve(projectPath, "linked.glb"));
+    const mediaStore = new MediaStore();
+    const register = vi.spyOn(mediaStore, "register");
+    const bridge = new BridgeWebSocketServer({
+      server: httpServer, allowedDirs: [projectPath], mediaStore,
+    });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+    try {
+      await (bridge as any).handleClientMessage({
+        type: "read_model_file", projectPath, filePath: "linked.glb", requestId: "model-2",
+      }, ws);
+      await expect.poll(() => ws.send.mock.calls.length).toBeGreaterThan(0);
+      expect(JSON.parse(ws.send.mock.calls[0][0])).toMatchObject({
+        type: "file_content", projectPath, filePath: "linked.glb",
+        requestId: "model-2", content: "", error: "Path not allowed",
+      });
+      expect(register).not.toHaveBeenCalled();
+    } finally {
+      bridge.close();
+      rmSync(root, { recursive: true, force: true });
     }
   });
 
@@ -6966,6 +7239,25 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     bridge.close();
   });
 
+  it("keeps background goal failures out of chat but reports manual failures", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+    const goal = { objective: "Keep existing goal" };
+    const session = { id: "goal-session", provider: "codex", codexGoal: goal,
+      process: { getGoal: vi.fn().mockRejectedValue(new Error("timed out")) } };
+    vi.spyOn(bridge as any, "resolveSession").mockReturnValue(session);
+    await (bridge as any).handleClientMessage(
+      { type: "get_goal", sessionId: session.id, background: true }, ws);
+    expect(ws.send).not.toHaveBeenCalled();
+    expect(session.codexGoal).toBe(goal);
+    await (bridge as any).handleClientMessage(
+      { type: "get_goal", sessionId: session.id }, ws);
+    expect(JSON.parse(ws.send.mock.calls[0][0])).toMatchObject({
+      type: "error", errorCode: "goal_get_failed",
+    });
+    bridge.close();
+  });
+
   it("gets, updates, and clears a Codex goal", async () => {
     const bridge = new BridgeWebSocketServer({ server: httpServer });
     const ws = {
@@ -8268,6 +8560,25 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     bridge.close();
   });
 
+  it("shares Goal policy with Push and uses distinct progress and completion copy", async () => {
+    const fetchMock = vi.fn(async () => new Response("", { status: 200 }));
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+    const bridge = new BridgeWebSocketServer({ server: httpServer, firebaseAuth: {
+      uid: "bridge-test", getIdToken: vi.fn(async () => "mock-token"),
+      initialize: vi.fn(async () => {}),
+    } as any });
+    (bridge as any).tokenLocales.set("token-1", "ja");
+    for (const notification of ["none", "goal_progress"]) {
+      (bridge as any).broadcastSessionMessage("s-1", { type: "result", subtype: "success", notification });
+    }
+    (bridge as any).broadcastSessionMessage("s-1", { type: "goal_state", goal: null, notification: "goal_complete" });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const payloads = fetchMock.mock.calls.map(call => JSON.parse(String((call as unknown as [string, RequestInit])[1].body)));
+    expect(payloads[0]).toMatchObject({ eventType: "goal_progress", title: "💬 中間応答・ゴール進行中" });
+    expect(payloads[1]).toMatchObject({ eventType: "goal_complete", title: "✅ ゴール達成" });
+    bridge.close();
+  });
+
   it("does not notify the relay without an active token registration", async () => {
     const fetchMock = vi.fn(async () => new Response("", { status: 200 }));
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
@@ -9515,7 +9826,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     bridge.close();
   });
 
-  it("uses active codex thread/list for codex recent sessions", async () => {
+  it("isolates recent-session discovery from a blocked active Codex process", async () => {
     const bridge = new BridgeWebSocketServer({ server: httpServer });
     const ws = {
       readyState: OPEN_STATE,
@@ -9538,7 +9849,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       .map((c: unknown[]) => JSON.parse(c[0] as string))
       .find((m: any) => m.type === "system" && m.subtype === "session_created");
     const session = (bridge as any).sessionManager.get(created.sessionId);
-    session.process.listThreads.mockResolvedValue({
+    const listThreads = vi.fn().mockResolvedValue({
       data: [
         {
           id: "thr_codex_1",
@@ -9554,6 +9865,9 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       ],
       nextCursor: null,
     });
+    const stop = vi.fn();
+    vi.spyOn(bridge as any, "createStandaloneCodexProcess").mockResolvedValue({ listThreads, stop });
+    session.process.listThreads.mockImplementation(() => new Promise(() => {}));
     getCodexSessionIndexMetadataMock.mockResolvedValue(
       new Map([
         [
@@ -9573,6 +9887,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       ]),
     );
 
+    loadCodexSessionNamesMock.mockResolvedValue(new Map([["thr_codex_1", "Local title"]]));
     const payload = await (bridge as any).listRecentCodexThreads(
       {
         type: "list_recent_sessions",
@@ -9581,7 +9896,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       },
     );
 
-    expect(session.process.listThreads).toHaveBeenCalledWith({
+    expect(listThreads).toHaveBeenCalledWith({
       limit: 20,
       cwd: "/tmp/project-codex",
       searchTerm: undefined,
@@ -9595,7 +9910,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     expect(payload.sessions[0]).toMatchObject({
       provider: "codex",
       sessionId: "thr_codex_1",
-      name: "Crash triage",
+      name: "Local title",
       agentNickname: "Atlas",
       agentRole: "explorer",
       gitBranch: "feat/protocol",
@@ -9612,6 +9927,8 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       },
     });
 
+    expect(session.process.listThreads).not.toHaveBeenCalled();
+    expect(stop).toHaveBeenCalledTimes(1);
     bridge.close();
   });
 
@@ -9698,7 +10015,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       .map((c: unknown[]) => JSON.parse(c[0] as string))
       .find((m: any) => m.type === "system" && m.subtype === "session_created");
     const session = (bridge as any).sessionManager.get(created.sessionId);
-    session.process.listThreads.mockResolvedValue({
+    const listThreads = vi.fn().mockResolvedValue({
       data: [
         {
           id: "thr_codex_all",
@@ -9714,6 +10031,9 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       ],
       nextCursor: null,
     });
+    const stop = vi.fn();
+    vi.spyOn(bridge as any, "createStandaloneCodexProcess").mockResolvedValue({ listThreads, stop });
+    session.process.listThreads.mockImplementation(() => new Promise(() => {}));
     getAllRecentSessionsMock.mockClear();
     getAllRecentSessionsMock.mockResolvedValue({
       sessions: [
@@ -9764,7 +10084,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       offset: 0,
     });
     expect(scanOptions).not.toHaveProperty("provider");
-    expect(session.process.listThreads).toHaveBeenCalledWith({
+    expect(listThreads).toHaveBeenCalledWith({
       limit: 20,
       cwd: undefined,
       searchTerm: undefined,
@@ -9783,6 +10103,8 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       firstPrompt: "Codex canonical result",
     });
 
+    expect(session.process.listThreads).not.toHaveBeenCalled();
+    expect(stop).toHaveBeenCalledTimes(1);
     bridge.close();
   });
 
@@ -10195,5 +10517,42 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     });
 
     bridge.close();
+  });
+});
+
+describe("performance mode delivery", () => {
+  it("filters before serialization per socket and restores full payloads after acknowledgement", async () => {
+    const server = createServer();
+    const bridge = new BridgeWebSocketServer({ server });
+    const internal = bridge as any;
+    const standard = { readyState: 1, send: vi.fn() } as any;
+    const performance = { readyState: 1, send: vi.fn() } as any;
+    const tool = { type: "tool_use", id: "t1", name: "Screenshot", input: { data: "x".repeat(100_000) } };
+    const assistant = { type: "assistant", message: { id: "a", role: "assistant", content: [tool] } };
+    const result = { type: "tool_result", toolUseId: "t1", content: "large".repeat(100_000), images: [{ url: "/images/screenshot" }] };
+    const history = { type: "history_snapshot", sessionId: "s1", fromSeq: 1, toSeq: 2, messages: [{ seq: 1, message: assistant }, { seq: 2, message: result }] };
+    try {
+      await internal.handleClientMessage({ type: "client_capabilities", performanceMode: true, deliveryRevision: 1, sessionPerformanceModes: { full: false } }, performance);
+      expect(JSON.parse(performance.send.mock.calls[0][0])).toEqual({ type: "performance_mode_state", deliveryRevision: 1 });
+      performance.send.mockClear();
+      internal.send(performance, history);
+      internal.send(standard, history);
+      expect(performance.send.mock.calls[0][0].length).toBeLessThan(300);
+      expect(JSON.parse(standard.send.mock.calls[0][0])).toEqual(history);
+      expect(JSON.parse(performance.send.mock.calls[0][0])).toMatchObject({ filtered: true, fromSeq: 1, toSeq: 2, messages: [{ seq: 2, message: { content: "" } }] });
+      internal.send(performance, { ...history, sessionId: "full" });
+      expect(JSON.parse(performance.send.mock.calls[1][0]).messages).toEqual(history.messages);
+      // Thinking batches queued before a mode switch are filtered when flushed.
+      internal.queueDeltaForClient(performance, "s1", "thinking_delta", internal.splitDeltaText("SECRET"));
+      internal.flushClientDeltaBatch(performance, "s1");
+      const activity = JSON.parse(performance.send.mock.calls[2][0]);
+      expect(activity.type).toBe("session_activity");
+      internal.send(performance, { type: "thinking_delta", text: "SECRET2", sessionId: "s1" });
+      expect(performance.send.mock.calls).toHaveLength(3);
+      await internal.handleClientMessage({ type: "client_capabilities", performanceMode: false, deliveryRevision: 2 }, performance);
+      internal.send(performance, history);
+      expect(JSON.parse(performance.send.mock.calls.at(-1)![0])).toEqual(history);
+      expect(history.messages).toHaveLength(2);
+    } finally { bridge.close(); server.close(); }
   });
 });
