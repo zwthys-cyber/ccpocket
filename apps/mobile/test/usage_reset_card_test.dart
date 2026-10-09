@@ -67,13 +67,15 @@ void main() {
   }
 
   Future<void> confirm(WidgetTester tester, _Bridge bridge) async {
-    // The action uses asynchronous preference storage. Allow its real async
-    // work to complete before waiting for the loading animation to settle.
-    await tester.runAsync(() async {
-      await tester.tap(find.widgetWithText(FilledButton, '使用重置次数'));
-      await tester.pump();
-      await bridge.refreshed.future.timeout(const Duration(seconds: 5));
-    });
+    await tester.tap(find.widgetWithText(FilledButton, '使用重置次数'));
+    // The fake response stream belongs to the widget test's clock. Pump that
+    // clock while the action is pending instead of waiting in runAsync, which
+    // cannot drain the stream's queued events.
+    for (var frame = 0; frame < 100 && !bridge.refreshed.isCompleted; frame++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(bridge.refreshed.isCompleted, isTrue,
+        reason: 'The mocked reset must complete and refresh usage.');
     await tester.pumpAndSettle();
   }
 
