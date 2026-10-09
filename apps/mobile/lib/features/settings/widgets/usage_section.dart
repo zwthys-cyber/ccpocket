@@ -525,7 +525,7 @@ class _UsageBarState extends State<_UsageBar>
       if (hours > 0) remaining.write('$hours小时');
       if (minutes > 0) remaining.write('$minutes分钟');
       if (remaining.isEmpty) remaining.write('不到1分钟');
-      return '$timeStr（${remaining}后重置）';
+      return '$timeStr（$remaining后重置）';
     }
 
     if (days > 0) {
