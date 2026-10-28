@@ -1,0 +1,85 @@
+name: Bridge Security Build
+
+on:
+  push:
+    branches: [fix/bridge-security-20261028]
+    paths:
+      - '.github/workflows/bridge-security-build.yml'
+      - 'package-lock.json'
+      - 'package.json'
+      - 'packages/bridge/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bridge-security-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  repair-verify-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.ref }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.22.1'
+          cache: npm
+      - name: Repair lockfile within declared dependency ranges
+        run: npm audit fix --package-lock-only --ignore-scripts
+      - name: Install repaired dependencies on GitHub runner
+        run: npm ci
+      - name: Audit all dependencies
+        run: npm audit --audit-level=low
+      - name: Run complete Bridge test suite
+        run: npm run test:bridge
+      - name: Type check Bridge
+        run: npx tsc --noEmit -p packages/bridge/tsconfig.json
+      - name: Build Bridge
+        run: npm run bridge:build
+      - name: Commit verified dependency repair
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          if ! git diff --cached --quiet; then
+            git -c core.hooksPath=/dev/null commit -m "fix(bridge): update vulnerable dependency resolutions"
+            git push origin HEAD:"$GITHUB_REF_NAME"
+          fi
+          git rev-parse HEAD > BUILD_COMMIT
+      - name: Prepare production dependencies
+        run: |
+          npm prune --omit=dev --ignore-scripts
+          npm audit --omit=dev --audit-level=low
+      - name: Smoke test packaged runtime
+        run: |
+          node packages/bridge/dist/cli.js --version
+          BRIDGE_PORT=18765 BRIDGE_HOST=127.0.0.1 BRIDGE_API_KEY=ci-smoke-token BRIDGE_DISABLE_MDNS=1 BRIDGE_DEMO_MODE=1 node packages/bridge/dist/cli.js > "$RUNNER_TEMP/bridge-smoke.log" 2>&1 &
+          bridge_pid=$!
+          trap 'kill "$bridge_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:18765/health > "$RUNNER_TEMP/health.json"; then
+              node -e 'const fs=require("fs");const h=JSON.parse(fs.readFileSync(process.argv[1]));if(h.status!=="ok")process.exit(1)' "$RUNNER_TEMP/health.json"
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/bridge-smoke.log"
+          exit 1
+      - name: Package Linux x64 runtime
+        run: |
+          tar -czf bridge-linux-x64.tar.gz BUILD_COMMIT package.json package-lock.json packages/bridge/package.json packages/bridge/dist node_modules
+          sha256sum bridge-linux-x64.tar.gz > bridge-linux-x64.tar.gz.sha256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bridge-linux-x64-${{ github.run_id }}
+          path: |
+            bridge-linux-x64.tar.gz
+            bridge-linux-x64.tar.gz.sha256
+            BUILD_COMMIT
+          retention-days: 14
+          if-no-files-found: error
