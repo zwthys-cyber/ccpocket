@@ -9,6 +9,12 @@ on:
       - 'package.json'
       - 'packages/bridge/**'
   workflow_dispatch:
+    inputs:
+      upstream_version:
+        description: 'Optional upstream Bridge version to import before building (for example 1.90.0)'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: write
@@ -29,6 +35,42 @@ jobs:
         with:
           node-version: '24.22.1'
           cache: npm
+      - name: Import requested upstream Bridge release
+        if: inputs.upstream_version != ''
+        env:
+          UPSTREAM_VERSION: ${{ inputs.upstream_version }}
+        run: |
+          set -euo pipefail
+          [[ "$UPSTREAM_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          CURRENT_VERSION=$(node -p 'require("./packages/bridge/package.json").version')
+          [[ "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          if [ "$CURRENT_VERSION" = "$UPSTREAM_VERSION" ]; then
+            echo "Requested version is already present; verifying current source."
+            exit 0
+          fi
+          EXPECTED_COMMIT=$(npm view "@ccpocket/bridge@$UPSTREAM_VERSION" gitHead)
+          [[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags --depth=1 https://github.com/K9i-0/ccpocket.git \
+            "refs/tags/bridge/v$CURRENT_VERSION:refs/upstream-bridge/base" \
+            "refs/tags/bridge/v$UPSTREAM_VERSION:refs/upstream-bridge/target"
+          test "$(git rev-parse 'refs/upstream-bridge/target^{commit}')" = "$EXPECTED_COMMIT"
+          git diff --binary 'refs/upstream-bridge/base^{commit}' 'refs/upstream-bridge/target^{commit}' -- \
+            packages/bridge/src packages/bridge/CHANGELOG.md \
+            docs/new-project-setup.md docs/design/pending-input-lifecycle.md \
+            docs/design/durable-chat-input-delivery.md docs/codex-api-migration.md \
+            > "$RUNNER_TEMP/bridge-upgrade.patch"
+          if ! git apply --3way --index "$RUNNER_TEMP/bridge-upgrade.patch"; then
+            git diff --name-only --diff-filter=U
+            git diff --cc
+            exit 1
+          fi
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const path = 'packages/bridge/package.json';
+          const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+          pkg.version = process.env.UPSTREAM_VERSION;
+          fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
+          JS
       - name: Repair lockfile within declared dependency ranges
         run: npm update --package-lock-only --ignore-scripts
       - name: Install repaired dependencies on GitHub runner
@@ -41,13 +83,23 @@ jobs:
         run: npx tsc --noEmit -p packages/bridge/tsconfig.json
       - name: Build Bridge
         run: npm run bridge:build
-      - name: Commit verified dependency repair
+      - name: Commit verified Bridge changes
+        env:
+          UPSTREAM_VERSION: ${{ inputs.upstream_version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package-lock.json
+          git add package-lock.json packages/bridge
+          git add -u docs
+          for file in docs/new-project-setup.md docs/design/pending-input-lifecycle.md docs/design/durable-chat-input-delivery.md docs/codex-api-migration.md; do
+            if [ -f "$file" ]; then git add "$file"; fi
+          done
           if ! git diff --cached --quiet; then
-            git -c core.hooksPath=/dev/null commit -m "fix(bridge): update vulnerable dependency resolutions"
+            if [ -n "$UPSTREAM_VERSION" ]; then
+              git -c core.hooksPath=/dev/null commit -m "feat(bridge): upgrade to upstream v$UPSTREAM_VERSION"
+            else
+              git -c core.hooksPath=/dev/null commit -m "fix(bridge): update vulnerable dependency resolutions"
+            fi
             git push origin HEAD:"$GITHUB_REF_NAME"
           fi
           git rev-parse HEAD > BUILD_COMMIT
