@@ -10,10 +10,12 @@ export function performanceMessage(msg: Message): Message | null {
       const { rawContentBlocks: _raw, ...result } = msg;
       return result;
     }
-    // Completion IDs resolve questions/approvals, including answers from other clients.
+    const isQuestionAnswer = msg.permissionOutcome === "answered";
+    // Preserve question answers so the transcript can be restored after reconnect.
     return {
       ...(msg.role === "tool_result" ? { role: msg.role } : { type: msg.type }),
-      toolUseId: msg.toolUseId, content: "",
+      toolUseId: msg.toolUseId,
+      content: isQuestionAnswer && typeof msg.content === "string" ? msg.content : "",
       ...(msg.userMessageUuid != null ? { userMessageUuid: msg.userMessageUuid } : {}),
       ...(msg.permissionOutcome != null ? { permissionOutcome: msg.permissionOutcome } : {}),
       ...(msg.sessionId != null ? { sessionId: msg.sessionId } : {}),

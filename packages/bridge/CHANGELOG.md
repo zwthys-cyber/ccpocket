@@ -2,7 +2,52 @@
 
 All notable changes to `@ccpocket/bridge` will be documented in this file.
 
-## [Unreleased]
+## [1.90.0] - 2026-10-20
+
+### Added
+
+- Bootstrap new project directories with optional Git initialization and staged AI settings inheritance.
+- Trust Codex projects and reload eligible idle sessions, and initialize Git in existing project directories.
+- Accept an initial setup prompt when starting a session.
+
+### Fixed
+
+- Support Git operations in newly initialized repositories before the first commit.
+
+## [1.89.0] - 2026-10-19
+
+### Added
+- Serve PDF previews through existing authorized, expiring media URLs with HTTP range support.
+
+## [1.88.5] - 2026-10-16
+
+### Fixed
+- Enable Codex user questions in Default mode for new and resumed sessions, using the existing non-blocking question UI and answer flow.
+
+## [1.88.4] - 2026-10-13
+
+### Fixed
+- Disable time-based idle session reclamation by default. Set `BRIDGE_IDLE_SESSION_TTL_MINUTES` to a finite positive number to enable it; unset, empty, zero, negative, and invalid values leave it disabled. The existing 30-idle-session retention cap still applies.
+
+## [1.88.3] - 2026-10-12
+
+### Fixed
+- Register Claude permission requests before publishing them and emit resolution events after user decisions so session summaries stay current.
+- Preserve structured AskUserQuestion answers in resolved results and Performance-mode history so mobile clients can restore answered-question transcripts.
+- Preserve client message IDs when queued Codex input is delivered to the session.
+- Keep answer results and resolution notifications after request delivery, including synchronous answers.
+
+## [1.88.2] - 2026-10-10
+
+### Fixed
+- Retain the oldest unresolved user request in session summaries and refresh the summary when the queue advances.
+- Preserve arrival order when resolving multiple pending questions and approvals.
+- Reclaim stale idle sessions periodically while retaining pending user requests, queued Codex input, and automatic recovery waits. The idle timeout defaults to 15 minutes and is configurable with `BRIDGE_IDLE_SESSION_TTL_MINUTES`.
+
+## [1.88.1] - 2026-10-10
+
+### Fixed
+- Include the persisted Bridge instance ID in session lists so clients can bind durable input retries to the originating Bridge across reconnects and alternate network addresses.
 
 ## [1.88.0] - 2026-10-01
 

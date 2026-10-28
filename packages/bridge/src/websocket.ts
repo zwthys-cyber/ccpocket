@@ -1,3 +1,5 @@
+import { currentGitBranch, hasGitHead } from "./git-project-state.js";
+import { bootstrapProject } from "./project-bootstrap.js";
 import { performanceMessage } from "./performance-mode.js";
 import type { Server as HttpServer } from "node:http";
 import { createHash, randomUUID } from "node:crypto";
@@ -2786,6 +2788,7 @@ export class BridgeWebSocketServer {
   private async handleClientMessage(
     msg: ClientMessage,
     ws: WebSocket,
+    echoInput = false,
   ): Promise<void> {
     if (this.rejectedProtocolClients.has(ws)) return;
     if (msg.type === "client_capabilities") {
@@ -3123,6 +3126,11 @@ export class BridgeWebSocketServer {
                 createdSession,
               );
             }
+            if (msg.initialPrompt?.trim()) {
+              void this.handleClientMessage({ type: "input", sessionId, text: msg.initialPrompt, clientMessageId: randomUUID() }, ws, true).catch((error) => {
+                this.send(ws, { type: "error", sessionId, message: `Failed to send initial project request: ${(error as Error).message}` });
+              });
+            }
             // Send a gentle tip when the project is not a git repository
             if (createdSession && !createdSession.gitBranch) {
               this.sendTip(ws, sessionId, "git_not_available", createdSession);
@@ -3254,6 +3262,7 @@ export class BridgeWebSocketServer {
 
           const queued = this.sessionManager.queueCodexInput(session.id, {
             itemId: randomUUID(),
+            ...(clientMessageId ? { clientMessageId } : {}),
             text,
             createdAt: new Date().toISOString(),
             userMessageUuid: nextCodexUserTurnUuid(session),
@@ -3311,7 +3320,7 @@ export class BridgeWebSocketServer {
         } as ServerMessage);
         const acceptedSeq = userEntry?.seq ?? session.historyRevision;
 
-        if (session.provider === "codex" && userEntry) {
+        if ((session.provider === "codex" || echoInput) && userEntry) {
           this.send(ws, {
             ...userEntry.message,
             sessionId: session.id,
@@ -5132,19 +5141,7 @@ export class BridgeWebSocketServer {
         const session = this.sessionManager.get(msg.sessionId);
         if (session) {
           const cwd = session.worktreePath ?? session.projectPath;
-          let branch = "";
-          try {
-            branch = execFileSync(
-              "git",
-              ["rev-parse", "--abbrev-ref", "HEAD"],
-              {
-                cwd,
-                encoding: "utf-8",
-              },
-            ).trim();
-          } catch {
-            /* not a git repo */
-          }
+          const branch = currentGitBranch(cwd);
           // Update stored branch so future session_list responses are also current
           session.gitBranch = branch;
           this.send(ws, {
@@ -6068,6 +6065,50 @@ export class BridgeWebSocketServer {
         break;
       }
 
+      case "bootstrap_project": {
+        try {
+          const result = await bootstrapProject({ ...msg,
+            isAllowed: (path) => this.isCanonicalPathAllowed(path),
+          });
+          this.projectHistory?.addProject(result.projectPath);
+          this.send(ws, { type: "project_setup_result", requestId: msg.requestId, ...result });
+        } catch (error) {
+          this.send(ws, { type: "project_setup_result", requestId: msg.requestId, error: (error as Error).message });
+        }
+        break;
+      }
+      case "trust_project":
+      case "initialize_git": {
+        try {
+          const projectPath = await realpath(msg.projectPath);
+          if (!await this.isCanonicalPathAllowed(projectPath)) throw new Error("Project directory is not allowed");
+          if (msg.type === "trust_project") {
+            if (msg.sessionId) {
+              const session = this.sessionManager.get(msg.sessionId);
+              if (!session || session.provider !== "codex" || session.codexQueuedInput ||
+                  await realpath(session.worktreePath ?? session.projectPath) !== projectPath) {
+                throw new Error("Session is unavailable or has queued input");
+              }
+              await (session.process as CodexProcess).trustProjectAndReload(projectPath);
+            } else {
+              const proc = new CodexProcess();
+              try {
+                await proc.initializeOnly(projectPath, 10_000);
+                await proc.trustProject(projectPath);
+              } finally { proc.stop(); }
+            }
+          } else {
+            // Do not silently turn a subdirectory of another repository into a nested repo.
+            let inside = false;
+            try { inside = execFileSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: projectPath, encoding: "utf8", stdio: "pipe" }).trim() === "true"; } catch { /* not initialized */ }
+            if (!inside) execFileSync("git", ["init", "-b", "main"], { cwd: projectPath, timeout: 10_000, stdio: "pipe" });
+          }
+          this.send(ws, { type: "project_setup_result", requestId: msg.requestId, projectPath });
+        } catch (error) {
+          this.send(ws, { type: "project_setup_result", requestId: msg.requestId, error: (error as Error).message });
+        }
+        break;
+      }
       case "create_project": {
         if (!this.workspaceStore) {
           this.send(ws, {
@@ -6386,7 +6427,10 @@ export class BridgeWebSocketServer {
               });
               return;
             }
-            const mediaType = FILE_PEEK_MEDIA_TYPES[ext];
+            const mediaType =
+              ext === ".pdf"
+                ? { kind: "pdf" as const, mimeType: "application/pdf" }
+                : FILE_PEEK_MEDIA_TYPES[ext];
             if (mediaType) {
               if (!this.mediaStore) {
                 this.send(ws, {
@@ -6707,6 +6751,7 @@ export class BridgeWebSocketServer {
                     ...projectRequestMetadata(msg),
                     staged: msg.staged === true,
                     diff,
+                    hasCommits: hasGitHead(msg.projectPath),
                     imageChanges,
                   });
                 } else {
@@ -6715,6 +6760,7 @@ export class BridgeWebSocketServer {
                     ...projectRequestMetadata(msg),
                     staged: msg.staged === true,
                     diff,
+                    hasCommits: hasGitHead(msg.projectPath),
                   });
                 }
               },
@@ -8307,6 +8353,7 @@ export class BridgeWebSocketServer {
       defaultCodexProfile: this.defaultCodexProfile,
       codexAutoReviewDisabled: this.codexAutoReviewDisabled,
       bridgeVersion: getPackageVersion(),
+      bridgeInstanceId: this.promptHistoryStore?.bridgeInstanceId,
       protocolVersion: BRIDGE_PROTOCOL_MAX_VERSION,
       minimumProtocolVersion: BRIDGE_PROTOCOL_MIN_VERSION,
       protocolCapabilities: [
@@ -8351,6 +8398,7 @@ export class BridgeWebSocketServer {
       defaultCodexProfile: this.defaultCodexProfile,
       codexAutoReviewDisabled: this.codexAutoReviewDisabled,
       bridgeVersion: getPackageVersion(),
+      bridgeInstanceId: this.promptHistoryStore?.bridgeInstanceId,
       protocolVersion: BRIDGE_PROTOCOL_MAX_VERSION,
       minimumProtocolVersion: BRIDGE_PROTOCOL_MIN_VERSION,
       protocolCapabilities: [
@@ -9941,7 +9989,7 @@ export class BridgeWebSocketServer {
 
     execFile(
       "git",
-      gitArgs("diff", "HEAD", "--no-color"),
+      gitArgs("diff", hasGitHead(cwd) ? "HEAD" : execFileSync("git", ["hash-object", "-t", "tree", "--stdin"], { cwd, input: "", encoding: "utf8" }).trim(), "--no-color"),
       execOpts,
       (err, stdout) => {
         if (untrackedFilesAll.length > 0) {

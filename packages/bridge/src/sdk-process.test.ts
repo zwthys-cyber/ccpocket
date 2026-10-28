@@ -2059,6 +2059,8 @@ describe("SdkProcess.answer", () => {
   it("resolves AskUserQuestion with question-keyed SDK answers", () => {
     const proc = new SdkProcess();
     const resolve = vi.fn();
+    const messages: ServerMessage[] = [];
+    proc.on("message", (message) => messages.push(message));
     const internal = proc as any;
     internal._status = "waiting_approval";
     internal.pendingPermissions.set("ask-1", {
@@ -2079,6 +2081,16 @@ describe("SdkProcess.answer", () => {
     expect(resolve.mock.calls[0][0].updatedInput.answers).not.toHaveProperty(
       "result",
     );
+    expect(messages).toContainEqual({
+      type: "tool_result",
+      toolUseId: "ask-1",
+      content: "SQLite",
+      permissionOutcome: "answered",
+    });
+    expect(messages).toContainEqual({
+      type: "permission_resolved",
+      toolUseId: "ask-1",
+    });
     expect(proc.status).toBe("running");
   });
 
@@ -2108,6 +2120,187 @@ describe("SdkProcess.answer", () => {
       "Which ORM?": "Drizzle",
     });
   });
+});
+
+describe("SdkProcess.waitForPermission", () => {
+  it("records a permission before emitting it to session listeners", async () => {
+    const proc = new SdkProcess();
+    let observedAtRequest: {
+      status: string;
+      pending: ReturnType<SdkProcess["getPendingPermissions"]>;
+    } | null = null;
+    proc.on("message", (message) => {
+      if (message.type !== "permission_request") return;
+      observedAtRequest = {
+        status: proc.status,
+        pending: proc.getPendingPermissions(),
+      };
+    });
+
+    const input = {
+      questions: [
+        {
+          id: "framework",
+          question: "Which framework should we use?",
+          options: [{ label: "Flutter", description: "Mobile" }],
+        },
+      ],
+    };
+    const pending = (proc as any).waitForPermission(
+      "ask-1",
+      "AskUserQuestion",
+      input,
+      new AbortController().signal,
+    ) as Promise<unknown>;
+
+    expect(observedAtRequest).toEqual({
+      status: "waiting_approval",
+      pending: [
+        { toolUseId: "ask-1", toolName: "AskUserQuestion", input },
+      ],
+    });
+    expect(proc.answer("ask-1", "Flutter")).toBe(true);
+    await pending;
+  });
+
+  it("delivers the request to all listeners before a synchronous resolution", async () => {
+    const proc = new SdkProcess();
+    const firstListenerEvents: string[] = [];
+    const secondListenerEvents: string[] = [];
+    let approved = false;
+    const recordPermissionEvent = (events: string[]) =>
+      (message: ServerMessage) => {
+        if (
+          message.type === "permission_request" ||
+          message.type === "permission_resolved"
+        ) {
+          events.push(message.type);
+        }
+      };
+
+    proc.on("message", (message) => {
+      recordPermissionEvent(firstListenerEvents)(message);
+      if (message.type === "permission_request") {
+        approved = proc.approve(message.toolUseId);
+      }
+    });
+    proc.on("message", recordPermissionEvent(secondListenerEvents));
+
+    const pending = (proc as any).waitForPermission(
+      "permission-1",
+      "Read",
+      { file_path: "/repo/README.md" },
+      new AbortController().signal,
+    ) as Promise<unknown>;
+
+    await pending;
+
+    expect(approved).toBe(true);
+    expect(firstListenerEvents).toEqual([
+      "permission_request",
+      "permission_resolved",
+    ]);
+    expect(secondListenerEvents).toEqual([
+      "permission_request",
+      "permission_resolved",
+    ]);
+  });
+});
+
+describe("SdkProcess synchronous question answers", () => {
+  it.each([false, true])(
+    "publishes answer events after every request listener (another pending request: %s)",
+    async (hasOtherRequest) => {
+      const proc = new SdkProcess();
+      if (hasOtherRequest) {
+        (proc as any).pendingPermissions.set("other", {
+          resolve: vi.fn(),
+          toolName: "Read",
+          input: {},
+        });
+      }
+      const events: string[][] = [[], []];
+      const pendingAtResolution: string[][] = [];
+      let answered = false;
+      for (let index = 0; index < events.length; index++) {
+        proc.on("message", (message) => {
+          if (
+            message.type === "permission_request" ||
+            message.type === "permission_resolved" ||
+            message.type === "tool_result"
+          ) {
+            events[index].push(message.type);
+          }
+          if (index === 0 && message.type === "permission_request") {
+            answered = proc.answer(message.toolUseId, "Flutter");
+          }
+          if (message.type === "permission_resolved") {
+            pendingAtResolution.push(
+              proc.getPendingPermissions().map((pending) => pending.toolUseId),
+            );
+          }
+          if (message.type === "tool_result") {
+            expect(message).toMatchObject({
+              toolUseId: "ask-1",
+              content: "Flutter",
+              permissionOutcome: "answered",
+            });
+          }
+        });
+      }
+      const result = await (proc as any).waitForPermission(
+        "ask-1",
+        "AskUserQuestion",
+        { questions: [{ question: "Which framework?" }] },
+        new AbortController().signal,
+      );
+      expect(answered).toBe(true);
+      expect(result.updatedInput.answers).toEqual({
+        "Which framework?": "Flutter",
+      });
+      for (const observed of events) {
+        expect(observed).toEqual([
+          "permission_request",
+          "permission_resolved",
+          "tool_result",
+        ]);
+      }
+      expect(pendingAtResolution).toEqual(
+        hasOtherRequest ? [["other"], ["other"]] : [[], []],
+      );
+      expect(proc.status).toBe(hasOtherRequest ? "waiting_approval" : "running");
+    },
+  );
+});
+
+describe("SdkProcess permission resolution events", () => {
+  it.each(["approve", "approveAlways", "reject"] as const)(
+    "announces a resolved request after %s",
+    (action) => {
+      const proc = new SdkProcess();
+      const messages: ServerMessage[] = [];
+      proc.on("message", (message) => messages.push(message));
+      (proc as any).pendingPermissions.set("permission-1", {
+        resolve: vi.fn(),
+        toolName: "Read",
+        input: { file_path: "/repo/README.md" },
+      });
+
+      const resolved =
+        action === "approve"
+          ? proc.approve("permission-1")
+          : action === "approveAlways"
+            ? proc.approveAlways("permission-1")
+            : proc.reject("permission-1");
+
+      expect(resolved).toBe(true);
+      expect(messages).toContainEqual({
+        type: "permission_resolved",
+        toolUseId: "permission-1",
+      });
+      expect(proc.getPendingPermissions()).toEqual([]);
+    },
+  );
 });
 
 describe("SdkProcess.setPermissionMode", () => {

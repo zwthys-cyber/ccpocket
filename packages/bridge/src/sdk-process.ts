@@ -671,6 +671,8 @@ interface PendingPermission {
   resolve: (result: PermissionResult) => void;
   toolName: string;
   input: Record<string, unknown>;
+  announcingRequest?: boolean;
+  resolutionEventsPending?: ServerMessage[];
 }
 
 // PermissionResult is imported from @anthropic-ai/claude-agent-sdk
@@ -1028,15 +1030,10 @@ export class SdkProcess extends EventEmitter<SdkProcessEvents> {
       ? { ...pending.input, ...updatedInput }
       : pending.input;
 
-    this.pendingPermissions.delete(id!);
-    pending.resolve({
+    this.resolvePendingPermission(id!, pending, {
       behavior: "allow",
       updatedInput: mergedInput,
     });
-
-    if (this.pendingPermissions.size === 0) {
-      this.setStatus("running");
-    }
     return true;
   }
 
@@ -1068,8 +1065,7 @@ export class SdkProcess extends EventEmitter<SdkProcessEvents> {
       });
     }
 
-    this.pendingPermissions.delete(id!);
-    pending.resolve({
+    this.resolvePendingPermission(id!, pending, {
       behavior: "allow",
       updatedInput: pending.input,
       updatedPermissions: [{
@@ -1079,10 +1075,6 @@ export class SdkProcess extends EventEmitter<SdkProcessEvents> {
         destination: "session",
       }],
     });
-
-    if (this.pendingPermissions.size === 0) {
-      this.setStatus("running");
-    }
     return true;
   }
 
@@ -1098,15 +1090,10 @@ export class SdkProcess extends EventEmitter<SdkProcessEvents> {
       return false;
     }
 
-    this.pendingPermissions.delete(id!);
-    pending.resolve({
+    this.resolvePendingPermission(id!, pending, {
       behavior: "deny",
       message: message ?? "User rejected this action",
     });
-
-    if (this.pendingPermissions.size === 0) {
-      this.setStatus("running");
-    }
     return true;
   }
 
@@ -1121,19 +1108,19 @@ export class SdkProcess extends EventEmitter<SdkProcessEvents> {
       return false;
     }
 
-    this.pendingPermissions.delete(toolUseId);
     const answers = buildAskUserAnswers(pending.input, result);
-    pending.resolve({
+    this.resolvePendingPermission(toolUseId, pending, {
       behavior: "allow",
       updatedInput: {
         ...pending.input,
         answers,
       },
+    }, {
+      type: "tool_result",
+      toolUseId,
+      content: result,
+      permissionOutcome: "answered",
     });
-
-    if (this.pendingPermissions.size === 0) {
-      this.setStatus("running");
-    }
     return true;
   }
 
@@ -1264,6 +1251,18 @@ export class SdkProcess extends EventEmitter<SdkProcessEvents> {
       toolName: pending.toolName,
       input: { ...pending.input },
     };
+  }
+
+  getPendingPermissions(): Array<{
+    toolUseId: string;
+    toolName: string;
+    input: Record<string, unknown>;
+  }> {
+    return [...this.pendingPermissions].map(([toolUseId, pending]) => ({
+      toolUseId,
+      toolName: pending.toolName,
+      input: { ...pending.input },
+    }));
   }
 
   private async *createUserMessageStream(): AsyncGenerator<SDKUserMsg> {
@@ -1551,17 +1550,27 @@ export class SdkProcess extends EventEmitter<SdkProcessEvents> {
     input: Record<string, unknown>,
     signal: AbortSignal,
   ): Promise<PermissionResult> {
-    // Emit permission request to client
-    this.emitMessage({
-      type: "permission_request",
-      toolUseId,
-      toolName,
-      input,
-    });
-    this.setStatus("waiting_approval");
-
     return new Promise<PermissionResult>((resolve) => {
-      this.pendingPermissions.set(toolUseId, { resolve, toolName, input });
+      const pending: PendingPermission = {
+        resolve,
+        toolName,
+        input,
+        announcingRequest: true,
+      };
+      this.pendingPermissions.set(toolUseId, pending);
+      this.setStatus("waiting_approval");
+
+      // Publish only after listeners can observe the pending request.
+      this.emitMessage({
+        type: "permission_request",
+        toolUseId,
+        toolName,
+        input,
+      });
+      pending.announcingRequest = false;
+      for (const event of pending.resolutionEventsPending ?? []) {
+        this.emitMessage(event);
+      }
 
       // Handle abort (timeout)
       if (signal.aborted) {
@@ -1577,6 +1586,32 @@ export class SdkProcess extends EventEmitter<SdkProcessEvents> {
         }
       }, { once: true });
     });
+  }
+
+  private resolvePendingPermission(
+    toolUseId: string,
+    pending: PendingPermission,
+    result: PermissionResult,
+    answerEvent?: ServerMessage,
+  ): void {
+    if (this.pendingPermissions.get(toolUseId) !== pending) return;
+
+    this.pendingPermissions.delete(toolUseId);
+    pending.resolve(result);
+    if (this.pendingPermissions.size === 0) {
+      this.setStatus("running");
+    }
+    const events: ServerMessage[] = [
+      { type: "permission_resolved", toolUseId },
+      ...(answerEvent ? [answerEvent] : []),
+    ];
+    // Synchronous request listeners can answer before later listeners receive
+    // the request. Keep both resolution and transcript events behind it.
+    if (pending.announcingRequest) {
+      pending.resolutionEventsPending = events;
+    } else {
+      for (const event of events) this.emitMessage(event);
+    }
   }
 
   private updateStatusFromMessage(msg: SDKMessage): void {

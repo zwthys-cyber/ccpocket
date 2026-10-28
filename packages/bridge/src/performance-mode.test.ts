@@ -38,12 +38,43 @@ describe("performance delivery projection", () => {
     expect(performanceMessage(msg)).toEqual(msg);
   });
 
-  it("keeps completion IDs for resolved questions in live and past history", () => {
-    expect(performanceMessage({ ...result, permissionOutcome: "answered" })).toEqual({ type: "tool_result", toolUseId: "t1", content: "", permissionOutcome: "answered" });
-    expect(performanceMessage({ type: "past_history", messages: [
-      { role: "assistant", content: [tool] },
-      { role: "tool_result", toolUseId: "t1", content: "large", images: ["image"] },
-    ] })).toEqual({ type: "past_history", messages: [{ role: "tool_result", toolUseId: "t1", content: "" }] });
+  it("keeps resolved question answers in live and past history", () => {
+    expect(
+      performanceMessage({
+        ...result,
+        content: "Forest birdsong",
+        permissionOutcome: "answered",
+      }),
+    ).toEqual({
+      type: "tool_result",
+      toolUseId: "t1",
+      content: "Forest birdsong",
+      permissionOutcome: "answered",
+    });
+    expect(
+      performanceMessage({
+        type: "past_history",
+        messages: [
+          { role: "assistant", content: [tool] },
+          {
+            role: "tool_result",
+            toolUseId: "t1",
+            content: "Forest birdsong",
+            permissionOutcome: "answered",
+          },
+        ],
+      }),
+    ).toEqual({
+      type: "past_history",
+      messages: [
+        {
+          role: "tool_result",
+          toolUseId: "t1",
+          content: "Forest birdsong",
+          permissionOutcome: "answered",
+        },
+      ],
+    });
   });
 
   it("preserves sparse history sequence bounds and marks intentional gaps", () => {

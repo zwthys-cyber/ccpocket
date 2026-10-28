@@ -90,6 +90,52 @@ describe("CodexProcess (app-server)", () => {
     });
   });
 
+  it("trusts and reloads an idle private thread without accepting input on the old process", async () => {
+    process.env.BRIDGE_CODEX_APP_SERVER_MODE = "private";
+    const requests: Array<Record<string, any>> = [];
+    let releaseTrust: (() => void) | undefined;
+    spawnMock.mockImplementation(() => {
+      const child = new FakeChildProcess();
+      fakeChildren.push(child);
+      child.stdin.on("write", (line: string) => {
+        const request = JSON.parse(line);
+        if (request.id === undefined) return;
+        requests.push(request);
+        const reply = (result: unknown) => child.stdout.emit("data", `${JSON.stringify({ id: request.id, result })}\n`);
+        if (request.method === "config/value/write") { releaseTrust = () => reply({ status: "ok" }); return; }
+        queueMicrotask(() => reply(
+          request.method === "thread/start" || request.method === "thread/resume"
+            ? { thread: { id: "thr_trust" }, model: "test-model" }
+            : request.method === "config/read" ? { config: {} }
+            : request.method === "turn/start" ? { turn: { id: "turn-new" } }
+            : { data: [], marketplaces: [] },
+        ));
+      });
+      return child;
+    });
+    const proc = new CodexProcess("linux");
+    proc.start("/tmp/trust-project", { model: "test-model", approvalPolicy: "on-request", sandboxMode: "workspace-write", additionalWritableRoots: ["/tmp/extra"] });
+    await proc.waitUntilReady();
+    await tick();
+    expect(proc.isWaitingForInput).toBe(true);
+    const reload = proc.trustProjectAndReload("/tmp/trust-project");
+    expect(proc.isWaitingForInput).toBe(false);
+    await tick();
+    expect(releaseTrust).toBeDefined();
+    releaseTrust!();
+    await reload;
+    await tick();
+    expect(fakeChildren).toHaveLength(2);
+    expect(fakeChildren[0].killed).toBe(true);
+    expect(proc.sessionId).toBe("thr_trust");
+    expect(proc.isWaitingForInput).toBe(true);
+    expect(requests.find((r) => r.method === "thread/resume")?.params).toMatchObject({ threadId: "thr_trust", model: "test-model", approvalPolicy: "on-request" });
+    proc.sendInput("continue");
+    await tick();
+    expect(requests.filter((r) => r.method === "turn/start")).toHaveLength(1);
+    proc.stop();
+  });
+
   it("normalizes unsupported GPT-6 Astra reasoning efforts to low", () => {
     expect(
       normalizeCodexReasoningEffortForModel("gpt-6-astra", "none"),
@@ -1608,6 +1654,37 @@ describe("CodexProcess (app-server)", () => {
     proc.stop();
   });
 
+  it.each([false, true])("enables Default-mode questions on thread start/resume (resume=%s)", async (resume) => {
+    const proc = new CodexProcess("linux");
+    proc.start("/tmp/project-questions", {
+      ...(resume ? { threadId: "thr_existing" } : {}),
+      approvalPolicy: "never",
+      sandboxMode: "danger-full-access",
+      modelReasoningEffort: "high",
+      profile: "ccpocket",
+    });
+    const child = fakeChildren[0];
+    await tick();
+    const initReq = nextOutgoingRequest(child);
+    child.stdout.emit("data", `${JSON.stringify({ id: initReq.id, result: {} })}\n`);
+    await tick();
+    nextOutgoingNotification(child);
+    if (resume) {
+      const configReq = nextOutgoingRequest(child);
+      expect(configReq.method).toBe("config/read");
+      child.stdout.emit("data", `${JSON.stringify({ id: configReq.id, result: { config: {} } })}\n`);
+      await tick();
+    }
+    const request = nextOutgoingRequest(child);
+    expect(request.method).toBe(resume ? "thread/resume" : "thread/start");
+    expect(request.params.config).toMatchObject({
+      features: { default_mode_request_user_input: true },
+      model_reasoning_effort: "high",
+      profile: "ccpocket",
+    });
+    proc.stop();
+  });
+
   it("sends reasoning effort via config override on thread/start", async () => {
     const proc = new CodexProcess("linux");
 
@@ -2783,12 +2860,136 @@ describe("CodexProcess (app-server)", () => {
         threadId: "thread", turnId: "turn", itemId: String(isBlocking), isBlocking, questions: [],
       } });
     }
-    expect(proc.getPendingPermission()?.toolUseId).toBe("true");
+    expect(proc.getPendingPermission()?.toolUseId).toBe("false");
     proc.answer("false", "yes");
     expect(proc.status).toBe("waiting_approval");
     proc.answer("true", "yes");
     expect(proc.status).toBe("running");
   });
+
+  it("selects optional questions in arrival order and advances after answering", () => {
+    const proc = new CodexProcess("linux");
+    const child = new FakeChildProcess();
+    attachFakeTransport(proc as any, child);
+    (proc as any)._threadId = "thread";
+    (proc as any).pendingTurnId = "turn";
+    (proc as any).setStatus("running");
+
+    for (const [requestId, itemId, questionId] of [
+      ["request-1", "item-1", "question-1"],
+      ["request-2", "item-2", "question-2"],
+    ]) {
+      (proc as any).handleRpcEnvelope({
+        id: requestId,
+        method: "item/tool/requestUserInput",
+        params: {
+          threadId: "thread",
+          turnId: "turn",
+          itemId,
+          isBlocking: false,
+          questions: [{ id: questionId, question: `${questionId}?`, options: [] }],
+        },
+      });
+    }
+
+    expect(proc.getPendingPermission()?.toolUseId).toBe("item-1");
+    expect(proc.answer("item-1", "first answer")).toBe(true);
+    expect(proc.getPendingPermission()?.toolUseId).toBe("item-2");
+  });
+
+  it("selects the oldest request across approval and question types", () => {
+    const proc = new CodexProcess("linux");
+    const child = new FakeChildProcess();
+    attachFakeTransport(proc as any, child);
+    (proc as any)._threadId = "thread";
+    (proc as any).pendingTurnId = "turn";
+    (proc as any).setStatus("running");
+
+    (proc as any).handleRpcEnvelope({
+      id: "approval-request",
+      method: "item/permissions/requestApproval",
+      params: {
+        threadId: "thread",
+        turnId: "turn",
+        itemId: "approval-first",
+        permissions: { fileSystem: { write: ["/repo"] } },
+      },
+    });
+    (proc as any).handleRpcEnvelope({
+      id: "question-request",
+      method: "item/tool/requestUserInput",
+      params: {
+        threadId: "thread",
+        turnId: "turn",
+        itemId: "question-second",
+        isBlocking: false,
+        questions: [{ id: "choice", question: "Choose?", options: [] }],
+      },
+    });
+
+    expect(proc.getPendingPermission()?.toolUseId).toBe("approval-first");
+    expect(proc.approve("approval-first")).toBe(true);
+    expect(proc.getPendingPermission()?.toolUseId).toBe("question-second");
+  });
+
+  for (const action of ["approve", "approveAlways", "reject"] as const) {
+    it(`routes an id-less ${action} to the oldest approval-compatible request`, () => {
+      const proc = new CodexProcess("linux");
+      const child = new FakeChildProcess();
+      attachFakeTransport(proc as any, child);
+      const messages: any[] = [];
+      proc.on("message", (message) => messages.push(message));
+      (proc as any)._threadId = "thread";
+      (proc as any).pendingTurnId = "turn";
+      (proc as any).setStatus("running");
+
+      (proc as any).handleRpcEnvelope({
+        id: "question-request",
+        method: "item/tool/requestUserInput",
+        params: {
+          threadId: "thread",
+          turnId: "turn",
+          itemId: "question-first",
+          isBlocking: false,
+          questions: [{ id: "choice", question: "Choose?", options: [] }],
+        },
+      });
+      (proc as any).handleRpcEnvelope({
+        id: "approval-request",
+        method: "item/permissions/requestApproval",
+        params: {
+          threadId: "thread",
+          turnId: "turn",
+          itemId: "approval-second",
+          permissions: { fileSystem: { write: ["/repo"] } },
+        },
+      });
+
+      const handled =
+        action === "approve"
+          ? proc.approve()
+          : action === "approveAlways"
+            ? proc.approveAlways()
+            : proc.reject();
+
+      expect(handled).toBe(true);
+      expect(messages).toContainEqual(
+        expect.objectContaining({
+          type: "tool_result",
+          toolUseId: "approval-second",
+          permissionOutcome:
+            action === "approve"
+              ? "approved"
+              : action === "approveAlways"
+                ? "approved_for_session"
+                : "rejected",
+        }),
+      );
+      expect(proc.getPendingPermission()?.toolUseId).toBe("question-first");
+      expect(proc.approve()).toBe(false);
+      proc.stop();
+    });
+  }
 
   it.each([false, true, undefined])("respects question isBlocking=%s through completion and answer", (isBlocking) => {
     const proc = new CodexProcess("linux");
@@ -2809,6 +3010,81 @@ describe("CodexProcess (app-server)", () => {
     if (isBlocking === false) expect(proc.status).toBe("idle");
     expect(proc.answer("item", "yes")).toBe(true);
     if (isBlocking === false) expect(proc.status).toBe("idle");
+  });
+
+  it("sends secret answers to Codex without persisting them", () => {
+    const proc = new CodexProcess("linux");
+    const child = new FakeChildProcess();
+    attachFakeTransport(proc as any, child);
+    const messages: any[] = [];
+    proc.on("message", (message) => messages.push(message));
+    (proc as any)._threadId = "thread";
+    (proc as any).handleRpcEnvelope({
+      id: "secret-request",
+      method: "item/tool/requestUserInput",
+      params: {
+        itemId: "secret-item",
+        questions: [
+          {
+            id: "token",
+            question: "What is the access token?",
+            isSecret: true,
+          },
+        ],
+      },
+    });
+
+    expect(proc.answer("secret-item", "top-secret-value")).toBe(true);
+
+    expect(nextOutgoingResponse(child)).toMatchObject({
+      id: "secret-request",
+      result: { answers: { token: { answers: ["top-secret-value"] } } },
+    });
+    const result = messages.find(
+      (message) =>
+        message.type === "tool_result" &&
+        message.toolUseId === "secret-item",
+    );
+    expect(result.content).not.toContain("top-secret-value");
+    expect(JSON.parse(result.content)).toEqual({
+      answers: { token: { redacted: true } },
+    });
+    proc.stop();
+  });
+
+  it("preserves non-secret answers while redacting secret answers", () => {
+    const proc = new CodexProcess("linux");
+    const child = new FakeChildProcess();
+    attachFakeTransport(proc as any, child);
+    const messages: any[] = [];
+    proc.on("message", (message) => messages.push(message));
+    (proc as any)._threadId = "thread";
+    (proc as any).handleRpcEnvelope({
+      id: "mixed-request",
+      method: "item/tool/requestUserInput",
+      params: {
+        itemId: "mixed-item",
+        questions: [
+          { id: "token", question: "Access token?", isSecret: true },
+          { id: "color", question: "Favorite color?" },
+        ],
+      },
+    });
+
+    const answer = JSON.stringify({
+      answers: { token: "top-secret-value", color: "Green" }, // Dummy token for redaction testing.
+    });
+    expect(proc.answer("mixed-item", answer)).toBe(true);
+
+    const result = messages.find(
+      (message) =>
+        message.type === "tool_result" && message.toolUseId === "mixed-item",
+    );
+    expect(result.content).not.toContain("top-secret-value");
+    expect(JSON.parse(result.content)).toEqual({
+      answers: { token: { redacted: true }, color: ["Green"] },
+    });
+    proc.stop();
   });
 
   it("emits AskUserQuestion and responds on answer", async () => {
@@ -2896,7 +3172,7 @@ describe("CodexProcess (app-server)", () => {
     expect(messages).toContainEqual({
       type: "tool_result",
       toolUseId: "item_user_input_1",
-      content: "Answered",
+      content: "A",
       permissionOutcome: "answered",
     });
 

@@ -1879,6 +1879,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
 
   it("advertises the supported protocol range in session lists", () => {
     const bridge = new BridgeWebSocketServer({ server: httpServer });
+    (bridge as any).promptHistoryStore = { bridgeInstanceId: "bridge-test" };
     const ws = {
       readyState: OPEN_STATE,
       send: vi.fn(),
@@ -1889,6 +1890,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     const message = JSON.parse(ws.send.mock.calls[0][0]);
     expect(message).toMatchObject({
       type: "session_list",
+      bridgeInstanceId: "bridge-test",
       protocolVersion: 1,
       minimumProtocolVersion: 1,
     });
@@ -5304,6 +5306,38 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     bridge.close();
   });
 
+  it("echoes a new project's automatic initial prompt to its Claude client", async () => {
+    const projectPath = mkdtempSync(resolve(tmpdir(), "ccpocket-initial-prompt-"));
+    const bridge = new BridgeWebSocketServer({ server: httpServer, allowedDirs: [projectPath] });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+    try {
+      await (bridge as any).handleClientMessage({ type: "start", projectPath, provider: "claude", initialPrompt: "Build a Flutter app", requestId: "new-app" }, ws);
+      await expect.poll(() => ws.send.mock.calls.map((c: unknown[]) => JSON.parse(c[0] as string)).find((m: any) => m.type === "user_input" && m.text === "Build a Flutter app")).toBeDefined();
+    } finally { bridge.close(); rmSync(projectPath, { recursive: true, force: true }); }
+  });
+
+  it("bootstraps a project and returns correlated unborn diffs without restarting a session", async () => {
+    const parentPath = mkdtempSync(resolve(tmpdir(), "ccpocket-new-project-"));
+    const bridge = new BridgeWebSocketServer({ server: httpServer, allowedDirs: [parentPath] });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+    try {
+      await (bridge as any).handleClientMessage({ type: "bootstrap_project", parentPath, name: "app", initializeGit: true, requestId: "create-1" }, ws);
+      const setup = ws.send.mock.calls.map((c: unknown[]) => JSON.parse(c[0] as string)).find((m: any) => m.type === "project_setup_result");
+      expect(setup).toMatchObject({ requestId: "create-1", projectPath: resolve(parentPath, "app") });
+      expect(setup.error).toBeUndefined();
+      writeFileSync(resolve(setup.projectPath, "new.txt"), "new file\n");
+      for (const staged of [false, true, undefined]) {
+        ws.send.mockClear();
+        await (bridge as any).handleClientMessage({ type: "get_diff", projectPath: setup.projectPath, staged, requestId: "diff-new" }, ws);
+        await expect.poll(() => ws.send.mock.calls.map((c: unknown[]) => JSON.parse(c[0] as string)).find((m: any) => m.type === "diff_result")).toBeDefined();
+        const result = ws.send.mock.calls.map((c: unknown[]) => JSON.parse(c[0] as string)).find((m: any) => m.type === "diff_result");
+        expect(result).toMatchObject({ requestId: "diff-new", hasCommits: false });
+        expect(result.error).toBeUndefined();
+        if (staged !== true) expect(result.diff).toContain("new file");
+      }
+    } finally { bridge.close(); rmSync(parentPath, { recursive: true, force: true }); }
+  });
+
   it("returns unstaged diff for mixed ASCII and non-ASCII untracked paths", async () => {
     const projectPath = mkdtempSync(resolve(tmpdir(), "ccpocket-diff-"));
     execFileSync("git", ["init"], { cwd: projectPath });
@@ -5544,6 +5578,8 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
   });
 
   it.each([
+    ["report.pdf", "pdf", "application/pdf"],
+    ["report.PDF", "pdf", "application/pdf"],
     ["sample.wav", "audio", "audio/wav"],
     ["sample.mp3", "audio", "audio/mpeg"],
     ["sample.m4a", "audio", "audio/mp4"],
@@ -9093,6 +9129,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       {
         type: "input",
         sessionId,
+        clientMessageId: "cm-busy-input",
         text: "while busy",
       },
       ws,
@@ -9104,7 +9141,10 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       sessionId,
       queued: true,
     });
-    expect(session.codexQueuedInput).toMatchObject({ text: "while busy" });
+    expect(session.codexQueuedInput).toMatchObject({
+      text: "while busy",
+      clientMessageId: "cm-busy-input",
+    });
     expect(session.process.sendInput).not.toHaveBeenCalled();
     (bridge as any).sendSessionList(ws);
     sent = ws.send.mock.calls.map((c: unknown[]) => JSON.parse(c[0] as string));

@@ -1,3 +1,4 @@
+import { currentGitBranch } from "./git-project-state.js";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -137,6 +138,7 @@ export type HistoryDeltaResult =
     };
 
 export interface QueuedCodexInput extends QueuedInputItem {
+  clientMessageId?: string;
   userMessageUuid?: string;
   images?: Array<{
     base64: string;
@@ -180,6 +182,7 @@ export interface SessionSummary {
   agentRole?: string;
   /** Claude sandbox enabled state. */
   sandboxEnabled?: boolean;
+  /** Oldest unresolved user prompt, including permissions and questions. */
   pendingPermission?: {
     toolUseId: string;
     toolName: string;
@@ -280,6 +283,8 @@ export class SessionManager {
   private onGalleryImage: GalleryImageCallback | null;
   private worktreeStore: WorktreeStore | null;
   private onSessionUpdated: SessionUpdatedCallback | null;
+  private readonly idleSessionTtlMs: number;
+  private idleEvictionTimer: ReturnType<typeof setInterval>;
 
   /** Cache completion entities per provider and effective cwd. */
   private commandCache = new Map<
@@ -309,6 +314,15 @@ export class SessionManager {
     this.onGalleryImage = onGalleryImage ?? null;
     this.worktreeStore = worktreeStore ?? null;
     this.onSessionUpdated = onSessionUpdated ?? null;
+    const idleTtlMinutes = Number(process.env.BRIDGE_IDLE_SESSION_TTL_MINUTES);
+    this.idleSessionTtlMs = Number.isFinite(idleTtlMinutes) && idleTtlMinutes > 0
+      ? idleTtlMinutes * 60 * 1000
+      : Infinity;
+    this.idleEvictionTimer = setInterval(
+      () => this.evictStaleIdleSessions(),
+      60 * 1000,
+    );
+    this.idleEvictionTimer.unref?.();
   }
 
   create(
@@ -375,15 +389,7 @@ export class SessionManager {
     // Use worktree path as cwd if available
     const effectiveCwd = wtPath ?? projectPath;
 
-    let gitBranch = "";
-    try {
-      gitBranch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-        cwd: effectiveCwd,
-        encoding: "utf-8",
-      }).trim();
-    } catch {
-      /* not a git repo */
-    }
+    const gitBranch = currentGitBranch(effectiveCwd);
 
     const session: SessionInfo = {
       id,
@@ -681,6 +687,15 @@ export class SessionManager {
           this.buildLiveProcessMessage(session, historyMsg, mergedUserInput),
         );
 
+        if (
+          historyMsg.type === "permission_request" ||
+          historyMsg.type === "permission_resolved" ||
+          (historyMsg.type === "tool_result" &&
+            historyMsg.permissionOutcome !== undefined)
+        ) {
+          this.onSessionUpdated?.(session.id);
+        }
+
         // After a result (turn complete), backfill UUIDs from disk.
         // The SDK does not echo user messages via the stream, so
         // in-memory user_input entries lack UUIDs.  The disk
@@ -947,11 +962,27 @@ export class SessionManager {
             input: Record<string, unknown>;
           }
         | undefined;
+      getPendingPermissions?: () =>
+        | Array<{
+            toolUseId: string;
+            toolName: string;
+            input: Record<string, unknown>;
+          }>
+        | undefined;
     };
-    const pendingPermission =
-      session.status === "waiting_approval"
-        ? processWithPending.getPendingPermission?.()
-        : undefined;
+    const processPendingPermissions =
+      processWithPending.getPendingPermissions?.() ??
+      (() => {
+        const pending = processWithPending.getPendingPermission?.();
+        return pending ? [pending] : [];
+      })();
+    // Non-blocking questions remain answerable after the turn is idle.
+    const pendingInput = processPendingPermissions.find(
+      (pending) =>
+        session.status === "waiting_approval" ||
+        (pending.toolName === "AskUserQuestion" &&
+          pending.input.isBlocking === false),
+    );
     const executionMode =
       session.process instanceof SdkProcess
         ? session.process.permissionMode === "bypassPermissions"
@@ -1011,7 +1042,7 @@ export class SessionManager {
           ? (session.process.agentRole ?? undefined)
           : undefined,
       sandboxEnabled: session.sandboxEnabled,
-      pendingPermission,
+      pendingPermission: pendingInput,
       queuedInput:
         session.provider === "codex"
           ? publicQueuedInput(session.codexQueuedInput)
@@ -1559,6 +1590,9 @@ export class SessionManager {
     return {
       type: "user_input",
       text: queued.text,
+      ...(queued.clientMessageId
+        ? { clientMessageId: queued.clientMessageId }
+        : {}),
       ...(queued.userMessageUuid ? { userMessageUuid: queued.userMessageUuid } : {}),
       timestamp: new Date().toISOString(),
       ...(queued.imageCount ? { imageCount: queued.imageCount } : {}),
@@ -1873,14 +1907,22 @@ export class SessionManager {
   }
 
   private evictStaleIdleSessions(): void {
-    const staleIdleSessions = Array.from(this.sessions.values())
+    const now = Date.now();
+    const idleSessions = Array.from(this.sessions.values())
       .filter((session) => session.status === "idle" &&
-        !(session.provider === "codex" && (session.process as CodexProcess).getRecoveryState().phase === "waiting"))
+        !session.codexQueuedInput &&
+        session.process.getPendingPermissions().length === 0 &&
+        !(session.provider === "codex" &&
+          (session.process as CodexProcess).getRecoveryState().phase === "waiting"))
       .sort(
         (left, right) =>
           left.lastActivityAt.getTime() - right.lastActivityAt.getTime(),
-      )
-      .slice(0, Math.max(0, this.idleSessionCount() - MAX_IDLE_SESSIONS));
+      );
+    const staleIdleSessions = idleSessions.filter(
+      (session, index) =>
+        index < Math.max(0, this.idleSessionCount() - MAX_IDLE_SESSIONS) ||
+        now - session.lastActivityAt.getTime() >= this.idleSessionTtlMs,
+    );
 
     for (const session of staleIdleSessions) {
       console.log(
@@ -1902,6 +1944,7 @@ export class SessionManager {
   }
 
   destroyAll(): void {
+    clearInterval(this.idleEvictionTimer);
     for (const [id] of this.sessions) {
       this.destroy(id);
     }

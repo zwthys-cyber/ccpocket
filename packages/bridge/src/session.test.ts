@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProcessStatus, ServerMessage } from "./parser.js";
 import { pathToSlug } from "./sessions-index.js";
 
@@ -12,6 +12,8 @@ const { codexInstances, sdkInstances, fakeDirs, fakeFiles } = vi.hoisted(
       isWaitingForInput: boolean;
       start: ReturnType<typeof vi.fn>;
       getGoal: ReturnType<typeof vi.fn>;
+      getPendingPermission: ReturnType<typeof vi.fn>;
+      getPendingPermissions: ReturnType<typeof vi.fn>;
       stop: ReturnType<typeof vi.fn>;
       sendInputStructured: ReturnType<typeof vi.fn>;
       noteManualInput: ReturnType<typeof vi.fn>;
@@ -21,6 +23,8 @@ const { codexInstances, sdkInstances, fakeDirs, fakeFiles } = vi.hoisted(
     }>,
     sdkInstances: [] as Array<{
       permissionMode: string;
+      getPendingPermissions: ReturnType<typeof vi.fn>;
+      getPendingPermission: ReturnType<typeof vi.fn>;
       start: ReturnType<typeof vi.fn>;
       stop: ReturnType<typeof vi.fn>;
       rewindFiles: ReturnType<typeof vi.fn>;
@@ -87,6 +91,11 @@ vi.mock("./codex-process.js", () => ({
   CodexProcess: class MockCodexProcess extends EventEmitter {
     public isWaitingForInput = false;
     public getGoal = vi.fn(async () => null);
+    public getPendingPermission = vi.fn(() => undefined);
+    public getPendingPermissions = vi.fn(() => {
+      const pending = this.getPendingPermission();
+      return pending ? [pending] : [];
+    });
     public start = vi.fn((_: string, __?: unknown) => {});
     public stop = vi.fn(() => {});
     public sendInputStructured = vi.fn();
@@ -104,6 +113,11 @@ vi.mock("./codex-process.js", () => ({
 vi.mock("./sdk-process.js", () => ({
   SdkProcess: class MockSdkProcess extends EventEmitter {
     public permissionMode = "default";
+    public getPendingPermissions = vi.fn(() => {
+      const pending = this.getPendingPermission();
+      return pending ? [pending] : [];
+    });
+    public getPendingPermission = vi.fn(() => undefined);
     public start = vi.fn((_: string, __?: unknown) => {});
     public stop = vi.fn(() => {});
     public rewindFiles = vi.fn(async () => ({ canRewind: false }));
@@ -209,6 +223,164 @@ describe("SessionManager codex path", () => {
     expect(manager.list()[0].codexSettings?.codexPermissionsMode).toBe(
       "default",
     );
+  });
+
+  it("includes an optional Codex question in session context after turn completion", () => {
+    const manager = new SessionManager(() => {});
+    const sessionId = manager.create(
+      "/tmp/project-codex-optional-question",
+      undefined,
+      undefined,
+      undefined,
+      "codex",
+    );
+    const pendingPermission = {
+      toolUseId: "optional-question",
+      toolName: "AskUserQuestion",
+      input: {
+        isBlocking: false,
+        questions: [{ id: "choice", question: "Choose?" }],
+      },
+    };
+
+    codexInstances[0].getPendingPermission.mockReturnValue(pendingPermission);
+    codexInstances[0].emit("status", "idle");
+
+    expect(manager.summary(sessionId)).toMatchObject({
+      status: "idle",
+      pendingPermission,
+    });
+  });
+
+  it("includes a non-blocking Claude question in session context after turn completion", () => {
+    const manager = new SessionManager(() => {});
+    const sessionId = manager.create(
+      "/tmp/project-claude-optional-question",
+      undefined,
+      undefined,
+      undefined,
+      "claude",
+    );
+    const pendingInput = {
+      toolUseId: "optional-question",
+      toolName: "AskUserQuestion",
+      input: {
+        isBlocking: false,
+        questions: [{ id: "choice", question: "Choose?" }],
+      },
+    };
+
+    sdkInstances[0].getPendingPermission.mockReturnValue(pendingInput);
+    sdkInstances[0].emit("status", "idle");
+
+    expect(manager.summary(sessionId)).toMatchObject({
+      status: "idle",
+      pendingPermission: pendingInput,
+    });
+  });
+
+  it("does not publish a stale blocking Codex question after the turn is idle", () => {
+    const manager = new SessionManager(() => {});
+    const sessionId = manager.create(
+      "/tmp/project-codex-blocking-question",
+      undefined,
+      undefined,
+      undefined,
+      "codex",
+    );
+
+    codexInstances[0].getPendingPermission.mockReturnValue({
+      toolUseId: "blocking-question",
+      toolName: "AskUserQuestion",
+      input: {
+        isBlocking: true,
+        questions: [{ id: "choice", question: "Choose?" }],
+      },
+    });
+    codexInstances[0].emit("status", "idle");
+
+    expect(manager.summary(sessionId)?.pendingPermission).toBeUndefined();
+  });
+
+  it("skips a non-actionable request to expose an idle non-blocking question", () => {
+    const manager = new SessionManager(() => {});
+    const sessionId = manager.create(
+      "/tmp/project-codex-eligible-question",
+      undefined,
+      undefined,
+      undefined,
+      "codex",
+    );
+    const blockingApproval = {
+      toolUseId: "blocking-approval",
+      toolName: "Bash",
+      input: { command: "git status" },
+    };
+    const optionalQuestion = {
+      toolUseId: "optional-question",
+      toolName: "AskUserQuestion",
+      input: {
+        isBlocking: false,
+        questions: [{ id: "choice", question: "Choose?" }],
+      },
+    };
+
+    codexInstances[0].getPendingPermissions.mockReturnValue([
+      blockingApproval,
+      optionalQuestion,
+    ]);
+    codexInstances[0].emit("status", "idle");
+
+    expect(manager.summary(sessionId)?.pendingPermission).toEqual(
+      optionalQuestion,
+    );
+  });
+
+  it("refreshes session context as queued Codex questions advance", async () => {
+    const onSessionUpdated = vi.fn();
+    const manager = new SessionManager(
+      () => {},
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      onSessionUpdated,
+    );
+    const sessionId = manager.create(
+      "/tmp/project-codex-question-queue",
+      undefined,
+      undefined,
+      undefined,
+      "codex",
+    );
+    const first = {
+      toolUseId: "question-first",
+      toolName: "AskUserQuestion",
+      input: { isBlocking: false, questions: [{ id: "first", question: "First?" }] },
+    };
+    const second = {
+      toolUseId: "question-second",
+      toolName: "AskUserQuestion",
+      input: { isBlocking: false, questions: [{ id: "second", question: "Second?" }] },
+    };
+
+    codexInstances[0].getPendingPermission.mockReturnValue(first);
+    codexInstances[0].emit("message", {
+      type: "permission_request",
+      ...first,
+    });
+    await vi.waitFor(() => expect(onSessionUpdated).toHaveBeenCalledTimes(1));
+    expect(manager.summary(sessionId)?.pendingPermission).toEqual(first);
+
+    codexInstances[0].getPendingPermission.mockReturnValue(second);
+    codexInstances[0].emit("message", {
+      type: "tool_result",
+      toolUseId: first.toolUseId,
+      content: "Answered",
+      permissionOutcome: "answered",
+    });
+    await vi.waitFor(() => expect(onSessionUpdated).toHaveBeenCalledTimes(2));
+    expect(manager.summary(sessionId)?.pendingPermission).toEqual(second);
   });
 
   it("normalizes GPT-6 Astra effort before storing and starting", () => {
@@ -782,7 +954,7 @@ describe("SessionManager codex path", () => {
         undefined,
         "codex",
       );
-      manager.get(id)!.lastActivityAt = new Date(index * 1000);
+      manager.get(id)!.lastActivityAt = new Date(Date.now() - 60_000 + index * 1000);
       return id;
     });
 
@@ -802,11 +974,93 @@ describe("SessionManager codex path", () => {
     const manager = new SessionManager(() => {});
     const ids = Array.from({ length: 31 }, (_, i) => manager.create(`/tmp/pending-${i}`, undefined, undefined, undefined, "codex"));
     codexInstances[0].getRecoveryState.mockReturnValue({ phase: "waiting" });
-    ids.forEach((id, i) => { manager.get(id)!.lastActivityAt = new Date(i * 1000); });
+    ids.forEach((id, i) => { manager.get(id)!.lastActivityAt = new Date(Date.now() - 60_000 + i * 1000); });
     codexInstances.forEach((proc) => proc.emit("status", "idle"));
     expect(manager.get(ids[0])).toBeDefined();
     expect(manager.get(ids[1])).toBeUndefined();
     manager.destroyAll();
+  });
+
+  describe("periodic idle reclamation", () => {
+    let manager: SessionManager;
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.stubEnv("BRIDGE_IDLE_SESSION_TTL_MINUTES", "15");
+      manager = new SessionManager(() => {});
+    });
+    afterEach(() => {
+      manager.destroyAll();
+      vi.useRealTimers();
+      vi.unstubAllEnvs();
+    });
+
+    it.each([undefined, "", "0", "-1", "invalid", "15minutes", "Infinity"])(
+      "disables time-based reclamation for TTL %s",
+      (value) => {
+        manager.destroyAll();
+        vi.stubEnv("BRIDGE_IDLE_SESSION_TTL_MINUTES", value);
+        manager = new SessionManager(() => {});
+        const id = manager.create("/tmp/retained", undefined, undefined, undefined, "codex");
+        codexInstances[0].emit("status", "idle");
+        vi.advanceTimersByTime(24 * 60 * 60_000);
+        expect(manager.get(id)).toBeDefined();
+        expect(codexInstances[0].stop).not.toHaveBeenCalled();
+      },
+    );
+
+    it("reclaims expired idle sessions without requiring a new session event", () => {
+      const id = manager.create("/tmp/expired", undefined, undefined, undefined, "codex");
+      codexInstances[0].emit("status", "idle");
+      vi.advanceTimersByTime(14 * 60_000);
+      expect(manager.get(id)).toBeDefined();
+      vi.advanceTimersByTime(60_000);
+      expect(manager.get(id)).toBeUndefined();
+      expect(codexInstances[0].stop).toHaveBeenCalledOnce();
+    });
+
+    it("retains active sessions and all pending user work beyond the TTL", () => {
+      const ids = Array.from({ length: 5 }, (_, i) => manager.create(`/tmp/protected-${i}`, undefined, undefined, undefined, "codex"));
+      codexInstances.slice(1).forEach((proc) => proc.emit("status", "idle"));
+      manager.get(ids[1])!.codexQueuedInput = { itemId: "queued", text: "next", createdAt: new Date().toISOString() };
+      codexInstances[2].getRecoveryState.mockReturnValue({ phase: "waiting" });
+      codexInstances[3].getPendingPermissions.mockReturnValue([{ toolUseId: "question", toolName: "AskUserQuestion", input: { isBlocking: false } }]);
+      codexInstances[4].emit("status", "waiting_approval");
+      vi.advanceTimersByTime(16 * 60_000);
+      ids.forEach((id) => expect(manager.get(id)).toBeDefined());
+    });
+
+    it("retains Claude questions even when protected sessions exceed the cap", () => {
+      const ids = Array.from({ length: 31 }, (_, i) =>
+        manager.create(`/tmp/claude-protected-${i}`));
+      sdkInstances.forEach((proc) => {
+        proc.getPendingPermissions.mockReturnValue([{
+          toolUseId: "question", toolName: "AskUserQuestion",
+          input: { isBlocking: false },
+        }]);
+        proc.emit("status", "idle");
+      });
+      vi.advanceTimersByTime(16 * 60_000);
+      ids.forEach((id) => expect(manager.get(id)).toBeDefined());
+    });
+
+    it("uses refreshed activity and reclaims work only after its protection ends", () => {
+      const id = manager.create("/tmp/refreshed", undefined, undefined, undefined, "codex");
+      codexInstances[0].emit("status", "idle");
+      codexInstances[0].getRecoveryState.mockReturnValue({ phase: "waiting" });
+      vi.advanceTimersByTime(20 * 60_000);
+      manager.get(id)!.lastActivityAt = new Date();
+      codexInstances[0].getRecoveryState.mockReturnValue({ phase: "off" });
+      vi.advanceTimersByTime(14 * 60_000);
+      expect(manager.get(id)).toBeDefined();
+      vi.advanceTimersByTime(60_000);
+      expect(manager.get(id)).toBeUndefined();
+    });
+
+    it("clears the interval when the manager is destroyed", () => {
+      expect(vi.getTimerCount()).toBe(1);
+      manager.destroyAll();
+      expect(vi.getTimerCount()).toBe(0);
+    });
   });
 
   it("includes codex agent metadata in session summaries", () => {
@@ -952,6 +1206,7 @@ describe("SessionManager codex path", () => {
     );
     const queued = manager.queueCodexInput(sessionId, {
       itemId: "queued-1",
+      clientMessageId: "cm-follow-up",
       text: "Follow up",
       createdAt: "2026-04-25T00:00:00.000Z",
       imageCount: 1,
@@ -993,6 +1248,7 @@ describe("SessionManager codex path", () => {
           entry.sessionId === sessionId &&
           entry.msg.type === "user_input" &&
           entry.msg.text === "Follow up" &&
+          entry.msg.clientMessageId === "cm-follow-up" &&
           "imageCount" in entry.msg &&
           entry.msg.imageCount === 1,
       ),
