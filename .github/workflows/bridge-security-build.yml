@@ -30,7 +30,7 @@ jobs:
           node-version: '24.22.1'
           cache: npm
       - name: Repair lockfile within declared dependency ranges
-        run: npm audit fix --package-lock-only --ignore-scripts
+        run: npm update --package-lock-only --ignore-scripts
       - name: Install repaired dependencies on GitHub runner
         run: npm ci
       - name: Audit all dependencies
