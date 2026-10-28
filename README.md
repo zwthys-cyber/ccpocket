@@ -18,6 +18,10 @@ step, and review the result. Pick up the same work on your tablet or Mac.
 
 ## Install
 
+For a new Ubuntu 24.04 x86_64 server, follow the **[step-by-step Chinese server guide](docs/server-setup.zh-CN.md)**. It uses GitHub Actions to build and test the Bridge, then downloads the complete runtime to the server. No server-side npm dependency installation, audit, compilation, or test suite is needed. The guide also covers login, phone connection, background service setup, updates, and rollback.
+
+The source-build commands below are for development or hosts where local builds are intended. For the prebuilt server route, use the guide's service configuration; the built-in Linux `setup` command starts the npm-published package.
+
 1. Install at least one agent CLI on the machine that will run your sessions:
    [Codex](https://github.com/openai/codex) or [Claude](https://docs.anthropic.com/en/docs/claude-code).
 2. Install [Node.js](https://nodejs.org/) 20.18.1 or newer on that same machine.

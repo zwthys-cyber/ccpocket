@@ -19,35 +19,27 @@
 无需 Apple Developer 账号的 TrollStore 未签名 IPA；目前没有 App Store、Google Play
 或官方推送服务。
 
-1. 在运行会话的主机上安装至少一个代理 CLI：
-   [Codex](https://github.com/openai/codex) 或 [Claude](https://docs.anthropic.com/en/docs/claude-code)。
-2. 在同一台主机上安装 [Node.js](https://nodejs.org/) 20.18.1 或更高版本。
-3. 克隆本仓库并构建属于此分支的 Bridge Server：
+### 新服务器安装：先看这份中文教程
 
-```bash
-git clone https://github.com/zwthys-cyber/ccpocket.git
-cd ccpocket
-npm ci
-npm run bridge:build
-```
+**第一次安装，直接按 [新服务器从零安装 CC Pocket](docs/server-setup.zh-CN.md) 操作。**
+教程面向 Ubuntu 24.04 x86_64 云服务器，从 SSH 登录开始，一步步完成：
 
-4. 生成 API Key，并把 Bridge 安装为后台服务：
+1. 安装 Node.js 和 Codex，并完成账号登录。
+2. 在 GitHub Actions 上修复依赖、测试、编译和打包。
+3. 服务器只下载已验证的运行包，生成手机连接密钥。
+4. 配置后台运行和开机自启，处理网络连接。
+5. 手机添加服务器、选择项目并发送第一条任务。
+6. 后续更新、回退和常见问题排查。
 
-```bash
-node packages/bridge/dist/cli.js setup \
-  --host 0.0.0.0 --port 8765 \
-  --api-key "$(openssl rand -hex 24)"
-```
+**小服务器不需要克隆本项目源码，也不要在服务器运行依赖审计、编译或测试套件。**
+构建包已包含生产依赖。GitHub Artifact 当前保留 14 天；过期后在
+[Bridge Security Build](https://github.com/zwthys-cyber/ccpocket/actions/workflows/bridge-security-build.yml)
+选择 `main` 重新生成。完整命令、GitHub 登录方法和下载步骤都在上面的教程里。
 
-请保存输出的 API Key。默认地址为 `ws://<服务器IP>:8765`，默认允许访问启动命令所在
-用户的目录。公网服务器必须使用防火墙、Tailscale 或 HTTPS/WSS 反向代理保护，不要把
-没有 API Key 的 8765 端口直接暴露到互联网。
+服务器 IP 要填写你新机器的地址；API Key 是教程自动生成的 Bridge 连接密钥，
+与 GitHub Token、OpenAI API Key 不同。
 
-5. 从本仓库的 [Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=trollstore)
-   下载 TrollStore IPA 并安装。
-6. 在 App 中添加服务器，填写 `ws://<服务器IP>:8765` 和刚才保存的 API Key；也可以扫描
-   Bridge 输出的二维码。
-7. 选择项目，再选择 Codex 或 Claude，然后启动会话。
+### 手机安装包
 
 | 平台 | 安装 |
 |------|------|
@@ -89,14 +81,12 @@ App 是操作界面。Bridge Server 在能够访问你的项目、shell、git �
 2. 加入同一个 tailnet
 3. 从 CC Pocket 连接 `ws://<host-tailscale-ip>:8765`
 
-对于长期在线的主机，也可以从仓库目录把 Bridge Server 注册为后台服务：
-
-```bash
-node packages/bridge/dist/cli.js setup --host 0.0.0.0 --port 8765
-```
+云服务器的后台运行、开机自启、公网端口和连接密钥配置，请按
+[新服务器安装教程](docs/server-setup.zh-CN.md#6-设置后台服务和开机自启)操作。
+教程直接运行本仓库的 GitHub 构建产物，不会切换到 npm 发布版。
 
 服务化设置支持 macOS launchd 和 Linux systemd。
-关于 `BRIDGE_ALLOWED_DIRS` 等 Bridge 设置，以及 service setup 会保存哪些设置，请见
+关于 `BRIDGE_ALLOWED_DIRS` 等 Bridge 设置，请见
 [Bridge package README](packages/bridge/README.md#configuration)。
 
 ## 说明

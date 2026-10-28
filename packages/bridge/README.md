@@ -21,6 +21,14 @@ Hosts that run Claude Code on Amazon Bedrock need neither of those; see
 
 ## Installation
 
+### This fork on a new Linux server
+
+For Ubuntu 24.04 x86_64, use the [Chinese server installation guide](../../docs/server-setup.zh-CN.md). It installs a GitHub Actions-built runtime with production dependencies, without compiling or running test suites on the server. It also explains phone connection, login, persistent service configuration, and rollback.
+
+The npm commands below are a separate installation route. The built-in Linux `setup` command starts an npm-published package through `npx`; it does not register the downloaded runtime or the local `dist` directory. To keep running this fork's prebuilt artifact, use the systemd configuration in the guide.
+
+### npm package
+
 ```bash
 # Recommended: run the latest Bridge directly
 npx @ccpocket/bridge@latest
