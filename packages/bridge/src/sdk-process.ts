@@ -433,6 +433,22 @@ const CLAUDE_ASSISTANT_ERRORS = {
     message: "Claude encountered a server error.",
     errorCode: "claude_server_error",
   },
+  account_on_hold: {
+    message: "Claude account is on hold. Check the account status on the Bridge machine.",
+    errorCode: "claude_account_on_hold",
+  },
+  verification_required: {
+    message: "Claude requires account verification. Complete verification on the Bridge machine.",
+    errorCode: "claude_verification_required",
+  },
+  overloaded: {
+    message: "Claude is temporarily overloaded. Try again shortly.",
+    errorCode: "claude_overloaded",
+  },
+  cloud_credential_error: {
+    message: "Claude cloud credentials are unavailable or invalid. Check the Bridge machine credentials.",
+    errorCode: "claude_cloud_credential_error",
+  },
   unknown: UNKNOWN_CLAUDE_ASSISTANT_ERROR,
   max_output_tokens: {
     message: "Claude reached the maximum response length before finishing.",
