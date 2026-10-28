@@ -1,135 +1,111 @@
 # CC Pocket
 
-> 本仓库由 `zwthys-cyber` 维护。中文安装、TrollStore 和服务器连接说明请优先阅读
-> [简体中文文档](README.zh-CN.md)。
+**把编程代理，装进口袋。**
 
-**Your agents. In your pocket.**
+用手机聊天的方式操作 Codex 和 Claude：发出指令、批准下一步、查看结果。
+换到平板或 Mac，也能继续同一项工作。
 
-Codex and Claude, with a chat UI made for your phone. Start a task, approve the next
-step, and review the result. Pick up the same work on your tablet or Mac.
+[了解 CC Pocket](https://zwthys-cyber.github.io/ccpocket/install/?lang=zh) · 免费使用 · 开源
 
-[Explore CC Pocket](https://zwthys-cyber.github.io/ccpocket/install/) · Free to use · Open source
-
-[日本語版 README](README.ja.md) | [简体中文版 README](README.zh-CN.md) | [한국어 README](README.ko.md)
+[English README](README.en.md) | [日本語 README](README.ja.md) | [한국어 README](README.ko.md)
 
 <p align="center">
-  <img src="docs/images/screenshots.png" alt="CC Pocket screenshots" width="800">
+  <img src="docs/images/screenshots-zh-CN.png" alt="CC Pocket 截图" width="800">
 </p>
 
-## Install
+## 安装
 
-For a new Ubuntu 24.04 x86_64 server, follow the **[step-by-step Chinese server guide](docs/server-setup.zh-CN.md)**. It uses GitHub Actions to build and test the Bridge, then downloads the complete runtime to the server. No server-side npm dependency installation, audit, compilation, or test suite is needed. The guide also covers login, phone connection, background service setup, updates, and rollback.
+此分支由 `zwthys-cyber` 独立维护，应用标识为 `com.zwthys.ccpocket`。iOS 版本是
+无需 Apple Developer 账号的 TrollStore 未签名 IPA；目前没有 App Store、Google Play
+或官方推送服务。
 
-The source-build commands below are for development or hosts where local builds are intended. For the prebuilt server route, use the guide's service configuration; the built-in Linux `setup` command starts the npm-published package.
+### 新服务器安装：先看这份中文教程
 
-1. Install at least one agent CLI on the machine that will run your sessions:
-   [Codex](https://github.com/openai/codex) or [Claude](https://docs.anthropic.com/en/docs/claude-code).
-2. Install [Node.js](https://nodejs.org/) 20.18.1 or newer on that same machine.
-3. Clone this fork and build its Bridge Server:
+**第一次安装，直接按 [新服务器从零安装 CC Pocket](docs/server-setup.zh-CN.md) 操作。**
+教程面向 Ubuntu 24.04 x86_64 云服务器，从 SSH 登录开始，一步步完成：
 
-```bash
-git clone https://github.com/zwthys-cyber/ccpocket.git
-cd ccpocket
-npm ci
-npm run bridge:build
-node packages/bridge/dist/cli.js setup \
-  --host 0.0.0.0 --port 8765 \
-  --api-key "$(openssl rand -hex 24)"
-```
+1. 安装 Node.js 和 Codex，并完成账号登录。
+2. 在 GitHub Actions 上修复依赖、测试、编译和打包。
+3. 服务器只下载已验证的运行包，生成手机连接密钥。
+4. 配置后台运行和开机自启，处理网络连接。
+5. 手机添加服务器、选择项目并发送第一条任务。
+6. 后续更新、回退和常见问题排查。
 
-4. Install CC Pocket and scan the QR code printed by the Bridge Server.
-5. Pick a project, choose Codex or Claude, and start coding from the app.
+**小服务器不需要克隆本项目源码，也不要在服务器运行依赖审计、编译或测试套件。**
+构建包已包含生产依赖。GitHub Artifact 当前保留 14 天；过期后在
+[Bridge Security Build](https://github.com/zwthys-cyber/ccpocket/actions/workflows/bridge-security-build.yml)
+选择 `main` 重新生成。完整命令、GitHub 登录方法和下载步骤都在上面的教程里。
 
-| Platform | Install |
-|----------|---------|
-| **iOS / iPadOS** | <a href="https://github.com/zwthys-cyber/ccpocket/releases?q=trollstore"><img height="40" alt="Download on the App Store" src="docs/images/app-store-badge.svg" /></a> |
-| **Android** | <a href="https://play.google.com/store/apps/details?id=com.zwthys.ccpocket"><img height="40" alt="Get it on Google Play" src="docs/images/google-play-badge-en.svg" /></a> |
-| **macOS** | Download the latest `.dmg` from [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=macos). Look for releases tagged `macos/v*`. You can also install using Homebrew Cask with `brew install --cask cc-pocket`. |
-| **Linux (experimental)** | Download the latest `.tar.gz` from [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=linux). Look for releases tagged `linux/v*`. Alternatively, install the community-maintained [AUR package](https://aur.archlinux.org/packages/cc-pocket-bin) with `yay -S cc-pocket-bin`. |
-| **Windows (experimental)** | Download the latest `.zip` from [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=windows). Look for releases tagged `windows/v*`. |
+服务器 IP 要填写你新机器的地址；API Key 是教程自动生成的 Bridge 连接密钥，
+与 GitHub Token、OpenAI API Key 不同。
 
-## Free to Use
+### 手机安装包
 
-CC Pocket is free to use. If it helps your workflow, please consider becoming a Supporter in the app. Supporter purchases help cover development and AI tooling costs.
+| 平台 | 安装 |
+|------|------|
+| **iOS / iPadOS（TrollStore）** | 从 [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=trollstore) 下载最新未签名 IPA。 |
+| **Android / macOS / Linux / Windows** | 此分支暂未提供经过验证的公开安装包，可按开发说明自行构建。 |
 
-New to mobile coding agents? See [How to run Codex from iPhone or Android](https://zwthys-cyber.github.io/ccpocket/how-to-run-codex-from-iphone-android/).
+## 免费使用
 
-## What You Can Do
+CC Pocket 可以免费使用。如果它对你的开发流程有帮助，欢迎在应用内成为 Supporter。Supporter 购买会用于覆盖 AI 工具费用，并帮助持续开发。
 
-- **Chat first.** Each session is a room for prompts, replies, approvals, and questions. Markdown, voice input, and image attachments make it easier to give direction on mobile.
-- **Continue across devices.** Resume sessions from the CLI or app on your phone, tablet, or Mac. Larger screens show chat, files, and Git changes side by side.
-- **Keep your place on weak networks.** Outgoing messages wait while you are offline and resend after reconnecting. Missed streaming updates are recovered. New agent requests need a connection.
-- **Create and preview media.** Generate images with Codex Imagegen, open results in chat, and play video or audio files in the app.
-- **Review and ship.** Browse files, inspect code and image diffs, stage changes, commit, push, or revert. Use git worktrees to separate parallel tasks.
-- **Use your own machines.** Agents run on your Mac, Linux, or Windows host through the Bridge Server. Connect by QR code, saved host, or Tailscale; manage the Bridge over SSH.
+## 可以做什么
 
-## Why Fork CC Pocket?
+- **像聊天一样操作。** 每个会话就是一个房间，集中显示指令、回复、审批和问题。支持 Markdown、语音输入和图片附件。
+- **换个设备，继续工作。** 在手机、平板或 Mac 上恢复 CLI 或应用中的会话。大屏幕可并排显示聊天、文件和 Git 差异。
+- **断网也不丢输入。** 离线消息会暂存，重连后自动发送，并恢复遗漏的回复。执行新请求仍需要网络连接。
+- **生成、查看、播放。** 用 Codex Imagegen 生成图片，在聊天中查看结果。视频和音频文件也能直接在应用内播放。
+- **从审查到提交。** 浏览文件，查看代码和图片差异，执行 stage、commit、push 或 revert。通过 git worktree 分离并行任务。
+- **使用自己的主机。** 代理通过 Mac、Linux 或 Windows 上的 Bridge Server 运行。用二维码、已保存主机或 Tailscale 连接，也可通过 SSH 管理 Bridge。
 
-CC Pocket is MIT licensed so you can treat it as a starting point for your own
-agent workflow, not only as a finished app.
+## 工作方式
 
-- Build an internal client that combines Codex or Claude with your team's Jira,
-  Linear, GitHub, or private REST APIs.
-- Remove surfaces you do not need and keep a focused app for your daily workflow.
-- Reuse the Bridge sync layer, approval flow, prompt history, git operations,
-  file browsing, and image/diff viewers instead of rebuilding them from scratch.
-- Keep compatibility with the local agent tools and their session history while
-  adding workflow-specific GUI features that are easier to use than prompts or MCP.
-- Extend desktop support. macOS, Linux, and Windows builds are available today;
-  Linux and Windows remain experimental because the project does not have the
-  same continuous verification coverage for those environments.
-
-For a deeper implementation overview, see the
-[technical stack page](https://zwthys-cyber.github.io/ccpocket/architecture/) or the
-[agent-readable Markdown](https://zwthys-cyber.github.io/ccpocket/architecture/stack.md).
-
-## How It Works
-
-CC Pocket has two parts:
+CC Pocket 由两部分组成：
 
 ```text
-CC Pocket app  <->  Bridge Server on your machine  <->  Codex / Claude
+CC Pocket app  <->  你自己机器上的 Bridge Server  <->  Codex / Claude
 ```
 
-The app is the interface you use. The Bridge Server runs locally on the machine that
-has access to your projects, shell, git repository, and agent CLI. Your code stays
-on your own machine instead of moving into a hosted IDE.
+App 是操作界面。Bridge Server 在能够访问你的项目、shell、git 仓库和代理 CLI
+的主机上运行。你的代码留在自己的机器上，不需要迁移到托管 IDE。
 
-## Remote Access
+## 远程访问
 
-On the same network, connect with the QR code, mDNS discovery, or a manual
-`ws://` / `wss://` URL.
+在同一网络内，你可以使用二维码、mDNS 自动发现，或手动输入
+`ws://` / `wss://` URL 连接。
 
-For access away from home or the office, Tailscale is the recommended setup:
+如果要从家或办公室之外访问，推荐使用 Tailscale：
 
-1. Install [Tailscale](https://tailscale.com/) on your host machine and phone.
-2. Join the same tailnet.
-3. Connect to `ws://<host-tailscale-ip>:8765` from CC Pocket.
+1. 在主机和手机上安装 [Tailscale](https://tailscale.com/)
+2. 加入同一个 tailnet
+3. 从 CC Pocket 连接 `ws://<host-tailscale-ip>:8765`
 
-For an always-on host, the Bridge Server can also be registered as a background service:
+云服务器的后台运行、开机自启、公网端口和连接密钥配置，请按
+[新服务器安装教程](docs/server-setup.zh-CN.md#6-设置后台服务和开机自启)操作。
+教程直接运行本仓库的 GitHub 构建产物，不会切换到 npm 发布版。
 
-```bash
-node packages/bridge/dist/cli.js setup --host 0.0.0.0 --port 8765
-```
+服务化设置支持 macOS launchd 和 Linux systemd。
+关于 `BRIDGE_ALLOWED_DIRS` 等 Bridge 设置，请见
+[Bridge package README](packages/bridge/README.md#configuration)。
 
-Service setup supports macOS launchd and Linux systemd.
-For Bridge flags and persisted service settings such as `BRIDGE_ALLOWED_DIRS`,
-see the [Bridge package README](packages/bridge/README.md#configuration).
+## 说明
 
-## Notes
+- 推送通知默认关闭。本分支不使用原作者的 Firebase/APNs。若以后拥有自己的推送基础设施，需同时配置
+  `BRIDGE_FIREBASE_API_KEY` 和 `BRIDGE_PUSH_RELAY_URL`，并在 iOS 工程中配置自己的 Firebase/APNs。
+- 应用内购买默认关闭；只有显式提供自己的 `REVENUECAT_PUBLIC_KEY` 才会启用 RevenueCat。
+- 本分支不使用原作者的 Shorebird 配置。
 
-- Claude sessions use `ANTHROPIC_API_KEY` by default. Subscription authentication
-  requires explicit Bridge opt-in with `BRIDGE_ALLOW_CLAUDE_OAUTH=1` because
-  Anthropic's current official guidance has an unclear scope for this architecture.
-  See [Claude authentication troubleshooting](docs/auth-troubleshooting.md).
-- CC Pocket is designed around self-hosting and minimal data collection. Supporter purchases
-  restore within the same Apple ID or Google account, but do not sync across stores.
-  See [Supporter / Purchases](docs/supporter.md).
-- Screenshot capture on macOS requires Screen Recording permission for the terminal app
-  running the Bridge Server.
-- CC Pocket is not affiliated with, endorsed by, or associated with Anthropic or OpenAI.
+- Claude 会话默认使用 `ANTHROPIC_API_KEY`。由于官方文档对此架构的适用范围尚不明确，
+  订阅认证需要在 Bridge 上通过 `BRIDGE_ALLOW_CLAUDE_OAUTH=1` 明确启用。
+  详情请见 [Claude 认证排查](docs/auth-troubleshooting.zh-CN.md)。
+- CC Pocket 围绕自托管和最少数据收集设计。Supporter 购买可以在同一个
+  Apple ID / Google 账号内恢复，但不会在不同商店之间同步。
+  详情请见 [Supporter / Purchases](docs/supporter_zh.md)。
+- macOS 截图功能需要为运行 Bridge Server 的终端应用授予屏幕录制权限。
+- CC Pocket 与 Anthropic 或 OpenAI 没有任何关联，也未获得其认可、赞助或官方合作。
 
-## Development
+## 开发
 
 ```bash
 git clone https://github.com/zwthys-cyber/ccpocket.git
@@ -138,24 +114,19 @@ npm install
 cd apps/mobile && flutter pub get && cd ../..
 ```
 
-Common commands:
+常用命令：
 
-| Command | Description |
-|---------|-------------|
-| `npm run bridge` | Start Bridge Server in dev mode |
-| `npm run bridge:build` | Build the Bridge Server |
-| `npm run dev` | Restart Bridge and launch the Flutter app |
-| `npm run test:bridge` | Run Bridge Server tests |
-| `cd apps/mobile && flutter test` | Run Flutter tests |
-| `cd apps/mobile && dart analyze` | Run Dart static analysis |
+| 命令 | 说明 |
+|------|------|
+| `npm run bridge` | 以开发模式启动 Bridge Server |
+| `npm run bridge:build` | 构建 Bridge Server |
+| `npm run dev` | 重启 Bridge 并启动 Flutter App |
+| `npm run test:bridge` | 运行 Bridge Server 测试 |
+| `cd apps/mobile && flutter test` | 运行 Flutter 测试 |
+| `cd apps/mobile && dart analyze` | 运行 Dart 静态分析 |
 
-For setup and checks required before submitting a PR, see
-[Pre-PR checks](docs/development-testing.md#before-opening-a-pr).
-For end-to-end checks with a local Bridge and mobile app, see
-[Development Testing](docs/development-testing.md).
+贡献指南请见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
-
-## License
+## 许可证
 
 [MIT](LICENSE)
