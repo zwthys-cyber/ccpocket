@@ -1802,6 +1802,26 @@ describe("SdkProcess Claude authentication", () => {
       expectedCode: "auth_token_expired",
     },
     {
+      assistantError: "account_on_hold",
+      expectedMessage: "Claude account is on hold. Check the account status on the Bridge machine.",
+      expectedCode: "claude_account_on_hold",
+    },
+    {
+      assistantError: "verification_required",
+      expectedMessage: "Claude requires account verification. Complete verification on the Bridge machine.",
+      expectedCode: "claude_verification_required",
+    },
+    {
+      assistantError: "overloaded",
+      expectedMessage: "Claude is temporarily overloaded. Try again shortly.",
+      expectedCode: "claude_overloaded",
+    },
+    {
+      assistantError: "cloud_credential_error",
+      expectedMessage: "Claude cloud credentials are unavailable or invalid. Check the Bridge machine credentials.",
+      expectedCode: "claude_cloud_credential_error",
+    },
+    {
       assistantError: "unexpected_secret_runtime_value",
       expectedMessage: "Claude stopped because of an unknown request error.",
       expectedCode: "claude_assistant_error",
