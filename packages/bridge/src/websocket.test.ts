@@ -10061,6 +10061,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
   });
 
   it("holds Claude completion pushes until background agents settle", async () => {
+    vi.stubEnv("BRIDGE_PUSH_RELAY_URL", "https://relay.example.com/push");
     vi.useFakeTimers();
     try {
       const fetchMock = vi.fn(async () => new Response("", { status: 200 }));
@@ -10115,6 +10116,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
   });
 
   it("does not hold Claude completion pushes for background shells", async () => {
+    vi.stubEnv("BRIDGE_PUSH_RELAY_URL", "https://relay.example.com/push");
     const fetchMock = vi.fn(async () => new Response("", { status: 200 }));
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
     const bridge = new BridgeWebSocketServer({ server: httpServer, firebaseAuth: {
@@ -10145,6 +10147,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
   });
 
   it("does not hold Codex completion pushes for background terminals", async () => {
+    vi.stubEnv("BRIDGE_PUSH_RELAY_URL", "https://relay.example.com/push");
     const fetchMock = vi.fn(async () => new Response("", { status: 200 }));
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
     const bridge = new BridgeWebSocketServer({ server: httpServer, firebaseAuth: {
