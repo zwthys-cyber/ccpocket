@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { fetchClaudeUsage, type ClaudeLiveUsageReader } from "./claude-usage.js";
 import { CodexProcess } from "./codex-process.js";
 
 // ── Types ──
@@ -167,10 +168,16 @@ async function redeemCodexReset(idempotencyKey: string, creditId?: string): Prom
 
 // ── Combined ──
 
-export async function fetchAllUsage(): Promise<UsageInfo[]> {
-  // Claude usage previously depended on an undocumented internal endpoint.
-  // Keep this API limited to Codex so the app can link users to Claude's
-  // official billing pages instead of querying that endpoint.
-  const codex = await fetchCodexUsage();
-  return [codex];
+/**
+ * Fetch usage for every provider with plan limits. Claude is omitted when its
+ * plan limits do not apply; a Claude failure never blocks Codex usage.
+ */
+export async function fetchAllUsage(options: {
+  readClaudeLive?: ClaudeLiveUsageReader;
+} = {}): Promise<UsageInfo[]> {
+  const [claude, codex] = await Promise.all([
+    fetchClaudeUsage(options.readClaudeLive).catch(() => null),
+    fetchCodexUsage(),
+  ]);
+  return claude ? [claude, codex] : [codex];
 }

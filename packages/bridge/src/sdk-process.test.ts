@@ -16,6 +16,8 @@ import {
   hasExplicitClaudeCredential,
   isClaudeOAuthOptInEnabled,
   listAvailableClaudeModels,
+  stripClaudeModelPricing,
+  backgroundTasksFromSdk,
   SdkProcess,
 } from "./sdk-process.js";
 import type { ServerMessage } from "./parser.js";
@@ -287,6 +289,32 @@ describe("sdkMessageToServerMessage", () => {
       };
 
       expect(sdkMessageToServerMessage(sdkMsg as any)).toBeNull();
+    });
+
+    it("delivers narration thinking as visible text", () => {
+      const sdkMsg = {
+        type: "assistant" as const,
+        message: {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "" },
+            { type: "thinking", thinking: "Tag is missing; releasing now.\n\n" },
+            { type: "tool_use", id: "tu-1", name: "Bash", input: {} },
+          ],
+        },
+        narration_block_indexes: [1],
+        session_id: "test-session",
+      };
+
+      expect(sdkMessageToServerMessage(sdkMsg as any)).toMatchObject({
+        type: "assistant",
+        message: {
+          content: [
+            { type: "text", text: "Tag is missing; releasing now." },
+            { type: "tool_use", id: "tu-1" },
+          ],
+        },
+      });
     });
   });
 
@@ -833,7 +861,226 @@ describe("SdkProcess.approveAlways", () => {
   });
 });
 
+describe("SdkProcess settings", () => {
+  it("keeps the model when a later flag update fails", async () => {
+    const proc = new SdkProcess();
+    (proc as any).queryInstance = {
+      setModel: vi.fn(async () => {}),
+      applyFlagSettings: vi.fn(async () => {
+        throw new Error("flags rejected");
+      }),
+    };
+    (proc as any)._settings = { model: "sonnet", effort: "high" };
+    await expect(
+      proc.updateSettings({ model: "opus", effort: "low" }),
+    ).rejects.toThrow("flags rejected");
+    expect(proc.settings).toEqual({ model: "opus", effort: "high" });
+  });
+
+  it("announces input_ready after a result publishes idle", () => {
+    const proc = new SdkProcess();
+    const internal = proc as any;
+    internal._status = "running";
+    internal.queryInstance = {};
+    const order: string[] = [];
+    proc.on("message", (m: any) => {
+      if (m.type === "status") order.push(`status:${m.status}`);
+    });
+    proc.on("input_ready", () => order.push("input_ready"));
+    internal.updateStatusFromMessage({ type: "result", subtype: "success" });
+    expect(order).toEqual(["status:idle", "input_ready"]);
+
+    internal._status = "running";
+    internal.stopped = true;
+    order.length = 0;
+    internal.updateStatusFromMessage({ type: "result", subtype: "success" });
+    expect(order).toEqual(["status:idle"]);
+  });
+
+  it("keeps idle status when the CLI echoes a local model command", () => {
+    const proc = new SdkProcess();
+    const internal = proc as any;
+    internal._status = "idle";
+    internal.updateStatusFromMessage({
+      type: "user",
+      message: {
+        role: "user",
+        content:
+          "<local-command-stdout>Set model to `sonnet (claude-sonnet-5-5)`</local-command-stdout>",
+      },
+    });
+    expect(proc.status).toBe("idle");
+
+    internal.updateStatusFromMessage({
+      type: "user",
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }],
+      },
+    });
+    expect(proc.status).toBe("running");
+  });
+
+  it("applies only changed model, effort and fast mode", async () => {
+    const proc = new SdkProcess();
+    const setModel = vi.fn(async () => {});
+    const applyFlagSettings = vi.fn(async () => {});
+    (proc as any).queryInstance = { setModel, applyFlagSettings };
+    (proc as any)._settings = { model: "sonnet", effort: "high" };
+
+    await proc.updateSettings({ model: "opus", effort: "high", fastMode: true });
+    expect(setModel).toHaveBeenCalledWith("opus");
+    // Effort is re-applied after a model switch so the new model uses it.
+    expect(applyFlagSettings).toHaveBeenCalledWith({
+      effortLevel: "high",
+      fastMode: true,
+    });
+    expect(proc.settings).toEqual({ model: "opus", effort: "high", fastMode: true });
+
+    setModel.mockClear();
+    applyFlagSettings.mockClear();
+    await proc.updateSettings({ effort: "low" });
+    expect(setModel).not.toHaveBeenCalled();
+    expect(applyFlagSettings).toHaveBeenCalledWith({ effortLevel: "low" });
+
+    applyFlagSettings.mockClear();
+    await proc.updateSettings({ fastMode: true });
+    expect(applyFlagSettings).not.toHaveBeenCalled();
+  });
+
+  it("toggles ultracode and keeps it on across effort and model changes", async () => {
+    const proc = new SdkProcess();
+    const setModel = vi.fn(async () => {});
+    const applyFlagSettings = vi.fn(async () => {});
+    (proc as any).queryInstance = { setModel, applyFlagSettings };
+    (proc as any)._settings = { model: "opus", effort: "high" };
+
+    await proc.updateSettings({ ultracode: true });
+    expect(applyFlagSettings).toHaveBeenCalledWith({ ultracode: true });
+    expect(proc.settings.ultracode).toBe(true);
+
+    // An effort change alone would turn ultracode off in Claude Code.
+    applyFlagSettings.mockClear();
+    await proc.updateSettings({ effort: "max" });
+    expect(applyFlagSettings).toHaveBeenCalledWith({
+      effortLevel: "max",
+      ultracode: true,
+    });
+
+    applyFlagSettings.mockClear();
+    await proc.updateSettings({ model: "sonnet" });
+    expect(applyFlagSettings).toHaveBeenCalledWith({ ultracode: true });
+
+    applyFlagSettings.mockClear();
+    await proc.updateSettings({ effort: "max", ultracode: true });
+    expect(applyFlagSettings).not.toHaveBeenCalled();
+
+    await proc.updateSettings({ ultracode: false });
+    expect(applyFlagSettings).toHaveBeenCalledWith({ ultracode: false });
+    expect(proc.settings.ultracode).toBe(false);
+  });
+
+  it("keeps ultracode off when Claude Code rejects it", async () => {
+    const proc = new SdkProcess();
+    (proc as any).queryInstance = {
+      setModel: vi.fn(),
+      applyFlagSettings: vi.fn(async () => {
+        throw new Error("ultracode is not available for this session");
+      }),
+    };
+    (proc as any)._settings = { model: "haiku" };
+    await expect(proc.updateSettings({ ultracode: true })).rejects.toThrow(
+      "ultracode is not available",
+    );
+    expect(proc.settings).toEqual({ model: "haiku" });
+  });
+
+  it("maps the default model to the SDK default", async () => {
+    const proc = new SdkProcess();
+    const setModel = vi.fn(async () => {});
+    (proc as any).queryInstance = { setModel, applyFlagSettings: vi.fn() };
+    (proc as any)._settings = { model: "opus" };
+    await proc.updateSettings({ model: "default" });
+    expect(setModel).toHaveBeenCalledWith(undefined);
+    expect(proc.settings.model).toBe("default");
+  });
+
+  it("keeps settings unchanged when the SDK rejects the change", async () => {
+    const proc = new SdkProcess();
+    (proc as any).queryInstance = {
+      setModel: vi.fn(async () => {
+        throw new Error("bad model");
+      }),
+      applyFlagSettings: vi.fn(),
+    };
+    (proc as any)._settings = { model: "sonnet" };
+    await expect(proc.updateSettings({ model: "nope" })).rejects.toThrow(
+      "bad model",
+    );
+    expect(proc.settings).toEqual({ model: "sonnet" });
+  });
+});
+
 describe("SdkProcess input dispatch", () => {
+  it("steers into a running turn with next priority and no status change", () => {
+    const proc = new SdkProcess();
+    const resolve = vi.fn();
+    const internal = proc as any;
+    internal._status = "running";
+    internal.userMessageResolve = resolve;
+
+    expect(proc.steerInput("also do this")).toBe(true);
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(resolve.mock.calls[0][0]).toMatchObject({
+      priority: "next",
+      message: { content: [{ type: "text", text: "also do this" }] },
+    });
+    expect(proc.hasInputQueue).toBe(false);
+    expect(proc.status).toBe("running");
+  });
+
+  it("buffers a steer until the stream pulls during the same turn", async () => {
+    const proc = new SdkProcess();
+    const internal = proc as any;
+    internal._status = "running";
+    internal.userMessageResolve = null;
+
+    expect(proc.steerInput("buffered")).toBe(true);
+    const stream = internal.createUserMessageStream();
+    const next = await stream.next();
+    expect(next.value).toMatchObject({
+      priority: "next",
+      message: { content: [{ type: "text", text: "buffered" }] },
+    });
+  });
+
+  it("sends a buffered steer as a normal prompt when the turn already ended", async () => {
+    const proc = new SdkProcess();
+    const internal = proc as any;
+    internal._status = "running";
+    internal.userMessageResolve = null;
+    proc.steerInput("late steer");
+    internal._status = "idle";
+
+    const stream = internal.createUserMessageStream();
+    const next = await stream.next();
+    expect(next.value.priority).toBeUndefined();
+    expect(proc.status).toBe("running");
+  });
+
+  it("sends steer input normally when no turn is active", () => {
+    const proc = new SdkProcess();
+    const resolve = vi.fn();
+    const internal = proc as any;
+    internal._status = "idle";
+    internal.userMessageResolve = resolve;
+
+    expect(proc.steerInput("start a turn")).toBe(false);
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(resolve.mock.calls[0][0].priority).toBeUndefined();
+    expect(proc.status).toBe("running");
+  });
+
   it("queues and requests interrupt while a turn is running", () => {
     const proc = new SdkProcess();
     const resolve = vi.fn();
@@ -1004,6 +1251,200 @@ describe("SdkProcess input dispatch", () => {
     await stream.return(undefined);
   });
 
+});
+
+describe("subagent frames", () => {
+  const agentToolUse = (id: string) => ({
+    type: "assistant",
+    parent_tool_use_id: null,
+    message: {
+      id: `msg-${id}`,
+      role: "assistant",
+      content: [{ type: "tool_use", id, name: "Agent", input: {} }],
+    },
+  });
+  const toolResult = (toolUseId: string, parent: string | null) => ({
+    type: "user",
+    parent_tool_use_id: parent,
+    message: {
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: toolUseId, content: "ok" }],
+    },
+  });
+  const userText = (text: string, parent: string | null) => ({
+    type: "user",
+    parent_tool_use_id: parent,
+    message: { role: "user", content: [{ type: "text", text }] },
+  });
+  const subagentAssistant = (parent: string, toolUseId: string) => ({
+    type: "assistant",
+    parent_tool_use_id: parent,
+    message: {
+      id: `msg-sub-${toolUseId}`,
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "subagent thinking" },
+        { type: "text", text: "Now the SDK d.ts." },
+        { type: "tool_use", id: toolUseId, name: "Bash", input: {} },
+      ],
+    },
+  });
+  const result = {
+    type: "result",
+    subtype: "success",
+    result: "Done",
+    duration_ms: 1,
+    session_id: "main",
+  };
+
+  async function runFrames(
+    proc: SdkProcess,
+    frames: Array<Record<string, unknown> | (() => void)>,
+  ): Promise<ServerMessage[]> {
+    const internal = proc as any;
+    const messages: ServerMessage[] = [];
+    proc.on("message", (message) => messages.push(message));
+    internal.authClassification = "subscription";
+    internal.queryInstance = {
+      async *[Symbol.asyncIterator]() {
+        for (const frame of frames) {
+          if (typeof frame === "function") {
+            frame();
+          } else {
+            yield frame;
+          }
+        }
+      },
+    };
+    await internal.processMessages(internal.authGeneration, Promise.resolve());
+    return messages;
+  }
+
+  it("keeps only tool activity from a subagent frame", () => {
+    expect(
+      sdkMessageToServerMessage(subagentAssistant("toolu_agent", "toolu_sub") as any),
+    ).toEqual(
+      expect.objectContaining({
+        type: "assistant",
+        message: expect.objectContaining({
+          content: [{ type: "tool_use", id: "toolu_sub", name: "Bash", input: {} }],
+        }),
+      }),
+    );
+    expect(
+      sdkMessageToServerMessage(toolResult("toolu_sub", "toolu_agent") as any),
+    ).toEqual(expect.objectContaining({ type: "tool_result", toolUseId: "toolu_sub" }));
+  });
+
+  it("does not turn subagent prompts, interrupts or deltas into main messages", () => {
+    expect(
+      sdkMessageToServerMessage(
+        userText("[Request interrupted by user]", "toolu_agent") as any,
+      ),
+    ).toBeNull();
+    expect(
+      sdkMessageToServerMessage(userText("Repository: ...", "toolu_agent") as any),
+    ).toBeNull();
+    expect(
+      sdkMessageToServerMessage({
+        type: "assistant",
+        parent_tool_use_id: "toolu_agent",
+        message: { role: "assistant", content: [{ type: "text", text: "narration" }] },
+      } as any),
+    ).toBeNull();
+    expect(
+      sdkMessageToServerMessage({
+        type: "stream_event",
+        parent_tool_use_id: "toolu_agent",
+        event: {
+          type: "content_block_delta",
+          delta: { type: "text_delta", text: "sub" },
+        },
+      } as any),
+    ).toBeNull();
+  });
+
+  it("forwards foreground subagent tool activity while the main turn runs", async () => {
+    const proc = new SdkProcess();
+    (proc as any)._status = "running";
+
+    const messages = await runFrames(proc, [
+      agentToolUse("toolu_fg"),
+      userText("Investigate the bridge", "toolu_fg"),
+      subagentAssistant("toolu_fg", "toolu_s1"),
+      toolResult("toolu_s1", "toolu_fg"),
+      toolResult("toolu_fg", null),
+      result,
+    ]);
+
+    expect(messages.filter((m) => m.type === "user_input")).toEqual([]);
+    expect(messages).toContainEqual(
+      expect.objectContaining({ type: "tool_result", toolUseId: "toolu_s1" }),
+    );
+    const subagentAssistantMessage = messages.find(
+      (m) =>
+        m.type === "assistant" &&
+        (m.message.content as Array<{ id?: string }>).some(
+          (block) => block.id === "toolu_s1",
+        ),
+    );
+    expect(subagentAssistantMessage).toEqual(
+      expect.objectContaining({
+        message: expect.objectContaining({
+          content: [{ type: "tool_use", id: "toolu_s1", name: "Bash", input: {} }],
+        }),
+      }),
+    );
+  });
+
+  it("keeps an idle session idle while a background agent works", async () => {
+    const proc = new SdkProcess();
+    const internal = proc as any;
+    internal._status = "running";
+    let statusAfterBackgroundFrames: string | undefined;
+    let dispatch: { queued: boolean; shouldInterrupt: boolean } | undefined;
+    const resolve = vi.fn();
+
+    const messages = await runFrames(proc, [
+      agentToolUse("toolu_bg"),
+      // Background agents return a placeholder tool_result immediately.
+      toolResult("toolu_bg", null),
+      result,
+      subagentAssistant("toolu_bg", "toolu_bg_s1"),
+      toolResult("toolu_bg_s1", "toolu_bg"),
+      userText("[Request interrupted by user]", "toolu_bg"),
+      () => {
+        statusAfterBackgroundFrames = proc.status;
+        internal.userMessageResolve = resolve;
+        dispatch = proc.dispatchInput("follow up");
+      },
+    ]);
+
+    expect(statusAfterBackgroundFrames).toBe("idle");
+    expect(dispatch).toEqual({ queued: false, shouldInterrupt: false });
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(messages.filter((m) => m.type === "user_input")).toEqual([]);
+    expect(messages).not.toContainEqual(
+      expect.objectContaining({ type: "tool_result", toolUseId: "toolu_bg_s1" }),
+    );
+  });
+
+  it("drops subagent frames once their Agent call has returned mid-turn", async () => {
+    const proc = new SdkProcess();
+    (proc as any)._status = "running";
+
+    const messages = await runFrames(proc, [
+      agentToolUse("toolu_bg"),
+      toolResult("toolu_bg", null),
+      subagentAssistant("toolu_bg", "toolu_bg_s1"),
+      toolResult("toolu_bg_s1", "toolu_bg"),
+      result,
+    ]);
+
+    expect(messages).not.toContainEqual(
+      expect.objectContaining({ type: "tool_result", toolUseId: "toolu_bg_s1" }),
+    );
+  });
 });
 
 describe("SdkProcess Claude authentication", () => {
@@ -1258,6 +1699,42 @@ describe("SdkProcess Claude authentication", () => {
       "BRIDGE_ALLOW_CLAUDE_OAUTH=1",
     );
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("keeps model descriptions without per-token pricing", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test");
+    mockSdkQuery.mockReturnValueOnce({
+      async *[Symbol.asyncIterator]() {},
+      close: vi.fn(),
+      initializationResult: vi.fn().mockResolvedValue({
+        account: { apiKeySource: "ANTHROPIC_API_KEY" },
+        models: [
+          {
+            value: "haiku",
+            displayName: "Haiku",
+            description:
+              "Haiku 5.5 · Fastest for quick answers · $0.10/$0.50 per Mtok ($0.50/$2.50 for prompts over 100k)",
+          },
+          { value: "opus", displayName: "Opus", description: "$4/$20 per Mtok" },
+        ],
+      }),
+    });
+
+    const models = await listAvailableClaudeModels();
+    expect(models[0]).toEqual(expect.objectContaining({
+      model: "haiku",
+      displayName: "Haiku",
+      description: "Haiku 5.5 · Fastest for quick answers",
+    }));
+    expect(models[1]).not.toHaveProperty("description");
+  });
+
+  it("strips pricing segments from model descriptions", () => {
+    expect(stripClaudeModelPricing(
+      "Use the default model (currently Opus 5.5) · $4/$20 per Mtok",
+    )).toBe("Use the default model (currently Opus 5.5)");
+    expect(stripClaudeModelPricing("Sonnet 5.5 · Efficient for routine tasks"))
+      .toBe("Sonnet 5.5 · Efficient for routine tasks");
   });
 
   it("lists models from OAuth only after explicit opt-in", async () => {
@@ -1660,6 +2137,113 @@ describe("SdkProcess Claude authentication", () => {
         errorCode: "claude_compaction_failed",
       },
     ]);
+  });
+
+  it("emits one compaction marker carrying the following summary", async () => {
+    const init = {
+      type: "system",
+      subtype: "init",
+      session_id: "compact-session",
+      model: "claude-haiku-5-5",
+      apiKeySource: "api_key",
+    };
+    // Frame order captured from a real `/compact` run.
+    const { messages } = await runSdkMessages([
+      init,
+      { type: "system", subtype: "status", status: "compacting", session_id: "compact-session" },
+      {
+        type: "system",
+        subtype: "status",
+        status: null,
+        compact_result: "success",
+        session_id: "compact-session",
+      },
+      init,
+      {
+        type: "system",
+        subtype: "compact_boundary",
+        session_id: "compact-session",
+        uuid: "boundary-1",
+        compact_metadata: {
+          trigger: "manual",
+          pre_tokens: 21935,
+          post_tokens: 7722,
+          duration_ms: 5995,
+        },
+      },
+      {
+        type: "user",
+        isSynthetic: true,
+        session_id: "compact-session",
+        parent_tool_use_id: null,
+        message: {
+          role: "user",
+          content:
+            "This session is being continued from a previous conversation.\n\nSummary:\n1. Reply with ok.",
+        },
+      },
+      {
+        type: "user",
+        isReplay: true,
+        session_id: "compact-session",
+        parent_tool_use_id: null,
+        message: { role: "user", content: "<local-command-stdout>Compacted </local-command-stdout>" },
+      },
+    ]);
+
+    const markers = messages.filter((m) => m.type === "context_compaction");
+    expect(markers).toEqual([
+      expect.objectContaining({
+        type: "context_compaction",
+        provider: "claude",
+        id: "boundary-1",
+        trigger: "manual",
+        preTokens: 21935,
+        postTokens: 7722,
+        summary: "1. Reply with ok.",
+      }),
+    ]);
+    // The boundary no longer re-broadcasts a stale "compacting" status.
+    const statusMessages = messages
+      .filter((m) => m.type === "status")
+      .map((m) => (m as { status: string }).status);
+    expect(statusMessages.lastIndexOf("compacting")).toBeLessThan(
+      messages.findIndex((m) => m.type === "context_compaction"),
+    );
+  });
+
+  it("emits a compaction marker without summary when none follows", async () => {
+    const { messages } = await runSdkMessages([
+      {
+        type: "system",
+        subtype: "init",
+        session_id: "compact-session-2",
+        model: "claude-haiku-5-5",
+        apiKeySource: "api_key",
+      },
+      {
+        type: "system",
+        subtype: "compact_boundary",
+        session_id: "compact-session-2",
+        uuid: "boundary-2",
+        compact_metadata: { trigger: "auto", pre_tokens: 1000 },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        result: "",
+        session_id: "compact-session-2",
+        total_cost_usd: 0,
+        duration_ms: 1,
+      },
+    ]);
+
+    const markerIndex = messages.findIndex((m) => m.type === "context_compaction");
+    expect(messages[markerIndex]).toEqual(
+      expect.objectContaining({ id: "boundary-2", trigger: "auto", preTokens: 1000 }),
+    );
+    expect(messages[markerIndex]).not.toHaveProperty("summary");
+    expect(markerIndex).toBeLessThan(messages.findIndex((m) => m.type === "result"));
   });
 
   it("preserves partial assistant text and surfaces its typed error once", async () => {
@@ -2444,5 +3028,356 @@ describe("SdkProcess.setPermissionMode", () => {
 
     await expect(proc.setPermissionMode("default")).resolves.toBeUndefined();
     expect(proc.permissionMode).toBe("default");
+  });
+});
+
+describe("Claude interrupt marker", () => {
+  it.each(["[Request interrupted by user]", "[Request interrupted by user for tool use]"])(
+    "marks %s as synthetic",
+    (text) => {
+      expect(
+        sdkMessageToServerMessage({
+          type: "user",
+          parent_tool_use_id: null,
+          message: { role: "user", content: [{ type: "text", text }] },
+        } as any),
+      ).toEqual(expect.objectContaining({ type: "user_input", isSynthetic: true }));
+    },
+  );
+});
+
+describe("Claude result cost", () => {
+  it("reports per-turn cost from the cumulative total_cost_usd", async () => {
+    const proc = new SdkProcess();
+    const internal = proc as any;
+    const messages: ServerMessage[] = [];
+    proc.on("message", (message) => messages.push(message));
+    internal.authClassification = "api_key";
+    internal._status = "running";
+    const result = (total: number) => ({
+      type: "result",
+      subtype: "success",
+      result: "Done",
+      total_cost_usd: total,
+      duration_ms: 1,
+      session_id: "main",
+    });
+    internal.queryInstance = {
+      async *[Symbol.asyncIterator]() {
+        yield result(1.8774);
+        yield result(2.1183);
+        // A smaller total means the CLI reset it (e.g. /clear).
+        yield result(0.05);
+      },
+    };
+
+    await internal.processMessages(internal.authGeneration, Promise.resolve());
+
+    expect(
+      messages
+        .filter((m) => m.type === "result")
+        .map((m) => (m as { cost?: number }).cost),
+    ).toEqual([1.8774, 0.2409, 0.05]);
+  });
+});
+
+describe("Claude per-turn init", () => {
+  it("does not drop a running turn to idle when init arrives", async () => {
+    const proc = new SdkProcess();
+    const internal = proc as any;
+    internal.authClassification = "api_key";
+    internal._status = "starting";
+    const init = {
+      type: "system",
+      subtype: "init",
+      session_id: "main",
+      model: "m",
+      apiKeySource: "ANTHROPIC_API_KEY",
+    };
+    const observed: string[] = [];
+    internal.queryInstance = {
+      async *[Symbol.asyncIterator]() {
+        yield init;
+        observed.push(proc.status);
+        internal.setStatus("running");
+        yield init;
+        observed.push(proc.status);
+      },
+    };
+
+    await internal.processMessages(internal.authGeneration, Promise.resolve());
+
+    expect(observed).toEqual(["idle", "running"]);
+  });
+});
+
+describe("Claude server tool blocks", () => {
+  it("drops content blocks clients cannot render", () => {
+    expect(
+      sdkMessageToServerMessage({
+        type: "assistant",
+        parent_tool_use_id: null,
+        message: {
+          role: "assistant",
+          content: [
+            { type: "server_tool_use", id: "srvtoolu_1", name: "advisor", input: {} },
+            { type: "advisor_tool_result", tool_use_id: "srvtoolu_1", content: {} },
+            { type: "text", text: "Next step" },
+          ],
+        },
+      } as any),
+    ).toEqual(
+      expect.objectContaining({
+        type: "assistant",
+        message: expect.objectContaining({
+          content: [{ type: "text", text: "Next step" }],
+        }),
+      }),
+    );
+  });
+
+  it("drops an assistant frame that only carries server tool blocks", () => {
+    expect(
+      sdkMessageToServerMessage({
+        type: "assistant",
+        parent_tool_use_id: null,
+        message: {
+          role: "assistant",
+          content: [
+            { type: "advisor_tool_result", tool_use_id: "srvtoolu_1", content: {} },
+          ],
+        },
+      } as any),
+    ).toBeNull();
+  });
+});
+
+describe("Claude background tasks", () => {
+  it("maps the SDK level payload and leaves out ambient tasks", () => {
+    expect(
+      backgroundTasksFromSdk([
+        {
+          task_id: "b1",
+          task_type: "local_bash",
+          description: "Wait for CI",
+        },
+        { task_id: "w1", task_type: "local_bash", ambient: true },
+        {
+          task_id: "a1",
+          task_type: "local_agent",
+          subagent_type: "Explore",
+        },
+        { task_type: "local_bash" },
+      ]),
+    ).toEqual([
+      { taskId: "b1", taskType: "local_bash", description: "Wait for CI" },
+      { taskId: "a1", taskType: "local_agent", subagentType: "Explore" },
+    ]);
+    expect(backgroundTasksFromSdk(undefined)).toEqual([]);
+  });
+
+  it("emits background_tasks on change and clears them when the query ends", async () => {
+    const proc = new SdkProcess();
+    const internal = proc as any;
+    const messages: ServerMessage[] = [];
+    proc.on("message", (message) => messages.push(message));
+    internal.authClassification = "subscription";
+    internal._status = "running";
+    const changed = (tasks: unknown[]) => ({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks,
+    });
+    const bash = { task_id: "b1", task_type: "local_bash", description: "Wait" };
+    internal.queryInstance = {
+      async *[Symbol.asyncIterator]() {
+        yield changed([bash]);
+        yield changed([bash]);
+        yield {
+          type: "result",
+          subtype: "success",
+          result: "Started",
+          duration_ms: 1,
+          session_id: "main",
+        };
+        // Status stays idle while the background task is still running.
+        expect(proc.status).toBe("idle");
+        expect(proc.backgroundTasks).toHaveLength(1);
+      },
+    };
+
+    await internal.processMessages(internal.authGeneration, Promise.resolve());
+
+    expect(
+      messages
+        .filter((m) => m.type === "background_tasks")
+        .map((m) => (m as { tasks: unknown[] }).tasks),
+    ).toEqual([
+      [{ taskId: "b1", taskType: "local_bash", description: "Wait" }],
+      [],
+    ]);
+  });
+
+  it("stops background tasks instead of interrupting between turns", () => {
+    const proc = new SdkProcess();
+    const internal = proc as any;
+    const interrupt = vi.fn(() => Promise.resolve());
+    const stopTask = vi.fn(() => Promise.resolve());
+    internal.queryInstance = { interrupt, stopTask };
+    internal._status = "idle";
+    internal._backgroundTasks = [
+      { taskId: "a1", taskType: "local_agent" },
+      { taskId: "b1", taskType: "local_bash" },
+    ];
+
+    proc.interrupt();
+
+    expect(stopTask.mock.calls).toEqual([["a1"], ["b1"]]);
+    expect(interrupt).not.toHaveBeenCalled();
+  });
+
+  it("interrupts the running turn even with background tasks", () => {
+    const proc = new SdkProcess();
+    const internal = proc as any;
+    const interrupt = vi.fn(() => Promise.resolve());
+    const stopTask = vi.fn(() => Promise.resolve());
+    internal.queryInstance = { interrupt, stopTask };
+    internal._status = "running";
+    internal._backgroundTasks = [{ taskId: "a1", taskType: "local_agent" }];
+
+    proc.interrupt();
+
+    expect(interrupt).toHaveBeenCalledOnce();
+    expect(stopTask).not.toHaveBeenCalled();
+  });
+});
+
+describe("SdkProcess pending permission cleanup", () => {
+  const startPending = (proc: SdkProcess, toolUseId: string) =>
+    (proc as any).waitForPermission(
+      toolUseId,
+      "Bash",
+      { command: "ls" },
+      new AbortController().signal,
+    ) as Promise<unknown>;
+
+  const settledWithin = async (promise: Promise<unknown>) =>
+    Promise.race([
+      promise,
+      new Promise((resolve) => setTimeout(() => resolve("pending"), 20)),
+    ]);
+
+  it.each([
+    [
+      "interrupt",
+      (proc: SdkProcess) => {
+        (proc as any).queryInstance = {
+          interrupt: vi.fn(() => Promise.resolve()),
+          stopTask: vi.fn(() => Promise.resolve()),
+        };
+        proc.interrupt();
+      },
+    ],
+    [
+      "stop",
+      (proc: SdkProcess) => {
+        proc.stop();
+      },
+    ],
+    [
+      "result",
+      (proc: SdkProcess) => {
+        (proc as any).updateStatusFromMessage({
+          type: "result",
+          subtype: "success",
+        });
+      },
+    ],
+  ])("denies outstanding canUseTool requests on %s", async (_label, trigger) => {
+    const proc = new SdkProcess();
+    const messages: ServerMessage[] = [];
+    proc.on("message", (msg) => messages.push(msg));
+
+    const first = startPending(proc, "tool-1");
+    const second = startPending(proc, "tool-2");
+    messages.length = 0;
+
+    trigger(proc);
+
+    await expect(settledWithin(first)).resolves.toEqual({
+      behavior: "deny",
+      message: expect.any(String),
+    });
+    await expect(settledWithin(second)).resolves.toEqual({
+      behavior: "deny",
+      message: expect.any(String),
+    });
+    expect(proc.getPendingPermissions()).toEqual([]);
+    expect(
+      messages.filter((m) => m.type === "permission_resolved"),
+    ).toEqual([]);
+  });
+
+  it("leaves normal approve and reject flows unchanged", async () => {
+    const proc = new SdkProcess();
+    const approved = startPending(proc, "tool-a");
+    const rejected = startPending(proc, "tool-r");
+
+    expect(proc.approve("tool-a")).toBe(true);
+    expect(proc.reject("tool-r", "nope")).toBe(true);
+
+    await expect(approved).resolves.toEqual({
+      behavior: "allow",
+      updatedInput: { command: "ls" },
+    });
+    await expect(rejected).resolves.toEqual({
+      behavior: "deny",
+      message: "nope",
+    });
+
+    proc.stop();
+    expect(proc.getPendingPermissions()).toEqual([]);
+  });
+});
+
+
+describe("SdkProcess usage-limit notifications", () => {
+  it("reports rejected resets before input readiness and ignores warnings", async () => {
+    const proc = new SdkProcess();
+    const internal = proc as any;
+    internal.authClassification = "subscription";
+    internal._status = "running";
+    const events: Array<[string, number?]> = [];
+    const reset = Math.floor(Date.now() / 1000) + 3600;
+    proc.on("usage_limit", (at) => events.push(["limit", at]));
+    proc.on("input_ready", () => events.push(["ready"]));
+    internal.queryInstance = {
+      async *[Symbol.asyncIterator]() {
+        yield { type: "rate_limit_event", rate_limit_info: { status: "allowed_warning", resetsAt: reset } };
+        yield { type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt: reset } };
+        yield { type: "result", subtype: "success", session_id: "test", duration_ms: 1 };
+      },
+    };
+    await internal.processMessages(internal.authGeneration, Promise.resolve());
+    expect(events).toEqual([["limit", reset * 1000], ["ready"]]);
+  });
+
+  it("resolves a rate_limit assistant error through the SDK usage control method", async () => {
+    const proc = new SdkProcess();
+    const internal = proc as any;
+    internal.authClassification = "subscription";
+    const resets: Array<number | undefined> = [];
+    proc.on("usage_limit", (at) => resets.push(at));
+    const reset = new Date(Date.now() + 3600000).toISOString();
+    internal.queryInstance = {
+      usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: vi.fn(async () => ({ rate_limits_available: true, rate_limits: { five_hour: { utilization: 100, resets_at: reset } } })),
+      async *[Symbol.asyncIterator]() {
+        yield { type: "assistant", error: "rate_limit", message: { role: "assistant", content: [{ type: "text", text: "Limit reached" }] } };
+        await Promise.resolve();
+        yield { type: "result", subtype: "success", session_id: "test", duration_ms: 1 };
+      },
+    };
+    await internal.processMessages(internal.authGeneration, Promise.resolve());
+    expect(resets).toEqual([undefined, Date.parse(reset)]);
   });
 });

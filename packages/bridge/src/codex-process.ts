@@ -1,5 +1,6 @@
 import { readCodexAppServerMode } from "./codex-app-server-config.js";
-import { CodexRecovery } from "./codex-recovery.js";
+import { codexUsageResetAt } from "./usage-limit.js";
+import { CodexRecovery, rateLimitFailure } from "./codex-recovery.js";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
@@ -23,9 +24,13 @@ import { codexCliJoinTarget } from "./codex-app-server-config.js";
 import {
   normalizeCodexServiceTierForClient,
   normalizeCodexServiceTierForRpc,
+  extractCodexServiceTierMetadata,
+  isCodexServiceTierSupported,
+  type CodexServiceTierMetadata,
 } from "./codex-service-tier.js";
 import { resolvePlatformPath } from "./path-utils.js";
 import type { CodexRateLimitsResponse, ResetOutcome } from "./usage.js";
+import { CodexBackgroundTracker } from "./codex-background-tracker.js";
 
 export { buildCodexSpawnSpec };
 
@@ -64,6 +69,7 @@ export interface CodexProcessEvents {
   status: [ProcessStatus];
   exit: [number | null];
   input_ready: [];
+  usage_limit: [retryAt?: number];
 }
 
 interface PendingInput {
@@ -287,6 +293,7 @@ export interface CodexModelMetadata {
   supportedReasoningEfforts: string[];
   defaultReasoningEffort?: string;
   supportedServiceTiers: string[];
+  serviceTierMetadata?: CodexServiceTierMetadata[];
   defaultServiceTier?: string;
 }
 
@@ -323,10 +330,15 @@ function codexAppServerStartError(
 
 export class CodexProcess extends EventEmitter<CodexProcessEvents> {
   private transport: CodexTransport | null = null;
+  private stoppedTransport: Promise<void> | null = null;
   private reloadingProject = false;
   private launchOptions: CodexStartOptions | undefined;
   private _status: ProcessStatus = "starting";
   private _threadId: string | null = null;
+  private readonly backgroundTracker = new CodexBackgroundTracker(
+    () => this._threadId,
+  );
+  private emittedBackgroundTasks = "[]";
   private _agentNickname: string | null = null;
   private _agentRole: string | null = null;
   private stopped = false;
@@ -340,6 +352,10 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
 
   private inputResolve: ((input: PendingInput) => void) | null = null;
   private pendingTurnId: string | null = null;
+  /** Stop was requested after turn/start was sent but before its id arrived. */
+  private interruptWhenTurnStarts = false;
+  /** Guards against a late turn/start response reinstating a finished turn. */
+  private lastCompletedTurnId: string | null = null;
   private pendingTurnCompletion: PendingTurnCompletion | null = null;
   private pendingApprovals = new Map<string, PendingApproval>();
   private pendingUserInputs = new Map<string, PendingUserInputRequest>();
@@ -613,6 +629,22 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
     },
   });
 
+  async readUsageLimitResetAt(): Promise<number | undefined> {
+    const response = await this.readRateLimits(3_000);
+    const limits = response.rateLimitsByLimitId?.codex ?? response.rateLimits;
+    if (!limits?.primary && !limits?.secondary) throw new Error("Codex usage is unavailable");
+    return codexUsageResetAt(response);
+  }
+
+  private reportUsageLimit(error: unknown): void {
+    const failure = rateLimitFailure(error);
+    if (!failure) return;
+    this.emit("usage_limit", failure.retryAt);
+    void this.readUsageLimitResetAt().then((reset) => {
+      if (reset && !this.stopped) this.emit("usage_limit", reset);
+    }).catch(() => { /* Keep the error timestamp or conservative retry. */ });
+  }
+
   getRecoveryState() { return this.recovery.state; }
   setRecoveryEnabled(enabled: boolean): void { this.recovery.setEnabled(enabled); }
   cancelRecovery(): void { this.manualInputVersion++; this.recovery.cancel(); }
@@ -834,16 +866,78 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
     } while (cursor !== undefined);
   }
 
+  /**
+   * Drop the given user turn and everything after it from this thread, in
+   * place (Codex App's edit-and-resend). Uses `thread/revert` and falls back
+   * to the older `thread/rollback` when the server or thread lacks it.
+   */
+  async rewindBeforeUserTurn(userTurnOrdinal: number): Promise<void> {
+    const threadId = this._threadId;
+    if (!threadId) throw new Error("No thread ID available for rewind");
+    if (!Number.isInteger(userTurnOrdinal) || userTurnOrdinal < 1) {
+      throw new Error("Invalid Codex rewind target");
+    }
+    if (this.pendingTurnId) {
+      throw new Error("Cannot rewind while Codex is running");
+    }
+    const source = await this.readThread(threadId);
+    const turns = (Array.isArray(source.turns) ? source.turns : [])
+      .map((raw) => asRecord(raw))
+      .filter((turn): turn is Record<string, unknown> => turn !== null);
+    let userCount = 0;
+    let cutIndex = -1;
+    for (let i = 0; i < turns.length; i++) {
+      const before = userCount;
+      userCount += codexThreadToSessionHistory({ turns: [turns[i]] }).filter(
+        (message) => message.role === "user",
+      ).length;
+      if (userCount >= userTurnOrdinal) {
+        if (before + 1 !== userTurnOrdinal) {
+          throw new Error(
+            "Cannot rewind within a Codex turn containing multiple user messages",
+          );
+        }
+        cutIndex = i;
+        break;
+      }
+    }
+    if (cutIndex < 0) {
+      throw new Error("Codex rewind target was not found in stored history");
+    }
+    if (turns.slice(cutIndex).some((turn) => turn.status === "inProgress")) {
+      throw new Error("Cannot rewind an in-progress Codex turn");
+    }
+    const beforeTurnId = turns[cutIndex].id;
+    if (typeof beforeTurnId === "string") {
+      try {
+        await this.request("thread/revert", { threadId, beforeTurnId });
+        return;
+      } catch (err) {
+        if (!(err instanceof CodexRpcError)) throw err;
+        console.log(
+          `[codex-process] thread/revert unavailable (${err.message}); using thread/rollback`,
+        );
+      }
+    }
+    await this.request("thread/rollback", {
+      threadId,
+      numTurns: turns.length - cutIndex,
+    });
+  }
+
   /** Fork at a complete turn boundary without mutating the source history. */
-  async forkThreadAtUserTurn(userTurnOrdinal: number): Promise<{
+  async forkThreadAtUserTurn(
+    userTurnOrdinal: number,
+    sourceThreadId: string | null = this._threadId,
+  ): Promise<{
     threadId: string;
     thread: Record<string, unknown>;
   }> {
-    if (!this._threadId) throw new Error("No thread ID available for fork");
+    if (!sourceThreadId) throw new Error("No thread ID available for fork");
     if (!Number.isInteger(userTurnOrdinal) || userTurnOrdinal < 1) {
       throw new Error("Invalid Codex fork target");
     }
-    const source = await this.readThread(this._threadId);
+    const source = await this.readThread(sourceThreadId);
     let userCount = 0;
     let lastTurnId: string | undefined;
     for (const raw of Array.isArray(source.turns) ? source.turns : []) {
@@ -869,7 +963,7 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
       throw new Error("Codex fork target was not found in stored history");
     }
     const response = (await this.request("thread/fork", {
-      threadId: this._threadId,
+      threadId: sourceThreadId,
       lastTurnId,
       excludeTurns: true,
     })) as Record<string, unknown>;
@@ -954,6 +1048,7 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
                 : undefined;
           if (!model || seenModels.has(model)) continue;
           seenModels.add(model);
+          const serviceTierMetadata = extractCodexServiceTierMetadata(raw);
           models.push({
             model,
             supportedReasoningEfforts: extractReasoningEfforts(raw),
@@ -963,7 +1058,8 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
                 : typeof raw.default_reasoning_effort === "string"
                   ? raw.default_reasoning_effort
                   : undefined,
-            supportedServiceTiers: extractServiceTiers(raw),
+            supportedServiceTiers: serviceTierMetadata.map((tier) => tier.id),
+            serviceTierMetadata,
             defaultServiceTier:
               typeof raw.defaultServiceTier === "string"
                 ? raw.defaultServiceTier
@@ -1096,6 +1192,23 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
     });
   }
 
+  /**
+   * Wait (bounded) for a stopped app-server to exit. A thread this process
+   * forked or resumed stays write-locked until then, so a replacement process
+   * resuming it must wait.
+   */
+  async waitForShutdown(timeoutMs: number): Promise<void> {
+    if (!this.stoppedTransport) return;
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      this.stoppedTransport,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+    clearTimeout(timer);
+  }
+
   stop(): void {
     this.stopped = true;
     this.recovery.setEnabled(false);
@@ -1114,11 +1227,17 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
     this.cleanupSteerTempPaths();
     this.rejectAllPending(new Error("stopped"));
 
-    if (this.transport) {
-      this.transport.stop();
+    const transport = this.transport;
+    if (transport) {
       this.transport = null;
+      transport.stop();
+      this.stoppedTransport =
+        typeof transport.whenStopped === "function"
+          ? transport.whenStopped()
+          : null;
     }
 
+    this.resetBackgroundTasks();
     this.setStatus("idle");
     console.log("[codex-process] Stopped");
   }
@@ -1130,9 +1249,11 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
     this.stopped = false;
     this.recovery.setEnabled(false);
     this._threadId = null;
+    this.resetBackgroundTasks();
     this._agentNickname = null;
     this._agentRole = null;
     this.pendingTurnId = null;
+    this.interruptWhenTurnStarts = false;
     this.pendingTurnCompletion = null;
     this.pendingApprovals.clear();
     this.pendingUserInputs.clear();
@@ -1201,15 +1322,27 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
       }
     });
 
+    // A failed spawn (e.g. ENOENT) only emits "error", never "exit", so this
+    // handler must tear the transport down itself. `failed` suppresses a late
+    // "exit" from the same transport after it was already reported.
+    let failed = false;
     transport.on("error", (err) => {
-      if (this.stopped) return;
+      if (this.stopped || failed) return;
+      failed = true;
       console.error("[codex-process] app-server process error:", err);
-      this.emitMessage(codexAppServerStartError(err));
+      const startError = codexAppServerStartError(err);
+      const rejection = new Error(startError.message);
+      if (this.transport === transport) this.transport = null;
+      transport.stop();
+      this.rejectReadiness(rejection);
+      this.rejectAllPending(rejection);
+      this.emitMessage(startError);
       this.setStatus("idle");
       this.emit("exit", 1);
     });
 
     transport.on("exit", (code) => {
+      if (failed) return;
       const exitCode = code ?? 0;
       this.transport = null;
       this.rejectAllPending(new Error("codex app-server exited"));
@@ -1228,7 +1361,14 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
 
   interrupt(): void {
     this.cancelRecovery();
-    if (!this._threadId || !this.pendingTurnId) return;
+    if (!this._threadId) return;
+    if (!this.pendingTurnId) {
+      // The turn was requested but its id is not known yet: interrupt it as
+      // soon as it starts instead of silently letting it run.
+      if (this.pendingTurnCompletion) this.interruptWhenTurnStarts = true;
+      return;
+    }
+    this.interruptWhenTurnStarts = false;
 
     void this.request("turn/interrupt", {
       threadId: this._threadId,
@@ -1832,10 +1972,14 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
     this.forgetPendingRequest(pending.toolUseId);
     this.respondToServerRequest(
       pending.requestId,
-      buildUserInputResponse(
-        pending,
-        resolveUserInputRejectResult(pending, result),
-      ),
+      // Form elicitations would otherwise coerce the reject label into an
+      // accepted field value; a rejection must decline with no content.
+      pending.kind === "elicitation_form"
+        ? { action: "decline", content: null, _meta: null }
+        : buildUserInputResponse(
+            pending,
+            resolveUserInputRejectResult(pending, result),
+          ),
     );
     this.emitToolResult(pending.toolUseId, "Rejected", "rejected");
 
@@ -2088,6 +2232,42 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
         : resolvedSettings.approvalsReviewer;
       if (resolvedSettings.model) {
         this.startModel = resolvedSettings.model;
+      }
+      const requestedTier =
+        options?.serviceTier === undefined
+          ? undefined : normalizeCodexServiceTierForClient(options.serviceTier);
+      const resolvedTier =
+        resolvedSettings.serviceTier === undefined
+          ? undefined : normalizeCodexServiceTierForClient(resolvedSettings.serviceTier);
+      if (
+        requestedTier !== undefined && requestedTier !== "standard" &&
+        requestedTier !== "fast" && resolvedTier === undefined
+      ) {
+        throw new Error(`Codex did not confirm requested speed "${requestedTier}". Update Codex or choose a supported speed.`);
+      }
+      if (
+        requestedTier !== undefined && resolvedTier !== undefined &&
+        requestedTier !== resolvedTier &&
+        ((requestedTier !== "standard" && requestedTier !== "fast") ||
+          (resolvedTier !== "standard" && resolvedTier !== "fast"))
+      ) {
+        throw new Error(`Codex returned speed "${resolvedTier}" after "${requestedTier}" was requested. The session was not started.`);
+      }
+      const activeTier = resolvedTier ?? requestedTier;
+      if (activeTier !== undefined) {
+        if (activeTier !== "standard" && activeTier !== "fast") {
+          const models = await this.listAvailableModelMetadata();
+          const activeModel = models.find(
+            (model) => model.model === this.startModel,
+          );
+          if (
+            !activeModel ||
+            !isCodexServiceTierSupported(activeTier, activeModel.supportedServiceTiers)
+          ) {
+            throw new Error(`Codex speed "${activeTier}" is not available for model "${this.startModel ?? "unknown"}".`);
+          }
+        }
+        this._runtimeServiceTier = normalizeCodexServiceTierForRpc(activeTier);
       }
       if (activeApprovalPolicy) {
         this._approvalPolicy = activeApprovalPolicy;
@@ -2625,8 +2805,14 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
             const turn = (result as Record<string, unknown>).turn as
               | Record<string, unknown>
               | undefined;
-            if (typeof turn?.id === "string") {
+            // The response resolves in a microtask, after any turn/completed
+            // that arrived in the same stdout chunk was already handled.
+            if (
+              typeof turn?.id === "string" &&
+              turn.id !== this.lastCompletedTurnId
+            ) {
               this.pendingTurnId = turn.id;
+              if (this.interruptWhenTurnStarts) this.interrupt();
             }
           })
           .catch((err) => {
@@ -2637,6 +2823,7 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
         // Only a confirmed turn/start rejection can replay original attachments.
         if (err instanceof CodexRpcError && !this.inputTurnStarted && !this.pendingTurnId) startFailure = err;
         if (!this.stopped) {
+          this.reportUsageLimit(err);
           const message = err instanceof Error ? err.message : String(err);
           this.emitMessage({ type: "error", message });
           this.emitMessage({
@@ -2974,6 +3161,12 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
     method: string,
     params: Record<string, unknown>,
   ): void {
+    const isChildAgentNotification = this.backgroundTracker.observe(
+      method,
+      params,
+    );
+    this.emitBackgroundTasksIfChanged();
+    if (isChildAgentNotification) return;
     if (this.isForeignThreadNotification(method, params)) return;
 
     switch (method) {
@@ -2994,6 +3187,7 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
         if (typeof turn?.id === "string") {
           this.pendingTurnId = turn.id;
         }
+        if (this.interruptWhenTurnStarts) this.interrupt();
         this.lastResultText = null;
         this.pendingAgentTextByItemId.clear();
         this.confirmedAgentTextByItemId.clear();
@@ -3264,6 +3458,7 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
           (!this.pendingTurnId || !turn?.id || turn.id === this.pendingTurnId)) {
         this.upstreamWillRetry = false;
         this.recoveryFailure = errorObj;
+        this.reportUsageLimit(errorObj);
       }
       const message =
         typeof errorObj?.message === "string"
@@ -3296,6 +3491,8 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
     }
 
     this.pendingTurnId = null;
+    this.interruptWhenTurnStarts = false;
+    if (typeof turn?.id === "string") this.lastCompletedTurnId = turn.id;
 
     // Plan mode: emit synthetic plan approval and wait for user decision
     if (this._collaborationMode === "plan" && this.lastPlanItemText) {
@@ -3415,6 +3612,11 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
     const itemType = normalizeItemType(item.type);
 
     switch (itemType) {
+      case "contextcompaction": {
+        this.setStatus("compacting");
+        break;
+      }
+
       case "commandexecution": {
         this.emitMessage({
           type: "assistant",
@@ -3548,6 +3750,19 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
     const itemType = normalizeItemType(item.type);
 
     switch (itemType) {
+      case "contextcompaction": {
+        this.emitMessage({
+          type: "context_compaction",
+          id: itemId,
+          provider: "codex",
+          timestamp: new Date().toISOString(),
+        });
+        if (this._status === "compacting") {
+          this.setStatus(this.pendingTurnId ? "running" : "idle");
+        }
+        break;
+      }
+
       case "agentmessage": {
         const completedText = extractAgentText(item);
         const hasCompletedText = completedText?.trim().length > 0;
@@ -3980,6 +4195,19 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
     return [...this.pendingUserInputs.values()].some(
       (request) => request.isBlocking !== false,
     );
+  }
+
+  private resetBackgroundTasks(): void {
+    this.backgroundTracker.reset();
+    this.emitBackgroundTasksIfChanged();
+  }
+
+  private emitBackgroundTasksIfChanged(): void {
+    const tasks = this.backgroundTracker.tasks();
+    const serialized = JSON.stringify(tasks);
+    if (serialized === this.emittedBackgroundTasks) return;
+    this.emittedBackgroundTasks = serialized;
+    this.emitMessage({ type: "background_tasks", tasks });
   }
 
   private setStatus(status: ProcessStatus): void {
@@ -4446,40 +4674,6 @@ function extractReasoningEfforts(raw: Record<string, unknown>): string[] {
     efforts.push(normalized);
   }
   return efforts;
-}
-
-function extractServiceTiers(raw: Record<string, unknown>): string[] {
-  // Older app-server versions expose the user-facing Fast option as
-  // `additionalSpeedTiers: ["fast"]`, while the lower-level service tier is
-  // advertised as `{ id: "priority", name: "Fast" }`. Prefer the current
-  // catalog and normalize its values for the client.
-  // The current catalog is authoritative, including an explicitly empty list.
-  const values = Array.isArray(raw.serviceTiers)
-    ? raw.serviceTiers
-    : Array.isArray(raw.additionalSpeedTiers)
-      ? raw.additionalSpeedTiers
-      : [];
-  const seen = new Set<string>();
-  const tiers: string[] = [];
-  for (const value of values) {
-    const metadata =
-      value && typeof value === "object"
-        ? (value as Record<string, unknown>)
-        : undefined;
-    const rawTier = typeof value === "string" ? value : metadata?.id;
-    const rawName = metadata?.name;
-    const tier =
-      rawTier === "priority" ||
-      (typeof rawName === "string" && rawName.toLowerCase() === "fast")
-        ? "fast"
-        : rawTier;
-    if (typeof tier !== "string") continue;
-    const normalized = tier.trim();
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    tiers.push(normalized);
-  }
-  return tiers;
 }
 
 function sanitizeCodexModel(value: unknown): string | undefined {

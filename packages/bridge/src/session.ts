@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   pathToSlug,
+  claudeAbandonedBranchUuids,
   codexUserTurnUuid,
   isCodexUserTurnUuid,
   renameClaudeSession,
@@ -30,7 +31,9 @@ import type {
   Provider,
   QueuedInputItem,
   CodexGoal,
+  BackgroundTaskInfo,
 } from "./parser.js";
+import { isAgentBackgroundTask } from "./parser.js";
 import type { ImageRef, ImageStore } from "./image-store.js";
 import type { GalleryStore, GalleryImageMeta } from "./gallery-store.js";
 import { withDerivedCodexPermissionsMode } from "./codex-permissions.js";
@@ -93,10 +96,29 @@ export interface SessionInfo {
   };
   /** Claude sandbox enabled state (for resume). */
   sandboxEnabled?: boolean;
-  /** Codex-only pending input waiting for the next turn. */
-  codexQueuedInput?: QueuedCodexInput;
+  /** Zero means the reset is unknown; usage must be checked before sending. */
+  usageLimitUntil?: number;
+  usageLimitCheckPending?: boolean;
+  usageLimitRevision?: number;
+  usageLimitTimer?: ReturnType<typeof setTimeout>;
+  /** Pending input waiting for the next turn or a usage-limit reset. */
+  queuedInput?: QueuedSessionInput;
+  /**
+   * True once the agent showed output (text, tool use, permission request)
+   * after the latest user input. A prompt without output can be retracted.
+   */
+  turnOutputSinceUserInput?: boolean;
+  /**
+   * History revision at the last in-place rewind. Clients synced before it
+   * hold removed entries and must take a full snapshot.
+   */
+  historyResetSeq?: number;
+  /** Set once [trimHistory] has dropped messages from the live window. */
+  olderHistoryDropped?: boolean;
   /** Latest Codex goal state. Kept out of chat history. */
   codexGoal?: CodexGoal | null;
+  /** Live Claude background tasks. Kept out of chat history. */
+  backgroundTasks?: BackgroundTaskInfo[];
   /** Synthetic Codex user UUIDs waiting for their app-server echo. */
   pendingCodexUserEchoUuids?: Set<string>;
   /** Raw Codex app-server user item ids mapped to valid ccpocket turn UUIDs. */
@@ -137,7 +159,7 @@ export type HistoryDeltaResult =
       reason: "compacted" | "reset";
     };
 
-export interface QueuedCodexInput extends QueuedInputItem {
+export interface QueuedSessionInput extends QueuedInputItem {
   clientMessageId?: string;
   userMessageUuid?: string;
   images?: Array<{
@@ -159,6 +181,10 @@ export interface SessionSummary {
   lastActivityAt: string;
   gitBranch: string;
   lastMessage: string;
+  /** Number of live background tasks. Absent when there are none. */
+  backgroundTaskCount?: number;
+  /** Agents among backgroundTaskCount. Absent when there are none. */
+  backgroundAgentCount?: number;
   worktreePath?: string;
   worktreeBranch?: string;
   permissionMode?: string;
@@ -177,6 +203,13 @@ export interface SessionSummary {
     networkAccessEnabled?: boolean;
     webSearchMode?: string;
     additionalWritableRoots?: string[];
+  };
+  /** User-selected Claude model, effort and fast mode. */
+  claudeSettings?: {
+    model?: string;
+    effort?: string;
+    fastMode?: boolean;
+    ultracode?: boolean;
   };
   agentNickname?: string;
   agentRole?: string;
@@ -258,9 +291,48 @@ function sanitizeCodexModel(model: unknown): string | undefined {
   return normalized;
 }
 
-function publicQueuedInput(item?: QueuedCodexInput): QueuedInputItem | undefined {
+/** Output that makes an interrupted prompt no longer retractable. */
+export function isVisibleTurnOutput(msg: ServerMessage): boolean {
+  switch (msg.type) {
+    case "stream_delta":
+      return msg.text.trim().length > 0;
+    case "assistant":
+      return msg.message.content.some(
+        (block) =>
+          block.type === "tool_use" ||
+          (block.type === "text" && block.text.trim().length > 0),
+      );
+    case "tool_result":
+    case "permission_request":
+      return true;
+    default:
+      return false;
+  }
+}
+
+export interface RetractableUserInput {
+  text: string;
+  historySeq: number;
+}
+
+function pastMessageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((block) =>
+      block && typeof block === "object" && (block as { type?: unknown }).type === "text"
+        ? String((block as { text?: unknown }).text ?? "")
+        : "",
+    )
+    .join("");
+}
+
+function publicQueuedInput(item?: QueuedSessionInput): QueuedInputItem | undefined {
   if (!item) return undefined;
   return {
+    ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
+    ...(item.waitingForUsageLimit ? { waitingForUsageLimit: true } : {}),
+    ...(item.retryAt ? { retryAt: item.retryAt } : {}),
     itemId: item.itemId,
     text: item.text,
     createdAt: item.createdAt,
@@ -415,7 +487,8 @@ export class SessionManager {
         !effectiveCodexOptions?.threadId,
       // Pre-populate claudeSessionId for resumed sessions so that get_history
       // can return it immediately (before the SDK sends a system/result event).
-      claudeSessionId: options?.sessionId,
+      // A fork gets a new provider id from system/init instead.
+      claudeSessionId: options?.forkSession ? undefined : options?.sessionId,
     };
     if (effectiveProvider === "codex") {
       this.seedCodexPastUserTurnUuidMap(session);
@@ -432,6 +505,12 @@ export class SessionManager {
       try {
         session.lastActivityAt = new Date();
         const previousProviderSessionId = session.claudeSessionId;
+
+        if (msg.type === "background_tasks") {
+          session.backgroundTasks = msg.tasks;
+          deliverProcessMessage({ ...msg, sessionId: session.id });
+          return;
+        }
 
         if (msg.type === "goal_state") {
           session.codexGoal = msg.goal;
@@ -666,6 +745,8 @@ export class SessionManager {
           }
         }
 
+        if (isVisibleTurnOutput(msg)) session.turnOutputSinceUserInput = true;
+
         // Don't add streaming deltas to history
         let mergedUserInput = false;
         let historyMsg: ServerMessage = msg;
@@ -759,23 +840,39 @@ export class SessionManager {
       }
     });
 
-    if (proc instanceof CodexProcess) {
-      proc.on("input_ready", () => {
-        this.drainCodexQueue(session);
-      });
-    }
+    proc.on("usage_limit", (retryAt?: number) => {
+      if (this.sessions.get(id) !== session) return;
+      session.usageLimitRevision = (session.usageLimitRevision ?? 0) + 1;
+      if (session.queuedInput && session.process instanceof CodexProcess) {
+        session.process.noteManualInput();
+      }
+      session.usageLimitUntil = Math.max(
+        session.usageLimitUntil ?? 0,
+        typeof retryAt === "number" && Number.isFinite(retryAt) && retryAt > Date.now()
+          ? retryAt : 0,
+      );
+      this.scheduleUsageLimitQueue(session);
+    });
+
+    // Drain only after a completed turn has published its idle status, so
+    // the delivered prompt's "running" cannot be overtaken by that "idle",
+    // and never on stop/exit.
+    proc.on("input_ready", () => {
+      this.drainQueuedInput(session);
+    });
 
     proc.on("exit", () => {
       session.status = "idle";
-      session.codexQueuedInput = undefined;
+      clearTimeout(session.usageLimitTimer);
+      session.usageLimitTimer = undefined;
+      session.usageLimitUntil = undefined;
+      session.queuedInput = undefined;
       // Add status message to history so it stays in sync with session.status
       this.appendHistoryToSession(session, {
         type: "status",
         status: "idle",
       } as ServerMessage);
-      if (session.provider === "codex") {
-        this.broadcastCodexQueue(session);
-      }
+      this.broadcastQueue(session);
       this.evictStaleIdleSessions();
     });
 
@@ -899,6 +996,15 @@ export class SessionManager {
 
     const toSeq = session.historyRevision;
     const entries = session.historyEntries;
+    if (session.historyResetSeq !== undefined && sinceSeq < session.historyResetSeq) {
+      return {
+        kind: "snapshot",
+        fromSeq: entries[0]?.seq ?? toSeq + 1,
+        toSeq,
+        entries: [...entries],
+        reason: "compacted",
+      };
+    }
     if (entries.length === 0) {
       return {
         kind: "delta",
@@ -1013,6 +1119,7 @@ export class SessionManager {
       lastActivityAt: session.lastActivityAt.toISOString(),
       gitBranch: session.gitBranch,
       lastMessage: this.extractLastMessage(session),
+      ...backgroundTaskCounts(session.backgroundTasks),
       worktreePath: session.worktreePath,
       worktreeBranch: session.worktreeBranch,
       permissionMode:
@@ -1033,6 +1140,9 @@ export class SessionManager {
           ? session.process.model
           : undefined,
       codexSettings,
+      ...(session.process instanceof SdkProcess
+        ? { claudeSettings: session.process.settings }
+        : {}),
       agentNickname:
         session.process instanceof CodexProcess
           ? (session.process.agentNickname ?? undefined)
@@ -1043,10 +1153,7 @@ export class SessionManager {
           : undefined,
       sandboxEnabled: session.sandboxEnabled,
       pendingPermission: pendingInput,
-      queuedInput:
-        session.provider === "codex"
-          ? publicQueuedInput(session.codexQueuedInput)
-          : undefined,
+      queuedInput: publicQueuedInput(session.queuedInput),
     };
   }
 
@@ -1062,6 +1169,9 @@ export class SessionManager {
     session.historyRevision = entry.seq;
     session.history.push(msg);
     session.historyEntries.push(entry);
+    if (msg.type === "user_input" && !msg.isMeta) {
+      session.turnOutputSinceUserInput = false;
+    }
     if (session.provider === "codex" && msg.type === "user_input") {
       session.codexLatestUserInput = msg;
     }
@@ -1327,8 +1437,8 @@ export class SessionManager {
         "userMessageUuid" in message ? message.userMessageUuid : undefined,
       );
     }
-    if (session.codexQueuedInput) {
-      observe(session.codexQueuedInput.userMessageUuid);
+    if (session.queuedInput) {
+      observe(session.queuedInput.userMessageUuid);
     }
     return codexUserTurnUuid(Math.max(maxOrdinal, userTurnCount) + 1);
   }
@@ -1341,6 +1451,7 @@ export class SessionManager {
       // a run of user bubbles after compaction.
       session.history.shift();
       session.historyEntries.shift();
+      session.olderHistoryDropped = true;
     }
 
     session.historyLowWatermark =
@@ -1384,7 +1495,7 @@ export class SessionManager {
     const transcript = buildAutoRenameTranscript(session.history);
     if (!transcript) return;
 
-    const name = generateAutoRenameName({
+    const name = await generateAutoRenameName({
       provider: session.provider,
       projectPath: session.worktreePath ?? session.projectPath,
       model:
@@ -1396,6 +1507,8 @@ export class SessionManager {
       transcript,
     });
     if (!name || session.name) return;
+    // The CLI can take a while; skip if the session was destroyed meanwhile.
+    if (this.sessions.get(session.id) !== session) return;
 
     const persisted = await this.persistSessionName(session, name);
     if (!persisted || session.name) return;
@@ -1467,18 +1580,21 @@ export class SessionManager {
     return "";
   }
 
-  queueCodexInput(id: string, input: QueuedCodexInput): boolean {
+  queueInput(id: string, input: QueuedSessionInput): boolean {
     const session = this.sessions.get(id);
-    if (!session || session.provider !== "codex") return false;
-    if (session.codexQueuedInput) return false;
-    (session.process as CodexProcess).noteManualInput();
-    session.codexQueuedInput = input;
+    if (!session) return false;
+    if (session.queuedInput) return false;
+    if (session.process instanceof CodexProcess) {
+      session.process.noteManualInput();
+    }
+    session.queuedInput = input;
+    this.scheduleUsageLimitQueue(session);
     session.lastActivityAt = new Date();
-    this.broadcastCodexQueue(session);
+    this.broadcastQueue(session);
     return true;
   }
 
-  updateCodexQueuedInput(
+  updateQueuedInput(
     id: string,
     itemId: string,
     text: string,
@@ -1488,10 +1604,10 @@ export class SessionManager {
     },
   ): boolean {
     const session = this.sessions.get(id);
-    if (!session || session.provider !== "codex") return false;
-    const current = session.codexQueuedInput;
+    if (!session) return false;
+    const current = session.queuedInput;
     if (!current || current.itemId !== itemId) return false;
-    session.codexQueuedInput = {
+    session.queuedInput = {
       ...current,
       text,
       updatedAt: new Date().toISOString(),
@@ -1499,44 +1615,92 @@ export class SessionManager {
       mentions: options?.mentions,
     };
     session.lastActivityAt = new Date();
-    this.broadcastCodexQueue(session);
+    this.broadcastQueue(session);
     return true;
   }
 
-  cancelCodexQueuedInput(id: string, itemId: string): boolean {
+  cancelQueuedInput(id: string, itemId: string): boolean {
     const session = this.sessions.get(id);
-    if (!session || session.provider !== "codex") return false;
-    if (!session.codexQueuedInput || session.codexQueuedInput.itemId !== itemId) {
+    if (!session) return false;
+    if (!session.queuedInput || session.queuedInput.itemId !== itemId) {
       return false;
     }
-    session.codexQueuedInput = undefined;
+    session.queuedInput = undefined;
+    clearTimeout(session.usageLimitTimer);
+    session.usageLimitTimer = undefined;
     session.lastActivityAt = new Date();
-    this.broadcastCodexQueue(session);
+    this.broadcastQueue(session);
     return true;
   }
 
-  async steerCodexQueuedInput(
+  async steerQueuedInput(
     id: string,
     itemId: string,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     const session = this.sessions.get(id);
-    if (!session || session.provider !== "codex") {
-      return { ok: false, error: "No active Codex session." };
+    if (!session) {
+      return { ok: false, error: "No active session." };
     }
-    const queued = session.codexQueuedInput;
+    const queued = session.queuedInput;
     if (!queued || queued.itemId !== itemId) {
       return { ok: false, error: "Queued message not found." };
     }
-    if (!(session.process instanceof CodexProcess)) {
-      return { ok: false, error: "No active Codex process." };
-    }
 
+    if (this.isUsageLimited(id)) {
+      return { ok: false, error: "Message is waiting for the usage limit to reset." };
+    }
+    const result = await this.steerIntoTurn(session, queued, () => {
+      if (session.queuedInput?.itemId === itemId) {
+        session.queuedInput = undefined;
+      }
+      this.broadcastQueue(session);
+    });
+    return result;
+  }
+
+  /**
+   * Deliver new input into the running turn. When steering is rejected (for
+   * example because the turn just ended on the provider side) the input is
+   * held in the queue so the user can retry or edit it.
+   */
+  async steerInput(
+    id: string,
+    input: QueuedSessionInput,
+  ): Promise<"steered" | "queued" | "rejected"> {
+    const session = this.sessions.get(id);
+    if (!session) return "rejected";
+    if (this.isUsageLimited(id)) return this.queueInput(id, input) ? "queued" : "rejected";
+    if (session.process instanceof CodexProcess) {
+      session.process.noteManualInput();
+    }
+    const result = await this.steerIntoTurn(session, input);
+    if (result.ok) return "steered";
+    console.warn(
+      `[session] Steer failed for ${id}; holding input in queue: ${result.error}`,
+    );
+    if (!this.queueInput(id, input)) return "rejected";
+    // The turn may have ended before the steer failed; send it now if so.
+    this.drainQueuedInput(session);
+    return session.queuedInput?.itemId === input.itemId ? "queued" : "steered";
+  }
+
+  private async steerIntoTurn(
+    session: SessionInfo,
+    input: QueuedSessionInput,
+    beforeHistory?: () => void,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
     try {
-      await session.process.steerInputStructured(queued.text, {
-        images: queued.images,
-        skills: queued.skills,
-        mentions: queued.mentions,
-      });
+      if (session.process instanceof CodexProcess) {
+        await session.process.steerInputStructured(input.text, {
+          images: input.images,
+          skills: input.skills,
+          mentions: input.mentions,
+        });
+      } else if (session.process instanceof SdkProcess) {
+        session.process.steerInput(input.text, input.images);
+      } else {
+        return { ok: false, error: "No active session process." };
+      }
     } catch (err) {
       return {
         ok: false,
@@ -1544,19 +1708,103 @@ export class SessionManager {
       };
     }
 
-    session.codexQueuedInput = undefined;
+    beforeHistory?.();
     session.lastActivityAt = new Date();
-    this.broadcastCodexQueue(session);
-
-    const userMsg = this.buildQueuedUserInputMessage(queued);
+    const userMsg = this.buildQueuedUserInputMessage(input);
+    // A steer joins the running turn: output already shown for that turn
+    // still makes it non-retractable.
+    const hadTurnOutput = session.turnOutputSinceUserInput;
     this.appendHistoryToSession(session, userMsg);
+    session.turnOutputSinceUserInput = hadTurnOutput;
     this.markPendingCodexUserEcho(session, userMsg);
     this.onMessage(session.id, userMsg);
     return { ok: true };
   }
 
-  private broadcastCodexQueue(session: SessionInfo): void {
-    const item = publicQueuedInput(session.codexQueuedInput);
+  /**
+   * Raw Claude plan usage from the first running Claude session that answers,
+   * so usage refreshes avoid spawning a separate Claude Code process.
+   * Resolves to undefined when no Claude session can answer.
+   */
+  async readClaudePlanUsage(): Promise<unknown> {
+    for (const session of this.sessions.values()) {
+      if (!(session.process instanceof SdkProcess)) continue;
+      try {
+        const usage = await session.process.readPlanUsage();
+        if (usage !== undefined) return usage;
+      } catch {
+        // Try the next session; the caller falls back to a standalone query.
+      }
+    }
+    return undefined;
+  }
+
+  isUsageLimited(id: string): boolean {
+    return this.sessions.get(id)?.usageLimitUntil !== undefined;
+  }
+
+  private scheduleUsageLimitQueue(session: SessionInfo): void {
+    clearTimeout(session.usageLimitTimer);
+    session.usageLimitTimer = undefined;
+    if (!session.queuedInput || !this.isUsageLimited(session.id)) return;
+    const retryAt = session.usageLimitUntil!;
+    session.queuedInput = {
+      ...session.queuedInput,
+      waitingForUsageLimit: true,
+      retryAt: retryAt > Date.now() ? new Date(retryAt).toISOString() : undefined,
+    };
+    this.broadcastQueue(session);
+    session.usageLimitTimer = setTimeout(() => {
+      session.usageLimitTimer = undefined;
+      if (this.sessions.get(session.id) !== session) return;
+      if (retryAt > Date.now()) {
+        this.scheduleUsageLimitQueue(session);
+        return;
+      }
+      void this.refreshUsageLimitQueue(session);
+    }, retryAt === 0 ? 60_000 : Math.min(2_147_483_647, Math.max(0, retryAt - Date.now())));
+    session.usageLimitTimer.unref?.();
+  }
+
+  private async refreshUsageLimitQueue(session: SessionInfo): Promise<void> {
+    if (session.usageLimitCheckPending || !session.queuedInput) return;
+    session.usageLimitCheckPending = true;
+    const previousRevision = session.usageLimitRevision;
+    let reset: number | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      reset = await Promise.race([
+        session.process.readUsageLimitResetAt(),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("Usage lookup timed out")), 10_000);
+          timeout.unref?.();
+        }),
+      ]);
+    } catch {
+      // Failed/unsupported usage reads never discard input or guess a reset time.
+      reset = 0;
+    } finally {
+      clearTimeout(timeout);
+      session.usageLimitCheckPending = false;
+    }
+    if (this.sessions.get(session.id) !== session || !session.queuedInput) return;
+    // A newer provider rejection wins over an in-flight lookup.
+    if (session.usageLimitRevision !== previousRevision) {
+      this.scheduleUsageLimitQueue(session);
+      return;
+    }
+    session.usageLimitUntil = reset;
+    if (reset !== undefined) {
+      this.scheduleUsageLimitQueue(session);
+      return;
+    }
+    session.queuedInput = { ...session.queuedInput, retryAt: undefined, waitingForUsageLimit: undefined };
+    this.broadcastQueue(session);
+    this.drainQueuedInput(session);
+  }
+
+  private broadcastQueue(session: SessionInfo): void {
+    const item = publicQueuedInput(session.queuedInput);
     this.onMessage(session.id, {
       type: "conversation_queue",
       sessionId: session.id,
@@ -1565,28 +1813,43 @@ export class SessionManager {
     });
   }
 
-  private drainCodexQueue(session: SessionInfo): void {
-    if (session.provider !== "codex") return;
-    const queued = session.codexQueuedInput;
-    if (!queued || !(session.process instanceof CodexProcess)) return;
-    if (!session.process.isWaitingForInput) return;
+  private drainQueuedInput(session: SessionInfo): void {
+    const queued = session.queuedInput;
+    if (!queued || this.isUsageLimited(session.id)) return;
+    if (session.process instanceof CodexProcess) {
+      if (!session.process.isWaitingForInput) return;
+    } else if (session.process instanceof SdkProcess) {
+      if (session.process.isTurnActive || session.process.status !== "idle") {
+        return;
+      }
+    } else {
+      return;
+    }
 
-    session.codexQueuedInput = undefined;
-    this.broadcastCodexQueue(session);
+    clearTimeout(session.usageLimitTimer);
+    session.usageLimitTimer = undefined;
+    session.queuedInput = undefined;
+    this.broadcastQueue(session);
 
     const userMsg = this.buildQueuedUserInputMessage(queued);
     this.appendHistoryToSession(session, userMsg);
     this.markPendingCodexUserEcho(session, userMsg);
     this.onMessage(session.id, userMsg);
 
-    session.process.sendInputStructured(queued.text, {
-      images: queued.images,
-      skills: queued.skills,
-      mentions: queued.mentions,
-    });
+    if (session.process instanceof CodexProcess) {
+      session.process.sendInputStructured(queued.text, {
+        images: queued.images,
+        skills: queued.skills,
+        mentions: queued.mentions,
+      });
+    } else if (queued.images && queued.images.length > 0) {
+      session.process.dispatchInputWithImages(queued.text, queued.images);
+    } else {
+      session.process.dispatchInput(queued.text);
+    }
   }
 
-  private buildQueuedUserInputMessage(queued: QueuedCodexInput): ServerMessage {
+  private buildQueuedUserInputMessage(queued: QueuedSessionInput): ServerMessage {
     return {
       type: "user_input",
       text: queued.text,
@@ -1690,9 +1953,209 @@ export class SessionManager {
     }
 
     const assistantUuid = this.findAssistantUuidBeforeUser(session, targetUuid);
+    this.restartClaudeAt(id, session, assistantUuid, onReady);
+  }
 
+  /**
+   * Remove a user turn (the latest one when [targetUuid] is null) and
+   * everything after it from the conversation, keeping this session and its
+   * id (Codex App's edit-and-resend). Returns the removed prompt's text.
+   *
+   * Codex rewinds its thread on the running app-server; Claude restarts the
+   * same SdkProcess with `resumeSessionAt` the assistant message before the
+   * prompt. Clients are told with `conversation_rewound` and refetch history.
+   */
+  async rewindInPlace(
+    id: string,
+    targetUuid: string | null,
+  ): Promise<{ text: string }> {
+    const session = this.sessions.get(id);
+    if (!session) throw new Error(`Session ${id} not found`);
+    if (session.status !== "idle") {
+      throw new Error("Cannot rewind while the agent is running");
+    }
+    if (session.queuedInput) {
+      throw new Error("Cannot rewind while input is queued");
+    }
+
+    type Item = {
+      source: "past" | "live";
+      index: number;
+      role: "user" | "assistant" | "other";
+      uuid?: string;
+      text: string;
+    };
+    const items: Item[] = [];
+    (session.pastMessages ?? []).forEach((raw, index) => {
+      const pm = raw as {
+        role?: string;
+        uuid?: string;
+        isMeta?: boolean;
+        content?: unknown;
+      };
+      const role =
+        pm.role === "user" && pm.isMeta !== true
+          ? "user"
+          : pm.role === "assistant"
+            ? "assistant"
+            : "other";
+      items.push({
+        source: "past",
+        index,
+        role,
+        uuid: pm.uuid,
+        text: role === "user" ? pastMessageText(pm.content) : "",
+      });
+    });
+    session.history.forEach((msg, index) => {
+      if (msg.type === "user_input" && !msg.isMeta) {
+        items.push({
+          source: "live",
+          index,
+          role: "user",
+          uuid: msg.userMessageUuid,
+          text: msg.text,
+        });
+      } else if (msg.type === "assistant") {
+        items.push({
+          source: "live",
+          index,
+          role: "assistant",
+          uuid: msg.messageUuid,
+          text: "",
+        });
+      }
+    });
+
+    let targetPos = -1;
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (items[i].role !== "user") continue;
+      if (targetUuid === null || items[i].uuid === targetUuid) {
+        targetPos = i;
+        break;
+      }
+    }
+    if (targetPos < 0) throw new Error("Rewind target not found");
+    const target = items[targetPos];
+    const earlier = items.slice(0, targetPos);
+    const trimmed = (session.historyEntries[0]?.seq ?? 1) > 1;
+
+    if (session.process instanceof CodexProcess) {
+      const userOrdinal = earlier.filter((item) => item.role === "user").length + 1;
+      const parsed = target.uuid?.match(/^codex:user-turn:(\d+)$/);
+      const ordinal = parsed ? Number(parsed[1]) : userOrdinal;
+      if (!parsed && trimmed) {
+        throw new Error("Cannot locate the Codex turn to rewind");
+      }
+      await session.process.rewindBeforeUserTurn(ordinal);
+    } else {
+      const sdkProcess = session.process as SdkProcess;
+      let assistantUuid: string | null = null;
+      let earlierUser = false;
+      for (let i = earlier.length - 1; i >= 0; i--) {
+        if (earlier[i].role === "assistant" && earlier[i].uuid) {
+          assistantUuid = earlier[i].uuid!;
+          break;
+        }
+        if (earlier[i].role === "user") earlierUser = true;
+      }
+      if (!assistantUuid && (earlierUser || trimmed)) {
+        throw new Error("Cannot locate the turn before the rewound prompt");
+      }
+      if (assistantUuid && !session.claudeSessionId) {
+        throw new Error("Session has no Claude session ID");
+      }
+      const options = this.claudeCarriedOptions(session);
+      const cwd = session.worktreePath ?? session.projectPath;
+      sdkProcess.start(
+        cwd,
+        assistantUuid
+          ? {
+              ...options,
+              sessionId: session.claudeSessionId!,
+              resumeSessionAt: assistantUuid,
+            }
+          : options,
+      );
+    }
+
+    // Drop the prompt and everything after it from Bridge-side history.
+    if (target.source === "past") {
+      session.pastMessages = (session.pastMessages ?? []).slice(0, target.index);
+      session.history.length = 0;
+      session.historyEntries.length = 0;
+    } else {
+      session.history.splice(target.index);
+      session.historyEntries.splice(target.index);
+    }
+    if (session.provider === "codex") {
+      // Codex history is re-read from the rewound thread.
+      session.codexOrderedHistoryEntries = [];
+      session.codexOrderedHistoryRevision = session.historyRevision + 1;
+      session.codexLatestUserInput = undefined;
+    }
+    session.turnOutputSinceUserInput = undefined;
+    session.historyRevision += 1;
+    session.historyResetSeq = session.historyRevision;
+    session.historyLowWatermark =
+      session.historyEntries[0]?.seq ?? session.historyRevision + 1;
+    session.lastActivityAt = new Date();
+    this.onMessage(id, { type: "conversation_rewound" } as ServerMessage);
+    return { text: target.text };
+  }
+
+  private claudeCarriedOptions(session: SessionInfo): StartOptions {
+    const sdkProcess = session.process as SdkProcess;
+    const { model, effort, fastMode, ultracode } = sdkProcess.settings;
+    return {
+      permissionMode: sdkProcess.permissionMode,
+      ...(session.sandboxEnabled != null
+        ? { sandboxEnabled: session.sandboxEnabled }
+        : {}),
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {}),
+      ...(fastMode ? { fastMode } : {}),
+      ...(ultracode ? { ultracode } : {}),
+    };
+  }
+
+  /**
+   * The latest prompt, when it can still be retracted: it is the newest user
+   * input, the agent has shown no output for it, it carries no images, and no
+   * further input is queued behind it.
+   */
+  retractableUserInput(id: string): RetractableUserInput | null {
+    const session = this.sessions.get(id);
+    if (!session || session.turnOutputSinceUserInput !== false) return null;
+    if (session.queuedInput) return null;
+    if (session.process instanceof SdkProcess && session.process.hasInputQueue) {
+      return null;
+    }
+    for (let i = session.history.length - 1; i >= 0; i--) {
+      const msg = session.history[i];
+      if (msg.type !== "user_input") continue;
+      if (msg.isMeta) continue;
+      if (msg.isSynthetic) return null;
+      if ((msg.imageCount ?? 0) > 0 || (msg.images?.length ?? 0) > 0) {
+        return null;
+      }
+      const historySeq = (msg as { historySeq?: unknown }).historySeq;
+      if (typeof historySeq !== "number") return null;
+      return { text: msg.text, historySeq };
+    }
+    return null;
+  }
+
+  private restartClaudeAt(
+    id: string,
+    session: SessionInfo,
+    assistantUuid: string | null,
+    onReady: (newSessionId: string) => void,
+  ): void {
+    const claudeSessionId = session.claudeSessionId;
     const projectPath = session.projectPath;
-    const permissionMode = (session.process as SdkProcess).permissionMode;
+    // Carry the user's runtime choices into the restarted session.
+    const carriedOptions = this.claudeCarriedOptions(session);
     const worktreePath = session.worktreePath;
     const worktreeBranch = session.worktreeBranch;
 
@@ -1704,13 +2167,13 @@ export class SessionManager {
     // user turn in history.
     const newId = this.create(
       projectPath,
-      assistantUuid
+      assistantUuid && claudeSessionId
         ? {
+            ...carriedOptions,
             sessionId: claudeSessionId,
-            permissionMode,
             resumeSessionAt: assistantUuid,
           }
-        : { permissionMode },
+        : carriedOptions,
       undefined,
       worktreePath
         ? { existingWorktreePath: worktreePath, worktreeBranch }
@@ -1794,6 +2257,9 @@ export class SessionManager {
     // Use an array per text key so duplicate messages ("yes", "ok", etc.)
     // are matched in order rather than collapsed to one UUID.
     const diskUuids = new Map<string, string[]>();
+    // Turns removed by a rewind or edit stay in the transcript; resending
+    // the same text must not pick up their uuids.
+    const abandoned = claudeAbandonedBranchUuids(lines);
     for (const line of lines) {
       try {
         const entry = JSON.parse(line) as {
@@ -1804,6 +2270,7 @@ export class SessionManager {
         };
         if (entry.type !== "user" && entry.role !== "user") continue;
         if (!entry.uuid) continue;
+        if (abandoned?.has(entry.uuid)) continue;
 
         // Extract text from content array
         const content = entry.message?.content;
@@ -1899,6 +2366,7 @@ export class SessionManager {
     // Remove first so synchronous status/exit events from stop() cannot try to
     // evict the same session recursively.
     this.sessions.delete(id);
+    clearTimeout(session.usageLimitTimer);
     session.process.stop();
     session.process.removeAllListeners();
     this.processMessageDelivery.delete(id);
@@ -1910,7 +2378,10 @@ export class SessionManager {
     const now = Date.now();
     const idleSessions = Array.from(this.sessions.values())
       .filter((session) => session.status === "idle" &&
-        !session.codexQueuedInput &&
+        !session.queuedInput &&
+        // Background agents/shells keep running after the turn goes idle;
+        // destroying the session would kill them mid-flight.
+        !session.backgroundTasks?.length &&
         session.process.getPendingPermissions().length === 0 &&
         !(session.provider === "codex" &&
           (session.process as CodexProcess).getRecoveryState().phase === "waiting"))
@@ -1949,4 +2420,15 @@ export class SessionManager {
       this.destroy(id);
     }
   }
+}
+
+function backgroundTaskCounts(
+  tasks: BackgroundTaskInfo[] | undefined,
+): { backgroundTaskCount?: number; backgroundAgentCount?: number } {
+  if (!tasks?.length) return {};
+  const agents = tasks.filter(isAgentBackgroundTask).length;
+  return {
+    backgroundTaskCount: tasks.length,
+    ...(agents > 0 ? { backgroundAgentCount: agents } : {}),
+  };
 }

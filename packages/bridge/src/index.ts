@@ -7,7 +7,15 @@ import { ImageStore } from "./image-store.js";
 import { MediaStore } from "./media-store.js";
 import { UploadStore } from "./upload-store.js";
 import { GalleryStore } from "./gallery-store.js";
-import { printStartupInfo } from "./startup-info.js";
+import { buildPairingInfo, printStartupInfo } from "./startup-info.js";
+import {
+  apiKeyPath,
+  isAuthorizedHttpRequest,
+  isLocalPairingRequest,
+  pairingSecretPath,
+  resolveApiKey,
+  writePairingSecret,
+} from "./bridge-auth.js";
 import { MdnsAdvertiser, shouldAdvertiseMdns } from "./mdns.js";
 import { ProjectHistory } from "./project-history.js";
 import { WorkspaceStore } from "./workspace-store.js";
@@ -38,7 +46,7 @@ function positiveEnvInt(name: string, fallback: number): number {
 export async function startServer() {
   const PORT = parseBridgePort();
   const HOST = process.env.BRIDGE_HOST ?? "0.0.0.0";
-  const API_KEY = process.env.BRIDGE_API_KEY;
+  const insecureNoAuth = process.env.BRIDGE_INSECURE_NO_AUTH === "1";
   const MDNS_ENABLED = shouldAdvertiseMdns(
     process.platform,
     !!process.env.BRIDGE_DISABLE_MDNS,
@@ -53,8 +61,29 @@ export async function startServer() {
 
   console.log("[bridge] Starting ccpocket bridge server...");
 
-  if (API_KEY) {
-    console.log("[bridge] API key authentication enabled");
+  const { apiKey: API_KEY, source: apiKeySource } = await resolveApiKey({
+    configured: process.env.BRIDGE_API_KEY,
+    insecureNoAuth,
+  });
+  switch (apiKeySource) {
+    case "configured":
+      console.log("[bridge] API key authentication enabled");
+      break;
+    case "stored":
+      console.log(`[bridge] API key authentication enabled (key from ${apiKeyPath()})`);
+      break;
+    case "generated":
+      console.log(
+        `[bridge] API key authentication enabled. Generated a new key in ${apiKeyPath()}.\n` +
+          "[bridge] Devices paired before must scan the pairing QR code again.",
+      );
+      break;
+    case "disabled":
+      console.warn(
+        "[bridge] WARNING: API key authentication is disabled (--insecure-no-auth).\n" +
+          "[bridge]          Anyone who can reach this port can control your agents.",
+      );
+      break;
   }
 
   if (!MDNS_ENABLED) {
@@ -166,6 +195,15 @@ export async function startServer() {
     console.error("[bridge] Failed to initialize prompt history store:", err);
   });
 
+  let pairingSecret: string | null = null;
+  try {
+    pairingSecret = await writePairingSecret(pairingSecretPath(PORT));
+  } catch (err) {
+    console.warn(
+      `[bridge] Could not write the pairing secret; \`ccpocket-bridge qr\` is unavailable: ${String(err)}`,
+    );
+  }
+
   const startedAt = Date.now();
   let wsServer: BridgeWebSocketServer | null = null;
 
@@ -181,13 +219,39 @@ export async function startServer() {
     req.once("end", clearDefaultBodyDeadline);
     req.once("close", clearDefaultBodyDeadline);
 
+    // Pairing info (token included) for this machine only. Served before the
+    // CORS headers are attached so browsers can never read it cross-origin.
+    if (req.url === "/pairing" && req.method === "GET") {
+      if (!isLocalPairingRequest(req, pairingSecret)) {
+        res.writeHead(403, { "Content-Type": "text/plain" });
+        res.end("Forbidden");
+        return;
+      }
+      const info = buildPairingInfo(PORT, API_KEY);
+      res.writeHead(200, {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      });
+      res.end(JSON.stringify({
+        auth: info.auth,
+        connections: info.connections,
+        wsUrl: info.wsUrl ?? null,
+        deepLink: info.deepLink ?? null,
+        token: info.demoMode ? null : API_KEY ?? null,
+      }));
+      return;
+    }
+
     // CORS headers for Flutter Web clients
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader(
       "Access-Control-Allow-Methods",
       "GET, HEAD, POST, PUT, DELETE, OPTIONS",
     );
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Content-Length, Range");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Content-Length, Range, Authorization",
+    );
     res.setHeader(
       "Access-Control-Expose-Headers",
       "Accept-Ranges, Content-Length, Content-Range, X-File-SHA256, X-Received-Bytes",
@@ -199,10 +263,20 @@ export async function startServer() {
       return;
     }
 
+    if (!isAuthorizedHttpRequest(req, API_KEY)) {
+      res.writeHead(401, {
+        "Content-Type": "application/json",
+        "WWW-Authenticate": "Bearer",
+      });
+      res.end(JSON.stringify({ error: "unauthorized" }));
+      return;
+    }
+
     // Health check endpoint
     if (req.url === "/health" && req.method === "GET") {
       const body = JSON.stringify({
         status: "ok",
+        auth: API_KEY ? "required" : "none",
         uptime: Math.floor((Date.now() - startedAt) / 1000),
         sessions: wsServer?.sessionCount ?? 0,
         clients: wsServer?.clientCount ?? 0,
@@ -222,7 +296,10 @@ export async function startServer() {
 
     // Usage endpoint
     if (req.url === "/usage" && req.method === "GET") {
-      fetchAllUsage()
+      const server = wsServer;
+      fetchAllUsage(
+        server ? { readClaudeLive: () => server.readClaudePlanUsage() } : {},
+      )
         .then((providers) => {
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ providers }));
@@ -318,7 +395,15 @@ export async function startServer() {
     `[bridge] Ready. Listening on http://${HOST}:${PORT} (HTTP + WebSocket)`,
   );
   mdns?.start(PORT, API_KEY);
-  printStartupInfo(PORT, HOST, API_KEY);
+  if (process.stdout.isTTY || !API_KEY) {
+    printStartupInfo(PORT, HOST, API_KEY);
+  } else {
+    // Background services write stdout to log files other users may read, so
+    // the token-bearing QR code is only shown on demand.
+    console.log(
+      `[bridge] Run \`npx --yes @ccpocket/bridge@1 qr${PORT === 8765 ? "" : ` --port ${PORT}`}\` on this machine to show the pairing QR code.`,
+    );
+  }
 
   process.on("SIGINT", () => void shutdown());
   process.on("SIGTERM", () => void shutdown());

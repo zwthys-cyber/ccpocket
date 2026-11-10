@@ -1,6 +1,7 @@
 import { currentGitBranch, hasGitHead } from "./git-project-state.js";
 import { bootstrapProject } from "./project-bootstrap.js";
 import { performanceMessage } from "./performance-mode.js";
+import { transcriptPageRange } from "./context-compaction.js";
 import type { Server as HttpServer } from "node:http";
 import { createHash, randomUUID } from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
@@ -15,6 +16,7 @@ import {
   SessionManager,
   MAX_HISTORY_PER_SESSION,
   type HistoryEntry,
+  type QueuedSessionInput,
   type SessionInfo,
   type SessionSummary,
   type WorktreeOptions,
@@ -37,16 +39,29 @@ import {
   type CodexThreadSourceKind,
   type CodexThreadSummary,
 } from "./codex-process.js";
+import {
+  normalizeCodexServiceTierForClient,
+  isCodexServiceTierSupported,
+  type CodexServiceTierMetadata,
+} from "./codex-service-tier.js";
 import { stopManagedCodexAppServers } from "./codex-transport.js";
 import {
+  isAgentBackgroundTask,
   parseClientMessage,
   type AssistantContent,
   type ClientMessage,
   type DebugTraceEvent,
   type ImageChange,
   type Provider,
+  type RecentProjectFilter,
   type ServerMessage,
 } from "./parser.js";
+import {
+  CONTENT_SEARCH_MAX_FILES,
+  recentSessionMetadataSearchField,
+  withRecentSessionMetadataSearchMatch,
+} from "./recent-session-search.js";
+import { CodexThreadSnapshot } from "./codex-thread-snapshot.js";
 import {
   BRIDGE_PROTOCOL_MAX_VERSION,
   BRIDGE_PROTOCOL_MIN_VERSION,
@@ -55,6 +70,10 @@ import {
 } from "./protocol-version.js";
 import {
   getAllRecentSessions,
+  getPinnedCodexSessions,
+  codexEntryAsThreadListShape,
+  recentSessionIdentityKey,
+  type SessionIndexEntry,
   getCodexSessionHistory,
   getSessionHistory,
   codexUserTurnUuid,
@@ -66,6 +85,7 @@ import {
   getCodexSessionIndexMetadata,
   type CodexSessionIndexMetadata,
   loadCodexSessionNames,
+  listIndexedCodexThreadIds,
   renameClaudeSession,
   renameCodexSession,
   saveCodexSessionProfile,
@@ -125,6 +145,13 @@ import { consumeCodexReset, fetchAllUsage } from "./usage.js";
 import type { PromptHistoryBackupStore } from "./prompt-history-backup.js";
 import type { PromptHistoryStore } from "./prompt-history-store.js";
 import { getPackageVersion } from "./version.js";
+import { tokensMatch } from "./bridge-auth.js";
+import { BackgroundCompletionGate } from "./background-completion-gate.js";
+import {
+  catalogFromCachedCommands,
+  convertSkillTriggers,
+  hasForeignSkillTrigger,
+} from "./skill-triggers.js";
 import {
   isPathWithinAllowedDirectory,
   resolvePlatformPath,
@@ -141,6 +168,13 @@ import {
 } from "./codex-permissions.js";
 
 type SystemServerMessage = Extract<ServerMessage, { type: "system" }>;
+type ResultServerMessage = Extract<ServerMessage, { type: "result" }>;
+
+/** How long a session must stay idle without background work before Done. */
+const BACKGROUND_COMPLETION_SETTLE_MS = 2_000;
+/** How long a new session's first prompt waits for the skill list. */
+const INITIAL_PROMPT_SKILL_WAIT_MS = 5_000;
+const INITIAL_PROMPT_SKILL_POLL_MS = 100;
 type InputClientMessage = Extract<ClientMessage, { type: "input" }>;
 type ResumeClientMessage = Extract<ClientMessage, { type: "resume_session" }>;
 type CorrelatedProjectRequest = {
@@ -183,25 +217,36 @@ type ClaudePermissionMode =
 
 // ---- Available model lists (delivered to clients via session_list) ----
 
-const FALLBACK_CLAUDE_MODELS: string[] = [
-  "claude-opus-4-7",
-  "claude-opus-4-7[1m]",
-  "claude-opus-4-6",
-  "claude-opus-4-6[1m]",
-  "claude-opus-4-5-20251101",
-  "claude-sonnet-4-6",
-  "claude-haiku-4-6",
+// Used only when the Agent SDK cannot report its model list. These are the
+// Claude Code aliases, which always resolve to the current model of each
+// family, so the fallback never needs version-specific updates.
+const FALLBACK_CLAUDE_MODEL_OPTIONS: ClaudeModelOption[] = [
+  { value: "default", displayName: "Default" },
+  { value: "opus", displayName: "Opus" },
+  { value: "sonnet", displayName: "Sonnet" },
+  { value: "haiku", displayName: "Haiku" },
 ];
 
+const FALLBACK_CLAUDE_MODELS: string[] = FALLBACK_CLAUDE_MODEL_OPTIONS.map(
+  (option) => option.value,
+);
+
+const FALLBACK_CLAUDE_EFFORTS: ClaudeEffortLevel[] = ["low", "medium", "high"];
+
 const FALLBACK_CLAUDE_MODEL_EFFORTS: Record<string, ClaudeEffortLevel[]> = {
-  "claude-opus-4-7": ["low", "medium", "high", "xhigh", "max"],
-  "claude-opus-4-7[1m]": ["low", "medium", "high", "xhigh", "max"],
-  "claude-opus-4-6": ["low", "medium", "high", "max"],
-  "claude-opus-4-6[1m]": ["low", "medium", "high", "max"],
-  "claude-opus-4-5-20251101": ["low", "medium", "high"],
-  "claude-sonnet-4-6": ["low", "medium", "high", "max"],
-  "claude-haiku-4-6": [],
+  default: FALLBACK_CLAUDE_EFFORTS,
+  opus: FALLBACK_CLAUDE_EFFORTS,
+  sonnet: FALLBACK_CLAUDE_EFFORTS,
+  haiku: [],
 };
+
+export interface ClaudeModelOption {
+  value: string;
+  displayName?: string;
+  description?: string;
+  /** Claude Code fast mode is available for this model. */
+  supportsFastMode?: boolean;
+}
 
 const FALLBACK_CODEX_MODELS: string[] = [
   "gpt-5.6-sol",
@@ -251,8 +296,33 @@ const CODEX_RECENT_THREAD_SOURCE_KINDS: CodexThreadSourceKind[] = [
 ];
 
 const CODEX_USER_TURN_UUID_RE = /^codex:user-turn:(\d+)$/;
+/** Upper bound for waiting on a replaced Codex app-server to exit. */
+const CODEX_SHUTDOWN_WAIT_MS = 5_000;
+/** How long a retract waits for a just-sent prompt's turn to start. */
+const RETRACT_START_TIMEOUT_MS = 3_000;
+/** How long a retract waits for the interrupted turn to end. */
+const RETRACT_IDLE_TIMEOUT_MS = 15_000;
+
+const BRIDGE_PROTOCOL_CAPABILITIES = [
+  "performance_mode_v1",
+  "project_request_correlation_v1",
+  "session_context_v1",
+  "codex_service_tiers_v1",
+  "input_delivery_v1",
+  "claude_session_settings_v1",
+  "claude_fork_v1",
+  "message_edit_v1",
+  "recent_sessions_filters_v1",
+  "context_compaction_v1",
+];
+
+/** Default and maximum page size for `get_session_transcript`. */
+const TRANSCRIPT_PAGE_DEFAULT = 200;
+const TRANSCRIPT_PAGE_MAX = 1000;
 
 const OPT_IN_SERVER_MESSAGES = new Set<string>([
+  "background_tasks",
+  "context_compaction",
   "conversation_queue",
   "goal_state",
   "codex_recovery_state",
@@ -734,6 +804,248 @@ function recentSessionDedupeKey(session: unknown, fallbackIndex: number): string
     : `unknown:${fallbackIndex}`;
 }
 
+type ListRecentSessionsMessage = Extract<
+  ClientMessage,
+  { type: "list_recent_sessions" }
+>;
+
+interface RecentSessionsListing {
+  sessions: unknown[];
+  hasMore: boolean;
+  /**
+   * Requested pinned sessions that match the listing filters, independent of
+   * pagination. Only set for first-page list requests that sent pins.
+   */
+  pinnedSessions?: unknown[];
+}
+
+/**
+ * Provider-qualified keys of the pinned sessions a request asks for, or
+ * undefined when pinned sessions must not be resolved for this request
+ * (project-scoped pages, later pages, or no pins sent).
+ */
+export function pinnedSessionKeysForRecentRequest(
+  msg: ListRecentSessionsMessage,
+): Set<string> | undefined {
+  // With pinnedOnly the page itself already contains every pinned session.
+  if (msg.pinnedOnly === true) return undefined;
+  if (msg.requestScope === "project") return undefined;
+  if ((msg.offset ?? 0) !== 0) return undefined;
+  const pinned = msg.pinnedSessions;
+  if (!pinned || pinned.length === 0) return undefined;
+  return new Set(
+    pinned
+      .filter((pin) => !msg.provider || pin.provider === msg.provider)
+      .map((pin) => recentSessionIdentityKey(pin.provider, pin.sessionId)),
+  );
+}
+
+/**
+ * Keys of `pinnedSessions` that define the result set of a `pinnedOnly`
+ * request (any scope / offset), or undefined when `pinnedOnly` is not set.
+ */
+export function pinnedOnlySessionKeys(
+  msg: ListRecentSessionsMessage,
+): Set<string> | undefined {
+  if (msg.pinnedOnly !== true) return undefined;
+  return new Set(
+    (msg.pinnedSessions ?? [])
+      .filter((pin) => !msg.provider || pin.provider === msg.provider)
+      .map((pin) => recentSessionIdentityKey(pin.provider, pin.sessionId)),
+  );
+}
+
+/**
+ * In-flight coalescing key of a `list_recent_sessions` request. Includes every
+ * field that changes the result (pins only where they are used).
+ */
+export function recentSessionsCoalescingKey(
+  msg: ListRecentSessionsMessage,
+): string {
+  const pinnedKeys = pinnedSessionKeysForRecentRequest(msg);
+  const pinnedOnlyKeys = pinnedOnlySessionKeys(msg);
+  const sortedFilters = (filters: RecentProjectFilter[] | undefined) =>
+    filters
+      ? filters
+          .map((filter) =>
+            JSON.stringify([
+              filter.projectPath ?? null,
+              filter.projectId ?? null,
+              filter.workspaceKind ?? null,
+            ]),
+          )
+          .sort()
+      : null;
+  return JSON.stringify({
+    limit: msg.limit ?? null,
+    offset: msg.offset ?? null,
+    projectPath: msg.projectPath ?? null,
+    projectId: msg.projectId ?? null,
+    workspaceKind: msg.workspaceKind ?? null,
+    requestScope: msg.requestScope ?? null,
+    provider: msg.provider ?? null,
+    namedOnly: msg.namedOnly ?? null,
+    searchQuery: msg.searchQuery ?? null,
+    searchContent: msg.searchContent ?? null,
+    pinnedSessions: pinnedKeys ? [...pinnedKeys].sort() : null,
+    projectFilters: sortedFilters(msg.projectFilters),
+    modifiedAfter: msg.modifiedAfter ?? null,
+    modifiedBefore: msg.modifiedBefore ?? null,
+    dateField: msg.dateField ?? null,
+    pinnedOnly: msg.pinnedOnly ?? null,
+    pinnedOnlySessions: pinnedOnlyKeys ? [...pinnedOnlyKeys].sort() : null,
+    pinnedProjects: msg.pinnedOnly ? sortedFilters(msg.pinnedProjects) : null,
+  });
+}
+
+/** Content (transcript) search requested with a non-empty query. */
+export function isRecentContentSearch(msg: ListRecentSessionsMessage): boolean {
+  return msg.searchContent === true && Boolean(msg.searchQuery?.trim());
+}
+
+/** `projectFilters` apply to list requests only (project scope replaces them). */
+function effectiveRecentProjectFilters(
+  msg: ListRecentSessionsMessage,
+): RecentProjectFilter[] | undefined {
+  return msg.requestScope !== "project" && (msg.projectFilters?.length ?? 0) > 0
+    ? msg.projectFilters
+    : undefined;
+}
+
+/**
+ * Whether the request uses any `recent_sessions_filters_v1` filter, which
+ * routes it through the predicate-based listing path.
+ */
+export function recentSessionsFiltersRequested(
+  msg: ListRecentSessionsMessage,
+): boolean {
+  return (
+    effectiveRecentProjectFilters(msg) !== undefined ||
+    msg.modifiedAfter !== undefined ||
+    msg.modifiedBefore !== undefined ||
+    msg.pinnedOnly === true ||
+    // Keyword searches, single projects and named only too: app-server
+    // `thread/list` paging / searchTerm took seconds, while the index plus the
+    // Codex thread snapshot answers in tens of milliseconds.
+    Boolean(msg.searchQuery?.trim()) ||
+    msg.projectPath !== undefined ||
+    msg.projectId !== undefined ||
+    msg.workspaceKind !== undefined ||
+    msg.namedOnly === true ||
+    isRecentContentSearch(msg)
+  );
+}
+
+function recentDateBound(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? time : undefined;
+}
+
+/**
+ * Predicate over (workspace-enriched) recent sessions combining, with AND:
+ * the single project fields, `projectFilters` (OR), the date range and
+ * `pinnedOnly` (pinned session keys OR any `pinnedProjects` entry).
+ */
+export function buildRecentSessionPredicate(
+  msg: ListRecentSessionsMessage,
+  listProjects: () => ReadonlyArray<{ id: string; rootPaths: readonly string[] }>,
+  pinnedKeys?: ReadonlySet<string>,
+): (session: unknown) => boolean {
+  type Probe = {
+    provider?: unknown;
+    sessionId?: unknown;
+    projectPath?: unknown;
+    created?: unknown;
+    modified?: unknown;
+    workspace?: Record<string, unknown>;
+  };
+  const projectMatcher = (filter: RecentProjectFilter) => {
+    const primaryProjectIds = new Set(
+      filter.projectPath === undefined
+        ? []
+        : listProjects()
+            .filter((project) => project.rootPaths[0] === filter.projectPath)
+            .map((project) => project.id),
+    );
+    return (value: Probe): boolean => {
+      const workspace = value.workspace;
+      if (filter.projectId && workspace?.projectId !== filter.projectId) {
+        return false;
+      }
+      if (filter.workspaceKind && workspace?.kind !== filter.workspaceKind) {
+        return false;
+      }
+      if (filter.projectPath !== undefined) {
+        const matchesPrimaryProject =
+          typeof workspace?.projectId === "string" &&
+          primaryProjectIds.has(workspace.projectId);
+        if (value.projectPath !== filter.projectPath && !matchesPrimaryProject) {
+          return false;
+        }
+      }
+      return true;
+    };
+  };
+  const matchesScope = projectMatcher({
+    projectPath: msg.projectPath,
+    projectId: msg.projectId,
+    workspaceKind: msg.workspaceKind,
+  });
+  const projectFilterMatchers =
+    effectiveRecentProjectFilters(msg)?.map(projectMatcher);
+  const pinnedProjectMatchers =
+    msg.pinnedOnly === true
+      ? (msg.pinnedProjects ?? []).map(projectMatcher)
+      : undefined;
+  const after = recentDateBound(msg.modifiedAfter);
+  const before = recentDateBound(msg.modifiedBefore);
+  const dateField = msg.dateField === "created" ? "created" : "modified";
+
+  return (session: unknown): boolean => {
+    const value = (session ?? {}) as Probe;
+    if (!matchesScope(value)) return false;
+    if (
+      projectFilterMatchers &&
+      !projectFilterMatchers.some((matches) => matches(value))
+    ) {
+      return false;
+    }
+    if (after !== undefined || before !== undefined) {
+      const raw = value[dateField];
+      const time = typeof raw === "string" ? Date.parse(raw) : Number.NaN;
+      if (!Number.isFinite(time)) return false;
+      if (after !== undefined && time < after) return false;
+      if (before !== undefined && time >= before) return false;
+    }
+    if (pinnedProjectMatchers) {
+      const pinned =
+        typeof value.provider === "string" &&
+        typeof value.sessionId === "string" &&
+        (pinnedKeys?.has(
+          recentSessionIdentityKey(value.provider, value.sessionId),
+        ) ??
+          false);
+      if (!pinned && !pinnedProjectMatchers.some((matches) => matches(value))) {
+        return false;
+      }
+    }
+    return true;
+  };
+}
+
+/**
+ * Pinned entries from the rollout/index scan, shaped like the page entries the
+ * app-server `thread/list` listing produces for Codex.
+ */
+function pinnedIndexEntriesAsListingShape(
+  entries: readonly SessionIndexEntry[] | undefined,
+): SessionIndexEntry[] | undefined {
+  return entries?.map((entry) =>
+    entry.provider === "codex" ? codexEntryAsThreadListShape(entry) : entry,
+  );
+}
+
 function mergeRecentSessionPages(sessions: unknown[]): unknown[] {
   const seen = new Set<string>();
   const merged: unknown[] = [];
@@ -816,14 +1128,26 @@ export class BridgeWebSocketServer {
   private recordingStore: RecordingStore | null;
   private worktreeStore: WorktreeStore;
   private pushRelay: PushRelayClient;
+  private completionGate: BackgroundCompletionGate<ResultServerMessage>;
   private promptHistoryBackup: PromptHistoryBackupStore | null;
   private promptHistoryStore: PromptHistoryStore | null;
 
   private recentSessionsRequestIds = new WeakMap<WebSocket, number>();
   private recentSessionsInFlight = new Map<
     string,
-    Promise<{ sessions: unknown[]; hasMore: boolean }>
+    Promise<RecentSessionsListing>
   >();
+  /**
+   * Transcript files the last content search page read, per query (offset
+   * excluded). Later pages read that many plus one more budget, so "load
+   * more" keeps going past the per-request file bound instead of rereading
+   * the same files.
+   */
+  private contentSearchDepth = new Map<string, { files: number; at: number }>();
+  /** Every Codex thread, for threads only kept as compressed rollouts. */
+  private codexThreadSnapshot = new CodexThreadSnapshot((onPage) =>
+    this.loadAllCodexThreads(onPage),
+  );
   private debugEvents = new Map<string, DebugTraceEvent[]>();
   private notifiedPermissionToolUses = new Map<string, Set<string>>();
   private archiveStore: ArchiveStore;
@@ -834,6 +1158,7 @@ export class BridgeWebSocketServer {
   private codexMetadataRequest: Promise<void> | null = null;
   private lastConnectMetadataRefreshAt: number | null = null;
   private claudeModels: string[] = FALLBACK_CLAUDE_MODELS;
+  private claudeModelOptions: ClaudeModelOption[] = FALLBACK_CLAUDE_MODEL_OPTIONS;
   private claudeModelEfforts: Record<string, ClaudeEffortLevel[]> = {
     ...FALLBACK_CLAUDE_MODEL_EFFORTS,
   };
@@ -852,6 +1177,10 @@ export class BridgeWebSocketServer {
       fallbackCodexServiceTiers(model),
     ]),
   );
+  private codexModelServiceTierMetadata: Record<
+    string,
+    CodexServiceTierMetadata[]
+  > = {};
   /** FCM token → push notification locale */
   private tokenLocales = new Map<string, PushLocale>();
   private tokenPrivacyMode = new Map<string, boolean>();
@@ -930,6 +1259,19 @@ export class BridgeWebSocketServer {
     this.recordingStore = recordingStore ?? null;
     this.worktreeStore = new WorktreeStore();
     this.pushRelay = new PushRelayClient({ firebaseAuth });
+    this.completionGate = new BackgroundCompletionGate<ResultServerMessage>({
+      settleMs: BACKGROUND_COMPLETION_SETTLE_MS,
+      isSettled: (sessionId) => {
+        const session = this.sessionManager.get(sessionId);
+        return (
+          !!session &&
+          session.status === "idle" &&
+          !session.backgroundTasks?.some(isAgentBackgroundTask)
+        );
+      },
+      release: (sessionId, completion) =>
+        this.sendCompletionPush(sessionId, completion),
+    });
     this.promptHistoryBackup = promptHistoryBackup ?? null;
     this.promptHistoryStore = promptHistoryStore ?? null;
     this.platform = platform ?? process.platform;
@@ -1029,7 +1371,7 @@ export class BridgeWebSocketServer {
       if (this.apiKey) {
         const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
         const token = url.searchParams.get("token");
-        if (token !== this.apiKey) {
+        if (!tokensMatch(token, this.apiKey)) {
           console.log("[ws] Client rejected: invalid token");
           ws.close(4001, "Unauthorized");
           return;
@@ -1408,6 +1750,8 @@ export class BridgeWebSocketServer {
     plugins?: string[];
     pluginMetadata?: Array<Record<string, unknown>>;
     sourceSessionId?: string;
+    /** The source session keeps running (fork), unlike restarts/rewinds. */
+    forked?: boolean;
     resumeRequestId?: string;
     requestId?: string;
   }): SystemServerMessage {
@@ -1546,6 +1890,7 @@ export class BridgeWebSocketServer {
           }
         : {}),
       ...(sourceSessionId ? { sourceSessionId } : {}),
+      ...(params.forked ? { forked: true } : {}),
       ...(resumeRequestId ? { resumeRequestId } : {}),
       ...(requestId ? { requestId } : {}),
     };
@@ -1585,11 +1930,155 @@ export class BridgeWebSocketServer {
     return msg;
   }
 
+  /**
+   * Interrupt the running turn and, when the agent has shown no output for
+   * the latest prompt, remove that prompt from the conversation and hand its
+   * text back to the client (Claude Code's Esc-to-edit). See
+   * docs/interrupt-retract.md.
+   */
+  private async interruptAndRetract(
+    ws: WebSocket,
+    session: SessionInfo,
+  ): Promise<void> {
+    const sessionId = session.id;
+    let candidate = this.sessionManager.retractableUserInput(sessionId);
+    if (session.status === "idle") {
+      // Stop can be tapped right after sending, before the turn has started
+      // on the Bridge. Interrupting then would be a no-op and the turn would
+      // still run, so wait for it to start first.
+      if (
+        !candidate ||
+        !(await this.waitForSessionRunning(session, RETRACT_START_TIMEOUT_MS))
+      ) {
+        session.process.interrupt();
+        return;
+      }
+      candidate = this.sessionManager.retractableUserInput(sessionId);
+    }
+    session.process.interrupt();
+    if (!candidate) return;
+
+    if (!(await this.waitForSessionIdle(session, RETRACT_IDLE_TIMEOUT_MS))) {
+      return;
+    }
+    // Output may have arrived before the abort landed.
+    const latest = this.sessionManager.retractableUserInput(sessionId);
+    if (!latest || latest.historySeq !== candidate.historySeq) return;
+    if (this.sessionManager.get(sessionId) !== session) return;
+
+    this.flushSessionDeltaBatches(sessionId);
+    await this.sessionManager.rewindInPlace(sessionId, null);
+    this.send(ws, {
+      type: "input_retracted",
+      sessionId,
+      text: latest.text,
+    });
+  }
+
+  /**
+   * Codex App's edit-and-resend: rewind the conversation in place to just
+   * before [targetUuid], then send [text] as a new prompt through the normal
+   * input path. Only allowed between turns.
+   */
+  private async editUserMessage(
+    ws: WebSocket,
+    msg: Extract<ClientMessage, { type: "edit_message" }>,
+  ): Promise<void> {
+    const fail = (message: string) => {
+      this.send(ws, {
+        type: "error",
+        sessionId: msg.sessionId,
+        message,
+        errorCode: "edit_message_failed",
+        ...(msg.clientMessageId ? { clientMessageId: msg.clientMessageId } : {}),
+      });
+    };
+    const session = this.sessionManager.get(msg.sessionId);
+    if (!session) {
+      fail(`Session ${msg.sessionId} not found`);
+      return;
+    }
+    if (session.status !== "idle") {
+      fail("Cannot edit a message while a turn is in progress.");
+      return;
+    }
+    try {
+      this.flushSessionDeltaBatches(msg.sessionId);
+      await this.sessionManager.rewindInPlace(msg.sessionId, msg.targetUuid);
+    } catch (err) {
+      fail(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    await this.handleClientMessage(
+      {
+        type: "input",
+        sessionId: msg.sessionId,
+        text: msg.text,
+        ...(msg.clientMessageId ? { clientMessageId: msg.clientMessageId } : {}),
+      },
+      ws,
+    );
+  }
+
+  private waitForSessionRunning(
+    session: SessionInfo,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    if (session.status !== "idle") return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const proc = session.process;
+      const finish = (running: boolean) => {
+        clearTimeout(timer);
+        proc.off("status", onStatus);
+        resolve(running);
+      };
+      const onStatus = (status: string) => {
+        if (status !== "idle") finish(true);
+      };
+      const timer = setTimeout(
+        () => finish(session.status !== "idle"),
+        timeoutMs,
+      );
+      proc.on("status", onStatus);
+    });
+  }
+
+  private waitForSessionIdle(
+    session: SessionInfo,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    const isIdle = () =>
+      session.status === "idle" &&
+      (session.process.status ?? "idle") === "idle" &&
+      !(session.process instanceof SdkProcess && session.process.isTurnActive);
+    if (isIdle()) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const proc = session.process;
+      const finish = (idle: boolean) => {
+        clearTimeout(timer);
+        proc.off("status", onStatus);
+        proc.off("exit", onExit);
+        resolve(idle);
+      };
+      const onStatus = () => {
+        // The session's own status listener runs first; re-check after it.
+        queueMicrotask(() => {
+          if (isIdle()) finish(true);
+        });
+      };
+      const onExit = () => finish(false);
+      const timer = setTimeout(() => finish(isIdle()), timeoutMs);
+      proc.on("status", onStatus);
+      proc.on("exit", onExit);
+    });
+  }
+
   private async rewindCodexConversation(
     ws: WebSocket,
     sessionId: string,
     targetUuid: string,
     mode: "conversation" | "code" | "both",
+    onRewound?: () => void,
   ): Promise<void> {
     if (mode !== "conversation") {
       this.send(ws, {
@@ -1637,7 +2126,7 @@ export class BridgeWebSocketServer {
       });
       return;
     }
-    if (session.codexQueuedInput) {
+    if (session.queuedInput) {
       this.send(ws, {
         type: "rewind_result",
         sessionId,
@@ -1704,7 +2193,31 @@ export class BridgeWebSocketServer {
       expectedUserTurns: targetOrdinal - 1,
       fallback: buildCodexHistoryPrefix(session, targetOrdinal - 1),
     });
+    // A rewind replaces the conversation rather than branching it (Codex
+    // App's edit-and-resend leaves no old copy in history), so hide the
+    // source thread. Archive through the process that has it loaded.
+    {
+      try {
+        await codexProcess.archiveThread(threadId);
+      } catch (err) {
+        console.warn(
+          `[ws] Failed to archive rewound Codex thread ${threadId}: ${codexErrorMessage(err)}`,
+        );
+      }
+      await this.archiveStore
+        .archive(threadId, "codex", projectPath)
+        .catch((err: unknown) => {
+          console.warn(
+            `[ws] Failed to record archive for ${threadId}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+    }
     this.destroySession(sessionId);
+    // The source app-server holds the forked thread's write lock until it
+    // exits; resuming the fork before then fails with "active writer".
+    if (forked) {
+      await codexProcess.waitForShutdown?.(CODEX_SHUTDOWN_WAIT_MS);
+    }
     const newSessionId = this.sessionManager.create(
       projectPath,
       undefined,
@@ -1719,6 +2232,7 @@ export class BridgeWebSocketServer {
     this.attachWorkspaceToRuntimeSession(newSessionId, workspace);
     const newSession = this.sessionManager.get(newSessionId);
 
+    onRewound?.();
     this.send(ws, {
       type: "rewind_result",
       sessionId,
@@ -1735,6 +2249,99 @@ export class BridgeWebSocketServer {
         approvalsReviewer: newSession?.codexSettings?.approvalsReviewer,
         sandboxMode: newSession?.codexSettings?.sandboxMode,
         sourceSessionId: sessionId,
+      }),
+    );
+    this.sendSessionList(ws);
+  }
+
+  /**
+   * Branch a Claude conversation into a new session that ends at the given
+   * assistant message. The source session keeps running unchanged.
+   */
+  private async forkClaudeSession(
+    ws: WebSocket,
+    sessionId: string,
+    targetUuid: string,
+  ): Promise<void> {
+    const fail = (message: string): void => {
+      this.send(ws, {
+        type: "error",
+        sessionId,
+        message,
+        errorCode: "fork_failed",
+      });
+    };
+    const session = this.sessionManager.get(sessionId);
+    if (!session || session.provider !== "claude") {
+      fail(`Session ${sessionId} not found`);
+      return;
+    }
+    const claudeSessionId = session.claudeSessionId;
+    if (!claudeSessionId) {
+      fail("Session has no Claude session ID yet");
+      return;
+    }
+    const sdkProcess = session.process as SdkProcess;
+    if (session.status !== "idle" || (sdkProcess.status ?? "idle") !== "idle") {
+      fail("Cannot fork while Claude is running");
+      return;
+    }
+    if (session.queuedInput) {
+      fail("Cannot fork while Claude has queued input");
+      return;
+    }
+
+    const history = await getSessionHistory(claudeSessionId);
+    const targetIndex = history.findIndex(
+      (message) => message.role === "assistant" && message.uuid === targetUuid,
+    );
+    if (targetIndex < 0) {
+      fail("Fork target not found in the Claude transcript");
+      return;
+    }
+    const pastMessages = history.slice(0, targetIndex + 1);
+
+    const workspace = this.workspaceForRuntimeSession(session);
+    const worktreeOpts: WorktreeOptions | undefined = session.worktreePath
+      ? {
+          existingWorktreePath: session.worktreePath,
+          worktreeBranch: session.worktreeBranch,
+        }
+      : undefined;
+    const settings = sdkProcess.settings ?? {};
+    const permissionMode = sdkProcess.permissionMode;
+    const newSessionId = this.sessionManager.create(
+      session.projectPath,
+      {
+        sessionId: claudeSessionId,
+        forkSession: true,
+        resumeSessionAt: targetUuid,
+        ...(permissionMode ? { permissionMode } : {}),
+        ...(settings.model ? { model: settings.model } : {}),
+        ...(settings.effort ? { effort: settings.effort } : {}),
+        ...(settings.fastMode ? { fastMode: true } : {}),
+        ...(settings.ultracode ? { ultracode: true } : {}),
+        ...(session.sandboxEnabled !== undefined
+          ? { sandboxEnabled: session.sandboxEnabled }
+          : {}),
+      },
+      pastMessages,
+      worktreeOpts,
+      "claude",
+    );
+    this.attachWorkspaceToRuntimeSession(newSessionId, workspace);
+    const newSession = this.sessionManager.get(newSessionId);
+
+    this.send(
+      ws,
+      this.buildSessionCreatedMessage({
+        sessionId: newSessionId,
+        provider: "claude",
+        projectPath: session.projectPath,
+        session: newSession,
+        permissionMode,
+        sourceSessionId: sessionId,
+        forked: true,
       }),
     );
     this.sendSessionList(ws);
@@ -1774,7 +2381,7 @@ export class BridgeWebSocketServer {
       });
       return;
     }
-    if (session.codexQueuedInput) {
+    if (session.queuedInput) {
       this.send(ws, {
         type: "error",
         message: "Cannot fork while Codex has queued input",
@@ -1804,7 +2411,28 @@ export class BridgeWebSocketServer {
         }
       : undefined;
 
-    const forked = await codexProcess.forkThreadAtUserTurn(targetOrdinal);
+    const sourceThreadId = codexProcess.sessionId ?? session.claudeSessionId;
+    if (!sourceThreadId) {
+      this.send(ws, {
+        type: "error",
+        message: "No Codex thread ID available for fork",
+        errorCode: "fork_failed",
+      });
+      return;
+    }
+    // Fork in a throwaway app-server: whichever app-server forks a thread
+    // holds its write lock until it exits, and the source session keeps
+    // running, so the fork must not be created by the source process.
+    const forker = await this.createStandaloneCodexProcess(
+      session.worktreePath ?? projectPath,
+    );
+    let forked: Awaited<ReturnType<CodexProcess["forkThreadAtUserTurn"]>>;
+    try {
+      forked = await forker.forkThreadAtUserTurn(targetOrdinal, sourceThreadId);
+    } finally {
+      forker.stop();
+      await forker.waitForShutdown(CODEX_SHUTDOWN_WAIT_MS);
+    }
     const forkedThreadId = forked.threadId;
     const forkedThread = forked.thread;
 
@@ -1837,6 +2465,7 @@ export class BridgeWebSocketServer {
         approvalsReviewer: newSession?.codexSettings?.approvalsReviewer,
         sandboxMode: newSession?.codexSettings?.sandboxMode,
         sourceSessionId: sessionId,
+        forked: true,
       }),
     );
     this.sendSessionList(ws);
@@ -1863,7 +2492,14 @@ export class BridgeWebSocketServer {
   private async splitPastHistoryMessages(
     session: SessionInfo,
   ): Promise<{ pastMessages: unknown[]; historyMessages: ServerMessage[] }> {
-    const messages = session.pastMessages ?? [];
+    return this.preparePastHistoryMessages(session, session.pastMessages ?? []);
+  }
+
+  /** Registers past-history images so clients can fetch them by URL. */
+  private async preparePastHistoryMessages(
+    session: SessionInfo,
+    messages: readonly unknown[],
+  ): Promise<{ pastMessages: unknown[]; historyMessages: ServerMessage[] }> {
     const pastMessages: unknown[] = [];
     const historyMessages: ServerMessage[] = [];
 
@@ -1907,6 +2543,29 @@ export class BridgeWebSocketServer {
     }
 
     return { pastMessages, historyMessages };
+  }
+
+  /**
+   * Full provider transcript for the read-only transcript screen. Unlike the
+   * live history window it is not trimmed, and it keeps compaction markers.
+   */
+  private async sessionTranscriptMessages(
+    session: SessionInfo,
+  ): Promise<SessionHistoryMessage[]> {
+    if (session.provider === "codex") {
+      const threadId = this.codexThreadIdForSession(session);
+      if (!threadId) return [];
+      if (session.codexInitialHistoryPending) {
+        return (session.pastMessages ?? []) as SessionHistoryMessage[];
+      }
+      return this.getCodexThreadHistoryFromRpc(
+        threadId,
+        session.projectPath,
+        session.process instanceof CodexProcess ? session.process : undefined,
+      );
+    }
+    if (!session.claudeSessionId) return [];
+    return getSessionHistory(session.claudeSessionId);
   }
 
   private codexThreadIdForSession(session: SessionInfo): string | undefined {
@@ -2181,6 +2840,9 @@ export class BridgeWebSocketServer {
   }
 
   private codexHistoryMessageIdentityKeys(message: ServerMessage): string[] {
+    if (message.type === "context_compaction") {
+      return message.id ? [`compaction:${message.id}`] : [];
+    }
     if (message.type === "user_input") {
       return message.userMessageUuid ? [`user:${message.userMessageUuid}`] : [];
     }
@@ -2208,6 +2870,36 @@ export class BridgeWebSocketServer {
     } catch {
       return String(value);
     }
+  }
+
+  private claudeSettingsMessage(
+    sessionId: string,
+    session: SessionInfo,
+  ): ServerMessage {
+    const settings =
+      session.provider === "claude"
+        ? ((session.process as Partial<Pick<SdkProcess, "settings">>)
+            .settings ?? {})
+        : {};
+    return {
+      type: "system",
+      subtype: "claude_settings",
+      sessionId,
+      provider: "claude",
+      ...(settings.model ? { model: settings.model } : {}),
+      ...(settings.effort ? { effort: settings.effort } : {}),
+      fastMode: settings.fastMode === true,
+      ultracode: settings.ultracode === true,
+    } as ServerMessage;
+  }
+
+  private sendClaudeCurrentSettings(
+    ws: WebSocket,
+    sessionId: string,
+    session: SessionInfo,
+  ): void {
+    if (session.provider !== "claude") return;
+    this.send(ws, this.claudeSettingsMessage(sessionId, session));
   }
 
   private sendCodexCurrentSettings(
@@ -2256,7 +2948,8 @@ export class BridgeWebSocketServer {
         reason: "reset",
       } satisfies Extract<ServerMessage, { type: "history_snapshot" }>);
       this.sendCodexCurrentSettings(ws, sessionId, session);
-      this.sendCodexQueueState(ws, sessionId, session);
+      this.sendQueueState(ws, sessionId, session);
+      this.sendBackgroundTasksState(ws, sessionId, session);
       this.sendCodexGoalState(ws, sessionId, session);
       if (options.includeCachedCommands) {
         this.sendCachedCommands(ws, sessionId, session);
@@ -2292,7 +2985,8 @@ export class BridgeWebSocketServer {
         status: session.status,
         sessionId,
       } as Record<string, unknown>);
-      this.sendCodexQueueState(ws, sessionId, session);
+      this.sendQueueState(ws, sessionId, session);
+      this.sendBackgroundTasksState(ws, sessionId, session);
       this.sendCodexGoalState(ws, sessionId, session);
       this.sendCachedCommands(ws, sessionId, session);
       return true;
@@ -2339,6 +3033,15 @@ export class BridgeWebSocketServer {
     session: SessionInfo,
     item: SessionHistoryMessage,
   ): Promise<ServerMessage | null> {
+    if (item.role === "compaction") {
+      return {
+        type: "context_compaction",
+        provider: "codex",
+        ...(item.uuid ? { id: item.uuid } : {}),
+        ...item.compaction,
+        ...(item.timestamp ? { timestamp: item.timestamp } : {}),
+      };
+    }
     if (item.role === "user") {
       const images = await this.registerPastUserMessageImages(
         session,
@@ -2693,6 +3396,7 @@ export class BridgeWebSocketServer {
     this.flushAllDeltaBatches();
     this.sessionManager.destroyAll();
     this.flushAllDeltaBatches();
+    this.completionGate.dispose();
     stopManagedCodexAppServers();
     this.debugEvents.clear();
     this.wss.close();
@@ -2704,6 +3408,11 @@ export class BridgeWebSocketServer {
   }
 
   /** Return connected WebSocket client count. */
+  /** Claude plan usage through a running session, if any. */
+  readClaudePlanUsage(): Promise<unknown> {
+    return this.sessionManager.readClaudePlanUsage();
+  }
+
   get clientCount(): number {
     return this.wss.clients.size;
   }
@@ -2755,7 +3464,9 @@ export class BridgeWebSocketServer {
       }
 
       console.log(`[ws] Received: ${msg.type}`);
-      this.handleClientMessage(msg, ws);
+      this.handleClientMessage(msg, ws).catch((err: unknown) => {
+        this.reportClientMessageFailure(ws, msg, err);
+      });
     });
 
     ws.on("close", () => {
@@ -2783,6 +3494,37 @@ export class BridgeWebSocketServer {
     this.lastConnectMetadataRefreshAt = now;
     void this.refreshCodexMetadata();
     void this.refreshClaudeModels();
+    // Load the Codex thread snapshot before the first search / filter.
+    this.codexThreadSnapshot.warm();
+  }
+
+  /**
+   * Last-resort handler for a rejected handleClientMessage call. Without it an
+   * async handler failure becomes an unhandled rejection and terminates the
+   * Bridge process.
+   */
+  private reportClientMessageFailure(
+    ws: WebSocket,
+    msg: ClientMessage,
+    err: unknown,
+  ): void {
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error(`[ws] Failed to handle ${msg.type}:`, err);
+    const fields = msg as { sessionId?: unknown; requestId?: unknown };
+    try {
+      this.send(ws, {
+        type: "error",
+        message: `Failed to handle ${msg.type}: ${detail}`,
+        ...(typeof fields.sessionId === "string"
+          ? { sessionId: fields.sessionId }
+          : {}),
+        ...(typeof fields.requestId === "string"
+          ? { requestId: fields.requestId }
+          : {}),
+      });
+    } catch (sendErr) {
+      console.error("[ws] Failed to report handler error:", sendErr);
+    }
   }
 
   private async handleClientMessage(
@@ -2860,6 +3602,7 @@ export class BridgeWebSocketServer {
               ws,
               this.buildPathNotAllowedError(
                 normalized.deniedRoot ?? project.rootPaths[0],
+                msg.requestId,
               ),
             );
             break;
@@ -2882,6 +3625,13 @@ export class BridgeWebSocketServer {
         }
         try {
           const provider = msg.provider ?? "claude";
+          const tierError = provider === "codex"
+            ? this.codexServiceTierError(msg.model, msg.serviceTier) : undefined;
+          if (tierError) {
+            this.send(ws, { type: "error", requestId: msg.requestId,
+              errorCode: "codex_service_tier_unavailable", message: tierError });
+            break;
+          }
           const normalizedCodexPermissionsMode =
             provider === "codex"
               ? normalizeCodexPermissionsMode(msg.codexPermissionsMode)
@@ -2985,6 +3735,8 @@ export class BridgeWebSocketServer {
                     permissionMode: claudePermissionMode,
                     model: msg.model,
                     effort: msg.effort,
+                    fastMode: msg.claudeFastMode,
+                    ultracode: msg.claudeUltracode,
                     maxTurns: msg.maxTurns,
                     maxBudgetUsd: msg.maxBudgetUsd,
                     fallbackModel: msg.fallbackModel,
@@ -3127,9 +3879,30 @@ export class BridgeWebSocketServer {
               );
             }
             if (msg.initialPrompt?.trim()) {
-              void this.handleClientMessage({ type: "input", sessionId, text: msg.initialPrompt, clientMessageId: randomUUID() }, ws, true).catch((error) => {
-                this.send(ws, { type: "error", sessionId, message: `Failed to send initial project request: ${(error as Error).message}` });
-              });
+              void this.prepareInitialPrompt(
+                provider,
+                createdSession?.worktreePath ?? projectPath,
+                sessionId,
+                msg.initialPrompt,
+              )
+                .then((prepared) =>
+                  this.handleClientMessage(
+                    {
+                      type: "input",
+                      sessionId,
+                      text: prepared.text,
+                      clientMessageId: randomUUID(),
+                      ...(prepared.skills.length > 0
+                        ? { skills: prepared.skills }
+                        : {}),
+                    },
+                    ws,
+                    true,
+                  ),
+                )
+                .catch((error) => {
+                  this.send(ws, { type: "error", sessionId, message: `Failed to send initial project request: ${(error as Error).message}` });
+                });
             }
             // Send a gentle tip when the project is not a git repository
             if (createdSession && !createdSession.gitBranch) {
@@ -3246,32 +4019,55 @@ export class BridgeWebSocketServer {
           break;
         }
 
-        if (
-          session.provider === "codex" &&
-          !session.process.isWaitingForInput
-        ) {
-          if (session.codexQueuedInput) {
-            this.send(ws, {
-              type: "input_rejected",
-              sessionId: session.id,
-              ...(clientMessageId ? { clientMessageId } : {}),
-              reason: "Queue is full",
-            });
-            break;
-          }
+        const delivery = msg.delivery;
+        const sdkTurnActive =
+          session.provider === "claude"
+            ? (session.process as Partial<Pick<SdkProcess, "isTurnActive">>)
+                .isTurnActive
+            : undefined;
+        const turnActive =
+          session.provider === "codex"
+            ? !session.process.isWaitingForInput
+            : typeof sdkTurnActive === "boolean"
+              ? sdkTurnActive
+              : isAgentBusySnapshot;
+        // Older clients omit `delivery`: Codex queues and Claude keeps the
+        // legacy interrupt-and-send path below.
+        const usageLimited = this.sessionManager.isUsageLimited(session.id);
+        const holdForDelivery =
+          usageLimited || (turnActive &&
+          (delivery !== undefined || session.provider === "codex"));
 
-          const queued = this.sessionManager.queueCodexInput(session.id, {
+        if (holdForDelivery) {
+          const pendingInput: QueuedSessionInput = {
             itemId: randomUUID(),
             ...(clientMessageId ? { clientMessageId } : {}),
             text,
             createdAt: new Date().toISOString(),
-            userMessageUuid: nextCodexUserTurnUuid(session),
+            ...(session.provider === "codex"
+              ? { userMessageUuid: nextCodexUserTurnUuid(session) }
+              : {}),
             ...(images.length > 0 ? { imageCount: images.length, images } : {}),
             ...(imageRefs ? { imageRefs } : {}),
             ...(codexSkills.length > 0 ? { skills: codexSkills } : {}),
             ...(codexMentions.length > 0 ? { mentions: codexMentions } : {}),
-          });
-          if (!queued) {
+          };
+
+          let outcome: "steered" | "queued" | "rejected";
+          if (delivery === "steer" && !usageLimited) {
+            outcome = await this.sessionManager.steerInput(
+              session.id,
+              pendingInput,
+            );
+          } else if (session.queuedInput) {
+            outcome = "rejected";
+          } else {
+            outcome = this.sessionManager.queueInput(session.id, pendingInput)
+              ? "queued"
+              : "rejected";
+          }
+
+          if (outcome === "rejected") {
             this.send(ws, {
               type: "input_rejected",
               sessionId: session.id,
@@ -3301,7 +4097,7 @@ export class BridgeWebSocketServer {
             sessionId: session.id,
             ...(clientMessageId ? { clientMessageId } : {}),
             acceptedSeq: session.historyRevision,
-            queued: true,
+            queued: outcome === "queued",
           });
           this.broadcastSessionList();
           break;
@@ -3521,11 +4317,11 @@ export class BridgeWebSocketServer {
 
       case "update_queued_input": {
         const session = this.resolveSession(msg.sessionId);
-        if (!session || session.provider !== "codex") {
+        if (!session) {
           this.send(ws, {
             type: "error",
             sessionId: msg.sessionId,
-            message: "No active Codex session.",
+            message: "No active session.",
           });
           return;
         }
@@ -3537,7 +4333,7 @@ export class BridgeWebSocketServer {
           });
           return;
         }
-        const success = this.sessionManager.updateCodexQueuedInput(
+        const success = this.sessionManager.updateQueuedInput(
           session.id,
           msg.itemId,
           msg.text,
@@ -3558,15 +4354,15 @@ export class BridgeWebSocketServer {
 
       case "cancel_queued_input": {
         const session = this.resolveSession(msg.sessionId);
-        if (!session || session.provider !== "codex") {
+        if (!session) {
           this.send(ws, {
             type: "error",
             sessionId: msg.sessionId,
-            message: "No active Codex session.",
+            message: "No active session.",
           });
           return;
         }
-        const success = this.sessionManager.cancelCodexQueuedInput(
+        const success = this.sessionManager.cancelQueuedInput(
           session.id,
           msg.itemId,
         );
@@ -3585,15 +4381,15 @@ export class BridgeWebSocketServer {
 
       case "steer_queued_input": {
         const session = this.resolveSession(msg.sessionId);
-        if (!session || session.provider !== "codex") {
+        if (!session) {
           this.send(ws, {
             type: "error",
             sessionId: msg.sessionId,
-            message: "No active Codex session.",
+            message: "No active session.",
           });
           return;
         }
-        const result = await this.sessionManager.steerCodexQueuedInput(
+        const result = await this.sessionManager.steerQueuedInput(
           session.id,
           msg.itemId,
         );
@@ -4142,6 +4938,16 @@ export class BridgeWebSocketServer {
           break;
         }
 
+        // Older clients send model first, then normalize Fast to Standard.
+        // Keep that sequence compatible; extended tiers must never downgrade.
+        const currentTier = normalizeCodexServiceTierForClient(session.codexSettings?.serviceTier);
+        const tierError = currentTier !== "standard" && currentTier !== "fast"
+          ? this.codexServiceTierError(model, currentTier) : undefined;
+        if (tierError) {
+          this.send(ws, { type: "error", sessionId: msg.sessionId,
+            errorCode: "set_codex_model_rejected", message: tierError });
+          break;
+        }
         const currentModel = sanitizeCodexModel(session.codexSettings?.model);
         const currentEffort = session.codexSettings?.modelReasoningEffort;
         const modelReasoningEffort = normalizeCodexReasoningEffortForModel(
@@ -4198,10 +5004,17 @@ export class BridgeWebSocketServer {
           return;
         }
 
-        const serviceTier = msg.serviceTier === "fast" ? "fast" : "standard";
+        const process = session.process as CodexProcess;
+        const model = session.codexSettings?.model ?? process.model;
+        const tierError = this.codexServiceTierError(model, msg.serviceTier);
+        if (tierError) {
+          this.send(ws, { type: "error", sessionId: msg.sessionId,
+            errorCode: "set_codex_speed_rejected", message: tierError });
+          break;
+        }
+        const serviceTier = normalizeCodexServiceTierForClient(msg.serviceTier);
         if (session.codexSettings?.serviceTier === serviceTier) break;
 
-        const process = session.process as CodexProcess;
         process.setServiceTier(serviceTier);
         session.codexSettings = {
           ...(session.codexSettings ?? {}),
@@ -4218,6 +5031,51 @@ export class BridgeWebSocketServer {
         this.broadcastSessionList();
         console.log(
           `[ws] set_codex_speed(codex): serviceTier=${serviceTier}`,
+        );
+        break;
+      }
+
+      case "set_claude_settings": {
+        const session = this.resolveSession(msg.sessionId);
+        if (!session || session.provider !== "claude") {
+          this.send(ws, {
+            type: "error",
+            sessionId: msg.sessionId,
+            message: "No active Claude session.",
+            errorCode: "set_claude_settings_unsupported",
+          });
+          break;
+        }
+        const claudeProcess = session.process as SdkProcess;
+        try {
+          await claudeProcess.updateSettings({
+            ...(msg.model !== undefined ? { model: msg.model.trim() } : {}),
+            ...(msg.effort !== undefined ? { effort: msg.effort } : {}),
+            ...(msg.fastMode !== undefined ? { fastMode: msg.fastMode } : {}),
+            ...(msg.ultracode !== undefined
+              ? { ultracode: msg.ultracode }
+              : {}),
+          });
+        } catch (err) {
+          this.send(ws, {
+            type: "error",
+            sessionId: msg.sessionId,
+            message: `Failed to change Claude settings: ${err instanceof Error ? err.message : String(err)}`,
+            errorCode: "set_claude_settings_rejected",
+          });
+          // Re-sync the requester with the settings still in effect.
+          this.sendClaudeCurrentSettings(ws, session.id, session);
+          break;
+        }
+        session.lastActivityAt = new Date();
+        this.broadcastSessionMessage(
+          session.id,
+          this.claudeSettingsMessage(session.id, session),
+        );
+        this.broadcastSessionList();
+        const settings = claudeProcess.settings;
+        console.log(
+          `[ws] set_claude_settings: model=${settings.model ?? "default"} effort=${settings.effort ?? ""} fast=${settings.fastMode === true} ultracode=${settings.ultracode === true}`,
         );
         break;
       }
@@ -4374,7 +5232,9 @@ export class BridgeWebSocketServer {
           const worktreeBranch = session.worktreeBranch;
           const sessionName = session.name;
           const permissionMode = (session.process as SdkProcess).permissionMode;
-          const model = (session.process as SdkProcess).model;
+          // Use the user's selected settings (alias, effort, fast mode) rather
+          // than the resolved runtime model id, matching fork behavior.
+          const settings = (session.process as SdkProcess).settings ?? {};
           const workspace = this.workspaceForRuntimeSession(session);
 
           this.destroySession(oldSessionId);
@@ -4387,7 +5247,10 @@ export class BridgeWebSocketServer {
             {
               sessionId: claudeSessionId,
               permissionMode,
-              model,
+              ...(settings.model ? { model: settings.model } : {}),
+              ...(settings.effort ? { effort: settings.effort } : {}),
+              ...(settings.fastMode ? { fastMode: true } : {}),
+              ...(settings.ultracode ? { ultracode: true } : {}),
               sandboxEnabled: newEnabled,
               additionalDirectories: workspace?.rootPaths.slice(1),
             },
@@ -4702,6 +5565,8 @@ export class BridgeWebSocketServer {
           const claudeSessionId = session.claudeSessionId;
           const projectPath = session.projectPath;
           const permissionMode = sdkProc.permissionMode;
+          const settings = sdkProc.settings ?? {};
+          const sandboxEnabled = session.sandboxEnabled;
           const worktreePath = session.worktreePath;
           const worktreeBranch = session.worktreeBranch;
           const workspace = this.workspaceForRuntimeSession(session);
@@ -4719,6 +5584,11 @@ export class BridgeWebSocketServer {
                   }
                 : {}),
               permissionMode,
+              ...(settings.model ? { model: settings.model } : {}),
+              ...(settings.effort ? { effort: settings.effort } : {}),
+              ...(settings.fastMode ? { fastMode: true } : {}),
+              ...(settings.ultracode ? { ultracode: true } : {}),
+              ...(sandboxEnabled !== undefined ? { sandboxEnabled } : {}),
               initialInput: planText || undefined,
               additionalDirectories: workspace?.rootPaths.slice(1),
             },
@@ -4947,17 +5817,23 @@ export class BridgeWebSocketServer {
             type: "history",
             messages: [...splitPastHistory.historyMessages, ...session.history],
             sessionId: msg.sessionId,
+            ...(session.olderHistoryDropped
+              ? { olderHistoryAvailable: true }
+              : {}),
           } as Record<string, unknown>);
           if (session.provider === "codex") {
             this.sendCodexCurrentSettings(ws, msg.sessionId, session);
+          } else {
+            this.sendClaudeCurrentSettings(ws, msg.sessionId, session);
           }
           this.send(ws, {
             type: "status",
             status: session.status,
             sessionId: msg.sessionId,
           } as Record<string, unknown>);
+          this.sendQueueState(ws, msg.sessionId, session);
+          this.sendBackgroundTasksState(ws, msg.sessionId, session);
           if (session.provider === "codex") {
-            this.sendCodexQueueState(ws, msg.sessionId, session);
             this.sendCodexGoalState(ws, msg.sessionId, session);
           }
 
@@ -4968,6 +5844,54 @@ export class BridgeWebSocketServer {
             message: `Session ${msg.sessionId} not found`,
             errorCode: "session_not_found",
             sessionId: msg.sessionId,
+          });
+        }
+        break;
+      }
+
+      case "get_session_transcript": {
+        const session = this.sessionManager.get(msg.sessionId);
+        if (!session) {
+          this.send(ws, {
+            type: "error",
+            message: `Session ${msg.sessionId} not found`,
+            errorCode: "session_not_found",
+            sessionId: msg.sessionId,
+            requestId: msg.requestId,
+          });
+          break;
+        }
+        try {
+          const transcript = await this.sessionTranscriptMessages(session);
+          const { start, end } = transcriptPageRange(
+            transcript.map((message) => message.role),
+            msg,
+            TRANSCRIPT_PAGE_DEFAULT,
+            TRANSCRIPT_PAGE_MAX,
+          );
+          const { pastMessages } = await this.preparePastHistoryMessages(
+            session,
+            transcript.slice(start, end),
+          );
+          this.send(ws, {
+            type: "session_transcript",
+            sessionId: msg.sessionId,
+            requestId: msg.requestId,
+            provider: session.provider === "codex" ? "codex" : "claude",
+            startIndex: start,
+            endIndex: end,
+            total: transcript.length,
+            messages: pastMessages,
+          });
+        } catch (err) {
+          this.send(ws, {
+            type: "error",
+            message: `Failed to read session transcript: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+            errorCode: "session_transcript_failed",
+            sessionId: msg.sessionId,
+            requestId: msg.requestId,
           });
         }
         break;
@@ -5085,7 +6009,8 @@ export class BridgeWebSocketServer {
             ...(result.kind === "snapshot" ? { reason: result.reason } : {}),
           } as ServerMessage);
           this.sendCodexCurrentSettings(ws, msg.sessionId, session);
-          this.sendCodexQueueState(ws, msg.sessionId, session);
+          this.sendQueueState(ws, msg.sessionId, session);
+          this.sendBackgroundTasksState(ws, msg.sessionId, session);
           this.sendCodexGoalState(ws, msg.sessionId, session);
           break;
         }
@@ -5126,7 +6051,13 @@ export class BridgeWebSocketServer {
             messages: result.entries,
             status: session.status,
             ...(result.kind === "snapshot" ? { reason: result.reason } : {}),
+            ...(result.kind === "snapshot" && session.olderHistoryDropped
+              ? { olderHistoryAvailable: true }
+              : {}),
           } as ServerMessage);
+          this.sendClaudeCurrentSettings(ws, msg.sessionId, session);
+          this.sendQueueState(ws, msg.sessionId, session);
+          this.sendBackgroundTasksState(ws, msg.sessionId, session);
         } else {
           this.send(ws, {
             type: "error",
@@ -5226,7 +6157,7 @@ export class BridgeWebSocketServer {
       }
 
       case "get_usage": {
-        fetchAllUsage()
+        fetchAllUsage({ readClaudeLive: () => this.readClaudePlanUsage() })
           .then((providers) => {
             this.send(ws, { type: "usage_result", providers } as Record<
               string,
@@ -5258,6 +6189,8 @@ export class BridgeWebSocketServer {
       }
 
       case "list_recent_sessions": {
+        // Load the Codex thread snapshot ahead of the first search / filter.
+        if (msg.provider !== "claude") this.codexThreadSnapshot.warm();
         const isProjectScopedRequest = msg.requestScope === "project";
         const currentRequestId = this.recentSessionsRequestIds.get(ws) ?? 0;
         const requestId = isProjectScopedRequest
@@ -5267,7 +6200,7 @@ export class BridgeWebSocketServer {
           this.recentSessionsRequestIds.set(ws, requestId);
         }
         this.listRecentSessionsCoalesced(msg)
-          .then(({ sessions, hasMore }) => {
+          .then(({ sessions, hasMore, pinnedSessions }) => {
             // List refreshes supersede older list responses. Project responses
             // are correlated independently by requestId on the client.
             if (
@@ -5280,6 +6213,7 @@ export class BridgeWebSocketServer {
               type: "recent_sessions",
               sessions,
               hasMore,
+              ...(pinnedSessions ? { pinnedSessions } : {}),
               limit: msg.limit,
               offset: msg.offset,
               projectPath: msg.projectPath,
@@ -5373,6 +6307,16 @@ export class BridgeWebSocketServer {
       case "resume_session": {
         const resumeStartedAt = Date.now();
         const provider = msg.provider ?? "claude";
+        const tierError = provider === "codex"
+          ? this.codexServiceTierError(msg.model, msg.serviceTier) : undefined;
+        if (tierError) {
+          this.sendResumeFailed(ws, { provider, sourceSessionId: msg.sessionId,
+            projectPath: msg.projectPath, resumeRequestId: msg.resumeRequestId });
+          this.send(ws, { type: "error", sessionId: msg.sessionId,
+            requestId: msg.resumeRequestId,
+            errorCode: "codex_service_tier_unavailable", message: tierError });
+          break;
+        }
         const storedAssignment = this.workspaceStore?.getAssignment(
           provider,
           msg.sessionId,
@@ -5520,13 +6464,33 @@ export class BridgeWebSocketServer {
               wtMapping?.projectPath ?? resumeProjectPath,
               this.platform,
             );
-          const effectiveProfile = msg.profile
-            ? await this.resolveCodexResumeProfile(
-                msg.profile,
-                sessionRefId,
-                effectiveProjectPath,
-              )
-            : undefined;
+          let effectiveProfile: string | undefined;
+          try {
+            effectiveProfile = msg.profile
+              ? await this.resolveCodexResumeProfile(
+                  msg.profile,
+                  sessionRefId,
+                  effectiveProjectPath,
+                )
+              : undefined;
+          } catch (err) {
+            console.error(
+              `[ws] Failed to resolve Codex profile on resume: ${err}`,
+            );
+            this.sendResumeFailed(ws, {
+              provider,
+              sourceSessionId: sessionRefId,
+              projectPath: effectiveProjectPath,
+              resumeRequestId: msg.resumeRequestId,
+            });
+            this.send(ws, {
+              type: "error",
+              sessionId: sessionRefId,
+              requestId: msg.resumeRequestId,
+              message: `Failed to resolve Codex profile: ${codexErrorMessage(err)}`,
+            });
+            break;
+          }
           const additionalWritableRoots =
             this.normalizeAdditionalWritableRoots(
               resumeAdditionalRoots,
@@ -5846,6 +6810,8 @@ export class BridgeWebSocketServer {
                 permissionMode: claudePermissionMode,
                 model: msg.model,
                 effort: msg.effort,
+                fastMode: msg.claudeFastMode,
+                ultracode: msg.claudeUltracode,
                 maxTurns: msg.maxTurns,
                 maxBudgetUsd: msg.maxBudgetUsd,
                 fallbackModel: msg.fallbackModel,
@@ -6043,7 +7009,20 @@ export class BridgeWebSocketServer {
           });
           return;
         }
+        if (msg.retract === true) {
+          this.interruptAndRetract(ws, session).catch((err) => {
+            console.warn(
+              `[ws] Failed to retract interrupted prompt: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
+          break;
+        }
         session.process.interrupt();
+        break;
+      }
+
+      case "edit_message": {
+        await this.editUserMessage(ws, msg);
         break;
       }
 
@@ -6085,7 +7064,7 @@ export class BridgeWebSocketServer {
           if (msg.type === "trust_project") {
             if (msg.sessionId) {
               const session = this.sessionManager.get(msg.sessionId);
-              if (!session || session.provider !== "codex" || session.codexQueuedInput ||
+              if (!session || session.provider !== "codex" || session.queuedInput ||
                   await realpath(session.worktreePath ?? session.projectPath) !== projectPath) {
                 throw new Error("Session is unavailable or has queued input");
               }
@@ -7576,7 +8555,12 @@ export class BridgeWebSocketServer {
       }
 
       case "fork": {
-        this.forkCodexSession(ws, msg.sessionId, msg.targetUuid).catch((err) => {
+        const forkSource = this.sessionManager.get(msg.sessionId);
+        const fork =
+          forkSource?.provider === "claude"
+            ? this.forkClaudeSession(ws, msg.sessionId, msg.targetUuid)
+            : this.forkCodexSession(ws, msg.sessionId, msg.targetUuid);
+        fork.catch((err) => {
           const errMsg = err instanceof Error ? err.message : String(err);
           this.send(ws, {
             type: "error",
@@ -7955,6 +8939,8 @@ export class BridgeWebSocketServer {
       sandboxMode: msg.sandboxMode,
       model: msg.model,
       effort: msg.effort,
+      fastMode: msg.claudeFastMode,
+      ultracode: msg.claudeUltracode,
       maxTurns: msg.maxTurns,
       maxBudgetUsd: msg.maxBudgetUsd,
       fallbackModel: msg.fallbackModel,
@@ -8192,7 +9178,10 @@ export class BridgeWebSocketServer {
     const queuedInputs = pendingResumes?.get(sourceSessionId) ?? [];
     pendingResumes?.delete(sourceSessionId);
     for (const input of queuedInputs) {
-      void this.handleClientMessage({ ...input, sessionId }, ws);
+      const message = { ...input, sessionId };
+      this.handleClientMessage(message, ws).catch((err: unknown) => {
+        this.reportClientMessageFailure(ws, message, err);
+      });
     }
   }
 
@@ -8232,6 +9221,42 @@ export class BridgeWebSocketServer {
    * Load the saved session name from CLI storage and set it on the SessionInfo.
    * Called after SessionManager.create() so that session_created carries the name.
    */
+  /**
+   * Rewrite skills in a new session's first prompt to the agent's trigger
+   * (`/` for Claude, `$` for Codex). The app converts later messages itself,
+   * but it cannot know the skills before the session starts. When the prompt
+   * contains a candidate and the skills are not cached yet, wait briefly for
+   * the provider to report them; on timeout the prompt is sent unchanged.
+   */
+  private async prepareInitialPrompt(
+    provider: "claude" | "codex",
+    effectiveCwd: string,
+    sessionId: string,
+    text: string,
+  ): Promise<{ text: string; skills: Array<{ name: string; path: string }> }> {
+    if (!hasForeignSkillTrigger(text, provider)) return { text, skills: [] };
+    const deadline = Date.now() + INITIAL_PROMPT_SKILL_WAIT_MS;
+    let catalog = catalogFromCachedCommands(
+      provider,
+      this.sessionManager.getCachedCommands(provider, effectiveCwd),
+    );
+    while (
+      !catalog &&
+      Date.now() < deadline &&
+      this.sessionManager.get(sessionId)
+    ) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, INITIAL_PROMPT_SKILL_POLL_MS),
+      );
+      catalog = catalogFromCachedCommands(
+        provider,
+        this.sessionManager.getCachedCommands(provider, effectiveCwd),
+      );
+    }
+    if (!catalog) return { text, skills: [] };
+    return convertSkillTriggers(text, catalog);
+  }
+
   private async loadAndSetSessionName(
     session: SessionInfo | undefined,
     provider: string,
@@ -8345,10 +9370,12 @@ export class BridgeWebSocketServer {
       sessions,
       allowedDirs: this.allowedDirs,
       claudeModels: this.claudeModels,
+      claudeModelOptions: this.claudeModelOptions,
       claudeModelEfforts: this.claudeModelEfforts,
       codexModels: this.codexModels,
       codexModelReasoningEfforts: this.codexModelReasoningEfforts,
       codexModelServiceTiers: this.codexModelServiceTiers,
+      codexModelServiceTierMetadata: this.codexModelServiceTierMetadata,
       codexProfiles: this.codexProfiles,
       defaultCodexProfile: this.defaultCodexProfile,
       codexAutoReviewDisabled: this.codexAutoReviewDisabled,
@@ -8356,11 +9383,7 @@ export class BridgeWebSocketServer {
       bridgeInstanceId: this.promptHistoryStore?.bridgeInstanceId,
       protocolVersion: BRIDGE_PROTOCOL_MAX_VERSION,
       minimumProtocolVersion: BRIDGE_PROTOCOL_MIN_VERSION,
-      protocolCapabilities: [
-        "performance_mode_v1",
-        "project_request_correlation_v1",
-        "session_context_v1",
-      ],
+      protocolCapabilities: BRIDGE_PROTOCOL_CAPABILITIES,
     });
   }
 
@@ -8390,10 +9413,12 @@ export class BridgeWebSocketServer {
       sessions,
       allowedDirs: this.allowedDirs,
       claudeModels: this.claudeModels,
+      claudeModelOptions: this.claudeModelOptions,
       claudeModelEfforts: this.claudeModelEfforts,
       codexModels: this.codexModels,
       codexModelReasoningEfforts: this.codexModelReasoningEfforts,
       codexModelServiceTiers: this.codexModelServiceTiers,
+      codexModelServiceTierMetadata: this.codexModelServiceTierMetadata,
       codexProfiles: this.codexProfiles,
       defaultCodexProfile: this.defaultCodexProfile,
       codexAutoReviewDisabled: this.codexAutoReviewDisabled,
@@ -8401,11 +9426,7 @@ export class BridgeWebSocketServer {
       bridgeInstanceId: this.promptHistoryStore?.bridgeInstanceId,
       protocolVersion: BRIDGE_PROTOCOL_MAX_VERSION,
       minimumProtocolVersion: BRIDGE_PROTOCOL_MIN_VERSION,
-      protocolCapabilities: [
-        "performance_mode_v1",
-        "project_request_correlation_v1",
-        "session_context_v1",
-      ],
+      protocolCapabilities: BRIDGE_PROTOCOL_CAPABILITIES,
     });
   }
 
@@ -8581,6 +9602,7 @@ export class BridgeWebSocketServer {
 
   private destroySession(sessionId: string): void {
     this.flushSessionDeltaBatches(sessionId);
+    this.completionGate.discard(sessionId);
     this.pendingSessionWorkspaces.delete(sessionId);
     this.sessionManager.destroy(sessionId);
   }
@@ -8642,11 +9664,13 @@ export class BridgeWebSocketServer {
 
   private async listRecentSessions(
     msg: Extract<ClientMessage, { type: "list_recent_sessions" }>,
-  ): Promise<{ sessions: unknown[]; hasMore: boolean }> {
+  ): Promise<RecentSessionsListing> {
+    const pinnedKeys = pinnedSessionKeysForRecentRequest(msg);
+    const listProjects = () => this.workspaceStore?.listProjects() ?? [];
     const primaryProjectIds = new Set(
       msg.projectPath === undefined
         ? []
-        : (this.workspaceStore?.listProjects() ?? [])
+        : listProjects()
             .filter((project) => project.rootPaths[0] === msg.projectPath)
             .map((project) => project.id),
     );
@@ -8654,80 +9678,251 @@ export class BridgeWebSocketServer {
       msg.projectId !== undefined ||
       msg.workspaceKind !== undefined ||
       primaryProjectIds.size > 0;
-    if (!workspaceFilterRequested) {
-      const rawResult = await this.listRecentSessionsRaw(msg);
+    const filtersRequested = recentSessionsFiltersRequested(msg);
+    // Plain listings switch to the index + thread snapshot once the snapshot
+    // is loaded; until then (first listing after start) app-server thread/list
+    // answers without waiting for the full snapshot.
+    if (
+      !workspaceFilterRequested &&
+      !filtersRequested &&
+      !this.codexThreadSnapshot.isReady
+    ) {
+      const rawResult = await this.listRecentSessionsRaw(msg, pinnedKeys);
       const enriched = rawResult.sessions.map((session) =>
         this.enrichRecentSessionWorkspace(session),
       );
-      return { sessions: enriched, hasMore: rawResult.hasMore };
+      return {
+        sessions: enriched,
+        hasMore: rawResult.hasMore,
+        ...(rawResult.pinnedSessions
+          ? {
+              pinnedSessions: rawResult.pinnedSessions.map((session) =>
+                this.enrichRecentSessionWorkspace(session),
+              ),
+            }
+          : {}),
+      };
     }
 
-    const matchesWorkspace = (session: unknown): boolean => {
-      const value = session as {
-        projectPath?: unknown;
-        workspace?: Record<string, unknown>;
-      };
-      const workspace = value.workspace;
-      if (msg.projectId && workspace?.projectId !== msg.projectId) return false;
-      if (msg.workspaceKind && workspace?.kind !== msg.workspaceKind) return false;
-      if (msg.projectPath !== undefined) {
-        const matchesPrimaryProject =
-          typeof workspace?.projectId === "string" &&
-          primaryProjectIds.has(workspace.projectId);
-        if (
-          value.projectPath !== msg.projectPath &&
-          !matchesPrimaryProject
-        ) {
-          return false;
-        }
-      }
-      return true;
-    };
+    // pinnedOnly: the page already contains every pinned session, so a first
+    // list page that sent pins answers with an empty extras list.
+    const pinnedOnlyExtras =
+      msg.pinnedOnly === true &&
+      msg.requestScope !== "project" &&
+      (msg.offset ?? 0) === 0 &&
+      (msg.pinnedSessions?.length ?? 0) > 0
+        ? { pinnedSessions: [] as unknown[] }
+        : {};
+    const pinnedOnlyKeys = pinnedOnlySessionKeys(msg);
+    if (
+      pinnedOnlyKeys &&
+      pinnedOnlyKeys.size === 0 &&
+      (msg.pinnedProjects?.length ?? 0) === 0
+    ) {
+      return { sessions: [], hasMore: false, ...pinnedOnlyExtras };
+    }
+    const matchesWorkspace = buildRecentSessionPredicate(
+      msg,
+      listProjects,
+      pinnedOnlyKeys,
+    );
     const offset = msg.offset ?? 0;
     const limit = msg.limit ?? 20;
     const requiredMatches = offset + limit + 1;
-    let filtered: unknown[];
-    if (msg.provider === "codex") {
-      filtered = await this.listWorkspaceFilteredCodexSessions(
-        msg,
-        matchesWorkspace,
-        requiredMatches,
-      );
-    } else if (msg.provider === "claude") {
-      filtered = await this.listWorkspaceFilteredIndexedSessions(
-        msg,
-        matchesWorkspace,
-        requiredMatches,
-      );
-    } else {
-      // The filesystem index includes both providers and is also the fallback
-      // for Codex rollouts not returned by app-server. Merge it with one
-      // cursor-preserving app-server scan for the freshest Codex metadata.
-      const [indexed, codex] = await Promise.all([
-        this.listWorkspaceFilteredIndexedSessions(
-          msg,
-          matchesWorkspace,
-          requiredMatches,
-        ),
-        this.listWorkspaceFilteredCodexSessions(
-          { ...msg, provider: "codex" },
-          matchesWorkspace,
-          requiredMatches,
-        ),
-      ]);
-      filtered = mergeRecentSessionPages([...codex, ...indexed]);
+    // The filesystem index answers for both providers (parsed rollouts are
+    // cached); threads Codex only kept as compressed rollouts come from the
+    // thread snapshot. Paging app-server thread/list per request took
+    // seconds for searches, sparse results and older date ranges, and it
+    // cannot search transcripts at all.
+    const depthKey = isRecentContentSearch(msg)
+      ? recentSessionsCoalescingKey({ ...msg, offset: 0, limit: undefined })
+      : undefined;
+    const maxFiles = depthKey
+      ? this.contentSearchMaxFiles(depthKey, offset)
+      : undefined;
+    const indexed = await this.listWorkspaceFilteredIndexedSessions(
+      msg,
+      matchesWorkspace,
+      requiredMatches,
+      pinnedKeys,
+      maxFiles,
+    );
+    if (depthKey && indexed.filesRead !== undefined) {
+      this.contentSearchDepth.set(depthKey, {
+        files: indexed.filesRead,
+        at: Date.now(),
+      });
     }
+    const archived = await this.listSnapshotOnlyCodexSessions(
+      msg,
+      matchesWorkspace,
+      requiredMatches,
+      pinnedKeys,
+    );
+    // Index entries come first so they win the dedupe (richer metadata).
+    const filtered = mergeRecentSessionPages([
+      ...indexed.sessions,
+      ...archived.sessions,
+    ]);
+    const pinnedSessions = indexed.pinnedSessions
+      ? mergeRecentSessionPages([
+          ...indexed.pinnedSessions,
+          ...archived.pinnedSessions,
+        ])
+      : undefined;
+    const incomplete = indexed.incomplete;
     return {
       sessions: filtered.slice(offset, offset + limit),
-      hasMore: filtered.length > offset + limit,
+      hasMore: filtered.length > offset + limit || incomplete,
+      ...(pinnedSessions ? { pinnedSessions } : pinnedOnlyExtras),
     };
+  }
+
+  /**
+   * Resolve pinned Codex threads for a listing backed by app-server
+   * `thread/list`. Parses only the pinned rollout files instead of paging the
+   * whole thread list, and never fails the page itself.
+   */
+  private async listPinnedCodexSessions(
+    msg: ListRecentSessionsMessage,
+    pinnedKeys: ReadonlySet<string>,
+    matchesWorkspace?: (session: unknown) => boolean,
+  ): Promise<unknown[]> {
+    const threadIds = (msg.pinnedSessions ?? [])
+      .filter(
+        (pin) =>
+          pin.provider === "codex" &&
+          pinnedKeys.has(recentSessionIdentityKey(pin.provider, pin.sessionId)),
+      )
+      .map((pin) => pin.sessionId);
+    if (threadIds.length === 0) return [];
+    try {
+      const entries = await getPinnedCodexSessions({
+        threadIds,
+        // The workspace-filtered listing does not pre-filter thread/list by cwd.
+        projectPath: matchesWorkspace ? undefined : msg.projectPath,
+        namedOnly: msg.namedOnly,
+        searchQuery: msg.searchQuery,
+        archivedSessionIds: this.archiveStore.archivedIds(),
+        sessionFilter: matchesWorkspace
+          ? (session) =>
+              matchesWorkspace(this.enrichRecentSessionWorkspace(session))
+          : undefined,
+      });
+      return entries.map((entry) => this.enrichRecentSessionWorkspace(entry));
+    } catch (err) {
+      console.warn(`[ws] Failed to resolve pinned Codex sessions: ${err}`);
+      return [];
+    }
+  }
+
+  /**
+   * Codex threads from the app-server snapshot that the index cannot see
+   * (only compressed `.jsonl.zst` rollouts), filtered like index entries.
+   * Their search covers metadata only (name, preview, folder, branch).
+   * `pinnedSessions` lists matching pinned threads regardless of [limit].
+   */
+  private async listSnapshotOnlyCodexSessions(
+    msg: ListRecentSessionsMessage,
+    matchesWorkspace: (session: unknown) => boolean,
+    limit: number,
+    pinnedKeys?: ReadonlySet<string>,
+  ): Promise<{ sessions: unknown[]; pinnedSessions: unknown[] }> {
+    if (msg.provider === "claude") return { sessions: [], pinnedSessions: [] };
+    // Never wait for the first snapshot load (10-20 s on large histories,
+    // longer than the app's request timeout): answer from the index alone
+    // until it is ready.
+    if (!this.codexThreadSnapshot.isReady) {
+      this.codexThreadSnapshot.warm();
+      return { sessions: [], pinnedSessions: [] };
+    }
+    const [threads, indexedIds, names] = await Promise.all([
+      this.codexThreadSnapshot.get(),
+      listIndexedCodexThreadIds(),
+      loadCodexSessionNames(),
+    ]);
+    const archivedIds = this.archiveStore.archivedIds();
+    const query = msg.searchQuery?.trim() ? msg.searchQuery : undefined;
+    const sessions: unknown[] = [];
+    const pinnedSessions: unknown[] = [];
+    for (const thread of threads) {
+      if (indexedIds.has(thread.id.toLowerCase())) continue;
+      if (archivedIds.has(thread.id)) continue;
+      const name = names.get(thread.id) ?? thread.name ?? undefined;
+      if (msg.namedOnly && !name) continue;
+      let entry: Record<string, unknown> = {
+        ...codexThreadToRecentSession(thread),
+        ...(name ? { name } : {}),
+      };
+      if (query) {
+        const field = recentSessionMetadataSearchField(
+          entry as Parameters<typeof recentSessionMetadataSearchField>[0],
+          query,
+        );
+        if (!field) continue;
+        entry = { ...entry, searchMatch: { field } };
+      }
+      const enriched = this.enrichRecentSessionWorkspace(entry);
+      if (!matchesWorkspace(enriched)) continue;
+      if (pinnedKeys?.has(recentSessionIdentityKey("codex", thread.id))) {
+        pinnedSessions.push(enriched);
+      }
+      if (sessions.length < limit) sessions.push(enriched);
+    }
+    return { sessions, pinnedSessions };
+  }
+
+  /** Page through every Codex thread with one standalone app-server. */
+  private async loadAllCodexThreads(
+    onPage: (page: { data: CodexThreadSummary[]; nextCursor: string | null }) => void,
+  ): Promise<void> {
+    const process = await this.createStandaloneCodexProcess(undefined);
+    try {
+      let cursor: string | null | undefined;
+      do {
+        const request: Parameters<CodexProcess["listThreads"]>[0] = {
+          limit: 500,
+          sourceKinds: CODEX_RECENT_THREAD_SOURCE_KINDS,
+        };
+        if (cursor != null) request.cursor = cursor;
+        const result = await process.listThreads(request);
+        onPage(result);
+        cursor = result.nextCursor;
+      } while (cursor != null);
+    } finally {
+      process.stop();
+    }
+  }
+
+  /**
+   * File bound for a content search page: the base budget for the first
+   * page, and the previous page's depth plus one budget for later pages.
+   */
+  private contentSearchMaxFiles(depthKey: string, offset: number): number {
+    const now = Date.now();
+    for (const [key, value] of this.contentSearchDepth) {
+      if (now - value.at > 10 * 60_000) this.contentSearchDepth.delete(key);
+    }
+    if (offset === 0) {
+      this.contentSearchDepth.delete(depthKey);
+      return CONTENT_SEARCH_MAX_FILES;
+    }
+    const previous = this.contentSearchDepth.get(depthKey)?.files ?? 0;
+    return previous + CONTENT_SEARCH_MAX_FILES;
   }
 
   private async listWorkspaceFilteredIndexedSessions(
     msg: Extract<ClientMessage, { type: "list_recent_sessions" }>,
     matchesWorkspace: (session: unknown) => boolean,
     limit: number,
-  ): Promise<unknown[]> {
+    pinnedKeys?: ReadonlySet<string>,
+    contentSearchMaxFiles?: number,
+  ): Promise<{
+    sessions: unknown[];
+    pinnedSessions?: unknown[];
+    incomplete: boolean;
+    filesRead?: number;
+  }> {
     const result = await getAllRecentSessions({
       limit,
       offset: 0,
@@ -8736,104 +9931,46 @@ export class BridgeWebSocketServer {
       provider: msg.provider,
       namedOnly: msg.namedOnly,
       searchQuery: msg.searchQuery,
+      ...(isRecentContentSearch(msg) ? { searchContent: true } : {}),
+      ...(contentSearchMaxFiles !== undefined
+        ? { contentSearchLimits: { maxFiles: contentSearchMaxFiles } }
+        : {}),
       archivedSessionIds: this.archiveStore.archivedIds(),
       sessionFilter: (session) =>
         matchesWorkspace(this.enrichRecentSessionWorkspace(session)),
+      pinnedSessionKeys: pinnedKeys,
     });
-    return result.sessions.map((session) =>
-      this.enrichRecentSessionWorkspace(session),
+    const pinnedSessions = pinnedIndexEntriesAsListingShape(
+      result.pinnedSessions,
     );
-  }
-
-  private async listWorkspaceFilteredCodexSessions(
-    msg: Extract<ClientMessage, { type: "list_recent_sessions" }>,
-    matchesWorkspace: (session: unknown) => boolean,
-    limit: number,
-  ): Promise<unknown[]> {
-    try {
-      return await this.listWorkspaceFilteredCodexThreads(
-        msg,
-        matchesWorkspace,
-        limit,
-      );
-    } catch (err) {
-      console.warn(
-        `[ws] Codex thread/list failed, falling back to rollout scan: ${err}`,
-      );
-      return this.listWorkspaceFilteredIndexedSessions(
-        { ...msg, provider: "codex" },
-        matchesWorkspace,
-        limit,
-      );
-    }
-  }
-
-  private async listWorkspaceFilteredCodexThreads(
-    msg: Extract<ClientMessage, { type: "list_recent_sessions" }>,
-    matchesWorkspace: (session: unknown) => boolean,
-    limit: number,
-  ): Promise<unknown[]> {
-    // A busy app-server can be blocked on a large thread/read or a running turn.
-    // Discovery must remain independent so one session cannot hide the list.
-    const process = await this.createStandaloneCodexProcess(undefined);
-
-    try {
-      const archivedIds = this.archiveStore.archivedIds();
-      const matchingThreads: CodexThreadSummary[] = [];
-      let cursor: string | null | undefined;
-
-      do {
-        const request: Parameters<CodexProcess["listThreads"]>[0] = {
-          limit: 500,
-          searchTerm: msg.searchQuery,
-          sourceKinds: CODEX_RECENT_THREAD_SOURCE_KINDS,
-        };
-        if (cursor != null) request.cursor = cursor;
-
-        const result = await process.listThreads(request);
-        for (const thread of result.data) {
-          if (archivedIds.has(thread.id)) continue;
-          if (msg.namedOnly && !thread.name) continue;
-          const workspaceProbe = this.enrichRecentSessionWorkspace({
-            provider: "codex",
-            sessionId: thread.id,
-            projectPath: thread.cwd,
-          });
-          if (!matchesWorkspace(workspaceProbe)) continue;
-          matchingThreads.push(thread);
-          if (matchingThreads.length >= limit) break;
-        }
-        cursor = result.nextCursor;
-      } while (matchingThreads.length < limit && cursor != null);
-
-      const [indexedById, threadNames] = await Promise.all([
-        getCodexSessionIndexMetadata(
-          matchingThreads.map((thread) => thread.id),
-        ),
-        loadCodexSessionNames(),
-      ]);
-      return matchingThreads.map((thread) =>
-        this.enrichRecentSessionWorkspace({
-          ...codexThreadToRecentSession(thread, indexedById.get(thread.id)),
-          ...(threadNames.get(thread.id)
-            ? { name: threadNames.get(thread.id) }
-            : {}),
-        }),
-      );
-    } finally {
-      process.stop();
-    }
+    return {
+      sessions: result.sessions.map((session) =>
+        this.enrichRecentSessionWorkspace(session),
+      ),
+      ...(pinnedSessions
+        ? {
+            pinnedSessions: pinnedSessions.map((session) =>
+              this.enrichRecentSessionWorkspace(session),
+            ),
+          }
+        : {}),
+      incomplete: result.contentSearchIncomplete === true,
+      ...(result.contentSearchFilesRead !== undefined
+        ? { filesRead: result.contentSearchFilesRead }
+        : {}),
+    };
   }
 
   private async listRecentSessionsRaw(
     msg: Extract<ClientMessage, { type: "list_recent_sessions" }>,
-  ): Promise<{ sessions: unknown[]; hasMore: boolean }> {
+    pinnedKeys?: ReadonlySet<string>,
+  ): Promise<RecentSessionsListing> {
     if (msg.provider === "codex") {
-      return this.listRecentCodexSessions(msg);
+      return this.listRecentCodexSessions(msg, pinnedKeys);
     }
 
     if (!msg.provider) {
-      return this.listRecentAllProviderSessions(msg);
+      return this.listRecentAllProviderSessions(msg, pinnedKeys);
     }
 
     return getAllRecentSessions({
@@ -8844,6 +9981,7 @@ export class BridgeWebSocketServer {
       namedOnly: msg.namedOnly,
       searchQuery: msg.searchQuery,
       archivedSessionIds: this.archiveStore.archivedIds(),
+      pinnedSessionKeys: pinnedKeys,
     });
   }
 
@@ -8968,17 +10106,8 @@ export class BridgeWebSocketServer {
 
   private listRecentSessionsCoalesced(
     msg: Extract<ClientMessage, { type: "list_recent_sessions" }>,
-  ): Promise<{ sessions: unknown[]; hasMore: boolean }> {
-    const key = JSON.stringify({
-      limit: msg.limit ?? null,
-      offset: msg.offset ?? null,
-      projectPath: msg.projectPath ?? null,
-      projectId: msg.projectId ?? null,
-      workspaceKind: msg.workspaceKind ?? null,
-      provider: msg.provider ?? null,
-      namedOnly: msg.namedOnly ?? null,
-      searchQuery: msg.searchQuery ?? null,
-    });
+  ): Promise<RecentSessionsListing> {
+    const key = recentSessionsCoalescingKey(msg);
     const existing = this.recentSessionsInFlight.get(key);
     if (existing) return existing;
 
@@ -8995,7 +10124,8 @@ export class BridgeWebSocketServer {
 
   private async listRecentAllProviderSessions(
     msg: Extract<ClientMessage, { type: "list_recent_sessions" }>,
-  ): Promise<{ sessions: unknown[]; hasMore: boolean }> {
+    pinnedKeys?: ReadonlySet<string>,
+  ): Promise<RecentSessionsListing> {
     const limit = msg.limit ?? 20;
     const offset = msg.offset ?? 0;
     const sourceLimit = offset + limit;
@@ -9008,6 +10138,9 @@ export class BridgeWebSocketServer {
         namedOnly: msg.namedOnly,
         searchQuery: msg.searchQuery,
         archivedSessionIds: this.archiveStore.archivedIds(),
+        // Both providers are already scanned here, so pinned Codex threads
+        // come from the same pass (no extra lookup).
+        pinnedSessionKeys: pinnedKeys,
       }),
       this.listRecentCodexSessions({
         ...msg,
@@ -9022,20 +10155,29 @@ export class BridgeWebSocketServer {
       ...scanResult.sessions,
     ]);
 
+    const pinnedSessions = pinnedIndexEntriesAsListingShape(
+      scanResult.pinnedSessions,
+    );
     return {
       sessions: merged.slice(offset, offset + limit),
       hasMore:
         merged.length > offset + limit ||
         scanResult.hasMore ||
         codexResult.hasMore,
+      ...(pinnedSessions ? { pinnedSessions } : {}),
     };
   }
 
   private async listRecentCodexSessions(
     msg: Extract<ClientMessage, { type: "list_recent_sessions" }>,
-  ): Promise<{ sessions: unknown[]; hasMore: boolean }> {
+    pinnedKeys?: ReadonlySet<string>,
+  ): Promise<RecentSessionsListing> {
     try {
-      return await this.listRecentCodexThreads(msg);
+      const [page, pinnedSessions] = await Promise.all([
+        this.listRecentCodexThreads(msg),
+        pinnedKeys ? this.listPinnedCodexSessions(msg, pinnedKeys) : undefined,
+      ]);
+      return { ...page, ...(pinnedSessions ? { pinnedSessions } : {}) };
     } catch (err) {
       console.warn(
         `[ws] Codex thread/list failed, falling back to rollout scan: ${err}`,
@@ -9048,6 +10190,7 @@ export class BridgeWebSocketServer {
         namedOnly: msg.namedOnly,
         searchQuery: msg.searchQuery,
         archivedSessionIds: this.archiveStore.archivedIds(),
+        pinnedSessionKeys: pinnedKeys,
       });
     }
   }
@@ -9161,6 +10304,12 @@ export class BridgeWebSocketServer {
 
   private applyClaudeModels(models: ClaudeModelMetadata[]): void {
     this.claudeModels = models.map((model) => model.model);
+    this.claudeModelOptions = models.map((model) => ({
+      value: model.model,
+      ...(model.displayName ? { displayName: model.displayName } : {}),
+      ...(model.description ? { description: model.description } : {}),
+      ...(model.supportsFastMode ? { supportsFastMode: true } : {}),
+    }));
     this.claudeModelEfforts = Object.fromEntries(
       models.map((model) => [model.model, model.effortLevels]),
     );
@@ -9168,6 +10317,7 @@ export class BridgeWebSocketServer {
 
   private applyFallbackClaudeModels(): void {
     this.claudeModels = FALLBACK_CLAUDE_MODELS;
+    this.claudeModelOptions = FALLBACK_CLAUDE_MODEL_OPTIONS;
     this.claudeModelEfforts = { ...FALLBACK_CLAUDE_MODEL_EFFORTS };
   }
 
@@ -9219,14 +10369,34 @@ export class BridgeWebSocketServer {
     this.codexModelServiceTiers = Object.fromEntries(
       models.map((model) => [
         model.model,
-        (model.supportedServiceTiers?.length ?? 0) > 0
-          ? model.supportedServiceTiers
-          : fallbackCodexServiceTiers(model.model),
+        model.supportedServiceTiers ?? fallbackCodexServiceTiers(model.model),
       ]),
+    );
+    this.codexModelServiceTierMetadata = Object.fromEntries(
+      models.map((model) => [model.model, model.serviceTierMetadata ?? []]),
     );
   }
 
+  /** Validate candidates only. Codex still enforces account entitlement. */
+  private codexServiceTierError(
+    model: string | undefined,
+    value: string | undefined,
+  ): string | undefined {
+    if (value === undefined) return undefined;
+    // A profile or a resumed thread may supply the model. CodexProcess validates
+    // its resolved model/tier before emitting init or accepting the first turn.
+    if (model === undefined) return undefined;
+    const tier = normalizeCodexServiceTierForClient(value);
+    // Standard/Fast are legacy settings; older clients normalize Fast after
+    // changing models. Strict catalog validation applies to extended tiers.
+    if (tier === "standard" || tier === "fast") return undefined;
+    const supported = this.codexModelServiceTiers[model ?? ""];
+    if (isCodexServiceTierSupported(tier, supported ?? [])) return undefined;
+    return `Codex speed "${value}" is not available for model "${model ?? "unknown"}". Choose a supported speed.`;
+  }
+
   private applyFallbackCodexModels(): void {
+    this.codexModelServiceTierMetadata = {};
     this.codexModels = FALLBACK_CODEX_MODELS;
     this.codexModelReasoningEfforts = Object.fromEntries(
       FALLBACK_CODEX_MODELS.map((model) => [
@@ -9349,6 +10519,7 @@ export class BridgeWebSocketServer {
     try {
       const archivedIds = this.archiveStore.archivedIds();
       const visibleThreads: CodexThreadSummary[] = [];
+      const seenThreadIds = new Set<string>();
       let cursor: string | null | undefined;
       let hasServerMore = false;
       const targetCount = offset + limit;
@@ -9366,6 +10537,10 @@ export class BridgeWebSocketServer {
         for (const thread of result.data) {
           if (archivedIds.has(thread.id)) continue;
           if (msg.namedOnly && !thread.name) continue;
+          // A thread split into rollout segments can be listed more than
+          // once; keep the first (newest) entry.
+          if (seenThreadIds.has(thread.id)) continue;
+          seenThreadIds.add(thread.id);
           visibleThreads.push(thread);
         }
         cursor = result.nextCursor;
@@ -9377,12 +10552,17 @@ export class BridgeWebSocketServer {
         getCodexSessionIndexMetadata(pageThreads.map((thread) => thread.id)),
         loadCodexSessionNames(),
       ]);
-      const sessions = pageThreads.map((thread) => ({
-        ...codexThreadToRecentSession(thread, indexedById.get(thread.id)),
-        ...(threadNames.get(thread.id)
-          ? { name: threadNames.get(thread.id) }
-          : {}),
-      }));
+      const sessions = pageThreads.map((thread) =>
+        withRecentSessionMetadataSearchMatch(
+          {
+            ...codexThreadToRecentSession(thread, indexedById.get(thread.id)),
+            ...(threadNames.get(thread.id)
+              ? { name: threadNames.get(thread.id) }
+              : {}),
+          },
+          msg.searchQuery,
+        ),
+      );
       return {
         sessions,
         hasMore: hasServerMore || visibleThreads.length > offset + limit,
@@ -9593,10 +10773,50 @@ export class BridgeWebSocketServer {
       return;
     }
 
-    if (msg.type !== "result") return;
-    if (msg.subtype === "stopped") return;
-    if (msg.subtype !== "success" && msg.subtype !== "error") return;
+    if (msg.type === "status" || msg.type === "background_tasks") {
+      this.completionGate.update(sessionId);
+      return;
+    }
 
+    if (msg.type !== "result") return;
+    if (msg.subtype === "stopped") {
+      this.completionGate.discard(sessionId);
+      return;
+    }
+    if (msg.subtype !== "success" && msg.subtype !== "error") return;
+    if (msg.subtype === "error") {
+      this.completionGate.discard(sessionId);
+    } else if (
+      this.completionGate.hold(
+        sessionId,
+        msg,
+        this.keepsWorkingInBackground(sessionId),
+      )
+    ) {
+      return;
+    }
+    this.sendCompletionPush(sessionId, msg);
+  }
+
+  /**
+   * Claude keeps working after a result while background agents are live: it
+   * starts a follow-up turn when they report back. Shells and monitors may
+   * run indefinitely (dev servers), so they do not delay completion. Codex
+   * never starts a follow-up turn, so its background work is ignored too.
+   */
+  private keepsWorkingInBackground(sessionId: string): boolean {
+    const session = this.sessionManager.get(sessionId);
+    return (
+      session?.provider === "claude" &&
+      !!session.backgroundTasks?.some(isAgentBackgroundTask)
+    );
+  }
+
+  private sendCompletionPush(sessionId: string, msg: ResultServerMessage): void {
+    if (!this.pushRelay.isConfigured) return;
+    if (this.tokenLocales.size === 0) return;
+    const privacy = this.isPrivacyMode();
+    const label = privacy ? "" : this.sessionLabel(sessionId);
     const isSuccess = msg.subtype === "success";
     const eventType = isSuccess ? "session_completed" : "session_failed";
 
@@ -9703,6 +10923,18 @@ export class BridgeWebSocketServer {
     if (!("messages" in msg) || !Array.isArray(msg.messages)) return msg;
     const messages = msg.messages as unknown[];
 
+    if (msg.type === "past_history") {
+      if (this.clientSupportedServerMessages.get(ws)?.has("context_compaction")) {
+        return msg;
+      }
+      return {
+        ...(msg as unknown as Record<string, unknown>),
+        messages: messages.filter(
+          (message) => !isRecord(message) || message.role !== "compaction",
+        ),
+      };
+    }
+
     if (msg.type === "history") {
       return {
         ...(msg as unknown as Record<string, unknown>),
@@ -9766,12 +10998,12 @@ export class BridgeWebSocketServer {
     });
   }
 
-  private sendCodexQueueState(
+  private sendQueueState(
     ws: WebSocket,
     sessionId: string,
     session: SessionInfo,
   ): void {
-    const item = session.codexQueuedInput;
+    const item = session.queuedInput;
     this.sendConversationQueue(ws, {
       type: "conversation_queue",
       sessionId,
@@ -9779,6 +11011,9 @@ export class BridgeWebSocketServer {
       items: item
         ? [
             {
+              ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
+              ...(item.waitingForUsageLimit ? { waitingForUsageLimit: true } : {}),
+              ...(item.retryAt ? { retryAt: item.retryAt } : {}),
               itemId: item.itemId,
               text: item.text,
               createdAt: item.createdAt,
@@ -9790,6 +11025,18 @@ export class BridgeWebSocketServer {
           ]
         : [],
     } as Record<string, unknown>);
+  }
+
+  private sendBackgroundTasksState(
+    ws: WebSocket,
+    sessionId: string,
+    session: SessionInfo,
+  ): void {
+    this.send(ws, {
+      type: "background_tasks",
+      sessionId,
+      tasks: session.backgroundTasks ?? [],
+    });
   }
 
   private sendCodexGoalState(
@@ -9987,18 +11234,42 @@ export class BridgeWebSocketServer {
       }
     }
 
+    const resetUntrackedAll = () => {
+      if (untrackedFilesAll.length === 0) return;
+      try {
+        execFileSync("git", ["reset", "--", ...untrackedFilesAll], { cwd });
+      } catch {
+        // Ignore
+      }
+    };
+
+    // Unborn branches have no HEAD; diff against the empty tree instead.
+    // Computing it spawns git synchronously, which throws (e.g. ENOENT) when
+    // cwd no longer exists, such as a deleted worktree.
+    let diffBase: string;
+    try {
+      diffBase = hasGitHead(cwd)
+        ? "HEAD"
+        : execFileSync("git", ["hash-object", "-t", "tree", "--stdin"], {
+            cwd,
+            input: "",
+            encoding: "utf8",
+          }).trim();
+    } catch (err) {
+      resetUntrackedAll();
+      callback({
+        diff: "",
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+
     execFile(
       "git",
-      gitArgs("diff", hasGitHead(cwd) ? "HEAD" : execFileSync("git", ["hash-object", "-t", "tree", "--stdin"], { cwd, input: "", encoding: "utf8" }).trim(), "--no-color"),
+      gitArgs("diff", diffBase, "--no-color"),
       execOpts,
       (err, stdout) => {
-        if (untrackedFilesAll.length > 0) {
-          try {
-            execFileSync("git", ["reset", "--", ...untrackedFilesAll], { cwd });
-          } catch {
-            // Ignore
-          }
-        }
+        resetUntrackedAll();
 
         if (err) {
           callback({ diff: "", error: err.message });

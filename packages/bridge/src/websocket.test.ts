@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { WebSocket } from "ws";
@@ -26,6 +27,8 @@ const {
   getCodexSessionIndexMetadataMock,
   loadCodexSessionNamesMock,
   saveCodexSessionProfileMock,
+  getPinnedCodexSessionsMock,
+  listIndexedCodexThreadIdsMock,
   generateCommitMessageMock,
   gitCommitMock,
   consumeFinderProofMock,
@@ -40,6 +43,8 @@ const {
   getCodexSessionIndexMetadataMock: vi.fn(),
   loadCodexSessionNamesMock: vi.fn(),
   saveCodexSessionProfileMock: vi.fn(),
+  getPinnedCodexSessionsMock: vi.fn(),
+  listIndexedCodexThreadIdsMock: vi.fn(),
   generateCommitMessageMock: vi.fn(),
   gitCommitMock: vi.fn(),
   consumeFinderProofMock: vi.fn(),
@@ -60,6 +65,14 @@ vi.mock("./sessions-index.js", () => ({
   extractMessageImages: extractMessageImagesMock,
   codexUserTurnUuid: (ordinal: number) => `codex:user-turn:${ordinal}`,
   getAllRecentSessions: getAllRecentSessionsMock,
+  getPinnedCodexSessions: getPinnedCodexSessionsMock,
+  listIndexedCodexThreadIds: listIndexedCodexThreadIdsMock,
+  codexEntryAsThreadListShape: (entry: { resumeCwd?: string; projectPath: string }) => {
+    const { resumeCwd, ...rest } = entry;
+    return { ...rest, projectPath: resumeCwd ?? entry.projectPath };
+  },
+  recentSessionIdentityKey: (provider: string, sessionId: string) =>
+    `${provider}:${sessionId}`,
   getCodexSessionIndexMetadata: getCodexSessionIndexMetadataMock,
   loadCodexSessionNames: loadCodexSessionNamesMock,
   saveCodexSessionProfile: saveCodexSessionProfileMock,
@@ -190,6 +203,12 @@ vi.mock("./session.js", () => ({
         sendInputWithImage: vi.fn(),
         sendInputWithImages: vi.fn(() => false),
         steerInputStructured: vi.fn(async () => {}),
+        steerInput: vi.fn(() => true),
+        settings: { model: "sonnet", effort: "high" },
+        updateSettings: vi.fn(async function (this: any, next: any) {
+          this.settings = { ...this.settings, ...next };
+          return this.settings;
+        }),
         approve: vi.fn(),
         approveAlways: vi.fn(),
         reject: vi.fn(),
@@ -231,27 +250,46 @@ vi.mock("./session.js", () => ({
       return this.sessions.get(id);
     }
 
-    queueCodexInput(id: string, input: any) {
+    isUsageLimited(id: string) {
+      return (this.sessions.get(id)?.usageLimitUntil ?? 0) > Date.now();
+    }
+
+    queueInput(id: string, input: any) {
       const session = this.sessions.get(id);
-      if (!session || session.provider !== "codex" || session.codexQueuedInput) {
+      if (!session || session.queuedInput) {
         return false;
       }
-      session.codexQueuedInput = input;
+      session.queuedInput = input;
       return true;
     }
 
-    updateCodexQueuedInput(
+    async steerInput(id: string, input: any) {
+      const session = this.sessions.get(id);
+      if (!session) return "rejected";
+      session.queuedInput ??= undefined;
+      const previous = session.queuedInput;
+      session.queuedInput = input;
+      const result = await this.steerQueuedInput(id, input.itemId);
+      if (result.ok) {
+        session.queuedInput = previous;
+        return "steered";
+      }
+      session.queuedInput = previous;
+      return this.queueInput(id, input) ? "queued" : "rejected";
+    }
+
+    updateQueuedInput(
       id: string,
       itemId: string,
       text: string,
       options?: { skills?: unknown[]; mentions?: unknown[] },
     ) {
       const session = this.sessions.get(id);
-      if (!session?.codexQueuedInput || session.codexQueuedInput.itemId !== itemId) {
+      if (!session?.queuedInput || session.queuedInput.itemId !== itemId) {
         return false;
       }
-      session.codexQueuedInput = {
-        ...session.codexQueuedInput,
+      session.queuedInput = {
+        ...session.queuedInput,
         text,
         skills: options?.skills,
         mentions: options?.mentions,
@@ -259,37 +297,41 @@ vi.mock("./session.js", () => ({
       return true;
     }
 
-    cancelCodexQueuedInput(id: string, itemId: string) {
+    cancelQueuedInput(id: string, itemId: string) {
       const session = this.sessions.get(id);
-      if (!session?.codexQueuedInput || session.codexQueuedInput.itemId !== itemId) {
+      if (!session?.queuedInput || session.queuedInput.itemId !== itemId) {
         return false;
       }
-      session.codexQueuedInput = undefined;
+      session.queuedInput = undefined;
       return true;
     }
 
-    async steerCodexQueuedInput(id: string, itemId: string) {
+    async steerQueuedInput(id: string, itemId: string) {
       const session = this.sessions.get(id);
-      if (!session || session.provider !== "codex") {
-        return { ok: false, error: "No active Codex session." };
+      if (!session) {
+        return { ok: false, error: "No active session." };
       }
-      const queued = session.codexQueuedInput;
+      const queued = session.queuedInput;
       if (!queued || queued.itemId !== itemId) {
         return { ok: false, error: "Queued message not found." };
       }
       try {
-        await session.process.steerInputStructured(queued.text, {
-          images: queued.images,
-          skills: queued.skills,
-          mentions: queued.mentions,
-        });
+        if (session.provider === "codex") {
+          await session.process.steerInputStructured(queued.text, {
+            images: queued.images,
+            skills: queued.skills,
+            mentions: queued.mentions,
+          });
+        } else {
+          session.process.steerInput(queued.text, queued.images);
+        }
       } catch (err) {
         return {
           ok: false,
           error: err instanceof Error ? err.message : String(err),
         };
       }
-      session.codexQueuedInput = undefined;
+      session.queuedInput = undefined;
       const userMsg = {
         type: "user_input",
         text: queued.text,
@@ -381,7 +423,7 @@ vi.mock("./session.js", () => ({
                 : "default",
           sandboxEnabled: s.sandboxEnabled,
           codexSettings: s.codexSettings,
-          queuedInput: s.codexQueuedInput,
+          queuedInput: s.queuedInput,
         }));
     }
 
@@ -409,6 +451,12 @@ vi.mock("./session.js", () => ({
     async rewindFiles(_id: string, _targetUuid: string, _dryRun?: boolean) {
       return { canRewind: true, filesChanged: ["test.ts"], insertions: 1, deletions: 0 };
     }
+
+    retractableUserInput = vi.fn((_id: string): unknown => null);
+
+    rewindInPlace = vi.fn(async (_id: string, _target: string | null) => ({
+      text: "typo",
+    }));
 
     rewindConversation(
       id: string,
@@ -467,7 +515,12 @@ vi.mock("./session.js", () => ({
   },
 }));
 
-import { BridgeWebSocketServer, downloadMimeType } from "./websocket.js";
+import {
+  BridgeWebSocketServer,
+  downloadMimeType,
+  recentSessionsCoalescingKey,
+  recentSessionsFiltersRequested,
+} from "./websocket.js";
 import { CodexProcess, CodexRpcError } from "./codex-process.js";
 
 describe("downloadMimeType", () => {
@@ -505,6 +558,12 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     verifyFinderSocketProofMock.mockReset().mockResolvedValue(true);
     revealInFinderMock.mockReset().mockResolvedValue(undefined);
     getAllRecentSessionsMock.mockResolvedValue({ sessions: [], hasMore: false });
+    listIndexedCodexThreadIdsMock.mockReset().mockResolvedValue(new Set());
+    // Never spawn a real Codex app-server for the thread snapshot.
+    vi.spyOn(
+      BridgeWebSocketServer.prototype as any,
+      "loadAllCodexThreads",
+    ).mockResolvedValue(undefined);
     getCodexSessionIndexMetadataMock.mockResolvedValue(new Map());
     getCodexSessionHistoryMock.mockResolvedValue([]);
     codexThreadToSessionHistoryMock.mockReturnValue([]);
@@ -646,6 +705,39 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       expect(entries[0].message.userMessageUuid).toBe("codex:user-turn:1");
       expect(entries[149].message.userMessageUuid).toBe("codex:user-turn:150");
       expect(session.codexOrderedHistoryEntries).toHaveLength(100);
+    } finally {
+      bridge.close();
+    }
+  });
+
+  it("lists a thread split into rollout segments once", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const thread = (id: string, updatedAt: number) => ({
+      id,
+      preview: id,
+      createdAt: updatedAt,
+      updatedAt,
+      cwd: "/tmp/p",
+      agentNickname: null,
+      agentRole: null,
+      gitBranch: null,
+      name: null,
+    });
+    const listThreads = vi.fn().mockResolvedValue({
+      data: [thread("a", 300), thread("b", 200), thread("a", 100)],
+      nextCursor: null,
+    });
+    vi.spyOn(bridge as any, "createStandaloneCodexProcess").mockResolvedValue({
+      listThreads,
+      stop: vi.fn(),
+    });
+    try {
+      const page = await (bridge as any).listRecentCodexThreads({
+        type: "list_recent_sessions",
+        provider: "codex",
+      });
+      expect(page.sessions.map((s: any) => s.sessionId)).toEqual(["a", "b"]);
+      expect(page.sessions[0].modified).toBe(new Date(300 * 1000).toISOString());
     } finally {
       bridge.close();
     }
@@ -877,7 +969,6 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       .find((m: any) => m.type === "recent_sessions");
     expect(recent).toMatchObject({
       type: "recent_sessions",
-      hasMore: true,
       limit: 20,
       offset: 40,
       projectPath: "/tmp/project",
@@ -885,6 +976,702 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     });
 
     bridge.close();
+  });
+
+  it("returns pinned sessions with a first list page", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+    getAllRecentSessionsMock.mockReset();
+    getAllRecentSessionsMock.mockResolvedValue({
+      sessions: [{ provider: "claude", sessionId: "page", projectPath: "/tmp/p" }],
+      hasMore: true,
+      pinnedSessions: [
+        { provider: "claude", sessionId: "old-pin", projectPath: "/tmp/p" },
+      ],
+    });
+
+    (bridge as any).handleClientMessage(
+      {
+        type: "list_recent_sessions",
+        limit: 20,
+        offset: 0,
+        provider: "claude",
+        pinnedSessions: [
+          { provider: "claude", sessionId: "old-pin" },
+          { provider: "codex", sessionId: "other-provider" },
+        ],
+      },
+      ws,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const options = getAllRecentSessionsMock.mock.calls[0][0];
+    expect([...options.pinnedSessionKeys]).toEqual(["claude:old-pin"]);
+    const recent = ws.send.mock.calls
+      .map((c: unknown[]) => JSON.parse(c[0] as string))
+      .find((m: any) => m.type === "recent_sessions");
+    expect(recent.sessions.map((s: any) => s.sessionId)).toEqual(["page"]);
+    expect(recent.pinnedSessions).toEqual([
+      expect.objectContaining({
+        sessionId: "old-pin",
+        workspace: expect.objectContaining({ kind: "unassigned" }),
+      }),
+    ]);
+
+    bridge.close();
+  });
+
+  it("does not resolve pinned sessions for later pages or project pages", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+    getAllRecentSessionsMock.mockReset();
+    getAllRecentSessionsMock.mockResolvedValue({ sessions: [], hasMore: false });
+    const pinnedSessions = [{ provider: "claude", sessionId: "pin" }];
+
+    (bridge as any).handleClientMessage(
+      {
+        type: "list_recent_sessions",
+        limit: 20,
+        offset: 20,
+        provider: "claude",
+        pinnedSessions,
+      },
+      ws,
+    );
+    (bridge as any).handleClientMessage(
+      {
+        type: "list_recent_sessions",
+        limit: 20,
+        offset: 0,
+        projectPath: "/tmp/p",
+        requestScope: "project",
+        provider: "claude",
+        pinnedSessions,
+      },
+      ws,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(getAllRecentSessionsMock).toHaveBeenCalledTimes(2);
+    for (const [options] of getAllRecentSessionsMock.mock.calls) {
+      expect(options.pinnedSessionKeys).toBeUndefined();
+    }
+    const recent = ws.send.mock.calls
+      .map((c: unknown[]) => JSON.parse(c[0] as string))
+      .filter((m: any) => m.type === "recent_sessions");
+    expect(recent).toHaveLength(2);
+    for (const message of recent) {
+      expect(message.pinnedSessions).toBeUndefined();
+    }
+
+    bridge.close();
+  });
+
+  it("returns pinned Codex sessions in thread/list shape for all-provider pages", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+    getAllRecentSessionsMock.mockReset();
+    getAllRecentSessionsMock.mockResolvedValue({
+      sessions: [],
+      hasMore: false,
+      pinnedSessions: [
+        {
+          provider: "codex",
+          sessionId: "codex-pin",
+          projectPath: "/tmp/repo",
+          resumeCwd: "/tmp/repo/packages/app",
+        },
+      ],
+    });
+    vi.spyOn(bridge as any, "listRecentCodexSessions").mockResolvedValue({
+      sessions: [],
+      hasMore: false,
+    });
+
+    (bridge as any).handleClientMessage(
+      {
+        type: "list_recent_sessions",
+        limit: 20,
+        pinnedSessions: [{ provider: "codex", sessionId: "codex-pin" }],
+      },
+      ws,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const recent = ws.send.mock.calls
+      .map((c: unknown[]) => JSON.parse(c[0] as string))
+      .find((m: any) => m.type === "recent_sessions");
+    expect(recent.pinnedSessions).toEqual([
+      expect.objectContaining({
+        sessionId: "codex-pin",
+        projectPath: "/tmp/repo/packages/app",
+      }),
+    ]);
+
+    bridge.close();
+  });
+
+  it("looks up pinned Codex threads directly for thread/list pages", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+    vi.spyOn(bridge as any, "listRecentCodexThreads").mockResolvedValue({
+      sessions: [{ provider: "codex", sessionId: "page", projectPath: "/tmp/p" }],
+      hasMore: true,
+    });
+    getPinnedCodexSessionsMock.mockReset();
+    getPinnedCodexSessionsMock.mockResolvedValue([
+      { provider: "codex", sessionId: "old-thread", projectPath: "/tmp/p" },
+    ]);
+
+    (bridge as any).handleClientMessage(
+      {
+        type: "list_recent_sessions",
+        limit: 20,
+        offset: 0,
+        provider: "codex",
+        pinnedSessions: [
+          { provider: "codex", sessionId: "old-thread" },
+          { provider: "claude", sessionId: "claude-pin" },
+        ],
+      },
+      ws,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(getPinnedCodexSessionsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadIds: ["old-thread"],
+      }),
+    );
+    const recent = ws.send.mock.calls
+      .map((c: unknown[]) => JSON.parse(c[0] as string))
+      .find((m: any) => m.type === "recent_sessions");
+    expect(recent.sessions.map((s: any) => s.sessionId)).toEqual(["page"]);
+    expect(recent.pinnedSessions.map((s: any) => s.sessionId)).toEqual([
+      "old-thread",
+    ]);
+
+    bridge.close();
+  });
+
+  describe("recent session filters (recent_sessions_filters_v1)", () => {
+    const fixtureSessions = [
+      {
+        sessionId: "a-new",
+        provider: "claude",
+        projectPath: "/tmp/a",
+        created: "2026-10-01T00:00:00.000Z",
+        modified: "2026-11-02T10:00:00.000Z",
+      },
+      {
+        sessionId: "b-mid",
+        provider: "claude",
+        projectPath: "/tmp/b",
+        created: "2026-11-01T12:00:00.000Z",
+        modified: "2026-11-01T12:00:00.000Z",
+      },
+      {
+        sessionId: "c-old",
+        provider: "claude",
+        projectPath: "/tmp/c",
+        created: "2026-10-30T00:00:00.000Z",
+        modified: "2026-10-30T00:00:00.000Z",
+      },
+      {
+        sessionId: "proj",
+        provider: "claude",
+        projectPath: "/tmp/elsewhere",
+        created: "2026-10-29T00:00:00.000Z",
+        modified: "2026-10-29T00:00:00.000Z",
+      },
+    ];
+    const workspaceStore = {
+      listProjects: vi.fn(() => [
+        { id: "project-b", name: "B", rootPaths: ["/tmp/b"] },
+        { id: "project-x", name: "X", rootPaths: ["/tmp/x"] },
+      ]),
+      resolveRecentWorkspace: vi.fn((_provider: string, sessionId: string) =>
+        sessionId === "proj"
+          ? { kind: "project", projectId: "project-x", rootPaths: ["/tmp/x"] }
+          : undefined,
+      ),
+    };
+
+    function mockIndexedListing(): void {
+      getAllRecentSessionsMock.mockReset();
+      getAllRecentSessionsMock.mockImplementation(async (options: any) => {
+        const filtered = options.sessionFilter
+          ? fixtureSessions.filter(options.sessionFilter)
+          : fixtureSessions;
+        return {
+          sessions: filtered.slice(options.offset, options.offset + options.limit),
+          hasMore: options.offset + options.limit < filtered.length,
+        };
+      });
+    }
+
+    async function list(bridge: any, msg: Record<string, unknown>) {
+      return bridge.listRecentSessions({
+        type: "list_recent_sessions",
+        provider: "claude",
+        limit: 20,
+        offset: 0,
+        ...msg,
+      });
+    }
+
+    function ids(result: { sessions: any[] }): string[] {
+      return result.sessions.map((session) => session.sessionId);
+    }
+
+    it("advertises the capability in session_list", () => {
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+      (bridge as any).sendSessionList(ws);
+      const catalog = ws.send.mock.calls
+        .map((call: unknown[]) => JSON.parse(call[0] as string))
+        .find((message: any) => message.type === "session_list");
+      expect(catalog.protocolCapabilities).toContain(
+        "recent_sessions_filters_v1",
+      );
+      bridge.close();
+    });
+
+    it("ORs projectFilters by path and project id", async () => {
+      mockIndexedListing();
+      const bridge = new BridgeWebSocketServer({
+        server: httpServer,
+        workspaceStore: workspaceStore as any,
+      });
+
+      const result = await list(bridge, {
+        projectFilters: [
+          { projectPath: "/tmp/a" },
+          { projectId: "project-x" },
+        ],
+      });
+
+      expect(ids(result)).toEqual(["a-new", "proj"]);
+      expect(getAllRecentSessionsMock.mock.calls[0][0]).toMatchObject({
+        offset: 0,
+        limit: 21,
+        sessionFilter: expect.any(Function),
+      });
+      expect(getAllRecentSessionsMock.mock.calls[0][0].projectPath).toBeUndefined();
+      bridge.close();
+    });
+
+    it("keeps the fast path for plain listings until the snapshot is ready", async () => {
+      mockIndexedListing();
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+
+      await list(bridge, { provider: "claude", dateField: "created" });
+
+      expect(getAllRecentSessionsMock.mock.calls[0][0].sessionFilter).toBeUndefined();
+      bridge.close();
+    });
+
+    it("switches plain listings to the index once the snapshot is ready", async () => {
+      mockIndexedListing();
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const threadList = vi.spyOn(bridge as any, "listRecentCodexThreads");
+      await (bridge as any).codexThreadSnapshot.get();
+
+      await list(bridge, {});
+
+      expect(threadList).not.toHaveBeenCalled();
+      expect(getAllRecentSessionsMock.mock.calls[0][0].sessionFilter).toBeTypeOf(
+        "function",
+      );
+      bridge.close();
+    });
+
+    it("routes single-project and named-only listings through the index", async () => {
+      mockIndexedListing();
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+
+      await list(bridge, { projectPath: "/tmp/a", namedOnly: true });
+
+      expect(getAllRecentSessionsMock.mock.calls[0][0].sessionFilter).toBeTypeOf(
+        "function",
+      );
+      bridge.close();
+    });
+
+    it("filters by modified date range (after inclusive, before exclusive)", async () => {
+      mockIndexedListing();
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+
+      const result = await list(bridge, {
+        modifiedAfter: "2026-11-01T12:00:00.000Z",
+        modifiedBefore: "2026-11-02T10:00:00.000Z",
+      });
+
+      expect(ids(result)).toEqual(["b-mid"]);
+      bridge.close();
+    });
+
+    it("filters by created date when dateField is created", async () => {
+      mockIndexedListing();
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+
+      const result = await list(bridge, {
+        modifiedBefore: "2026-10-31T00:00:00.000Z",
+        dateField: "created",
+      });
+
+      expect(ids(result)).toEqual(["a-new", "c-old", "proj"]);
+      bridge.close();
+    });
+
+    it("lists only pinned sessions and pinned projects with pinnedOnly", async () => {
+      mockIndexedListing();
+      const bridge = new BridgeWebSocketServer({
+        server: httpServer,
+        workspaceStore: workspaceStore as any,
+      });
+
+      const result = await list(bridge, {
+        pinnedOnly: true,
+        pinnedSessions: [
+          { provider: "claude", sessionId: "c-old" },
+          { provider: "codex", sessionId: "a-new" },
+        ],
+        pinnedProjects: [{ projectPath: "/tmp/b" }, { projectId: "project-x" }],
+      });
+
+      expect(ids(result)).toEqual(["b-mid", "c-old", "proj"]);
+      // The page already contains every pinned session.
+      expect(result.pinnedSessions).toEqual([]);
+      expect(getAllRecentSessionsMock.mock.calls[0][0].pinnedSessionKeys).toBeUndefined();
+      bridge.close();
+    });
+
+    it("resolves pinnedOnly from the index without paging thread/list", async () => {
+      mockIndexedListing();
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const createProcess = vi.fn();
+      (bridge as any).createStandaloneCodexProcess = createProcess;
+
+      const result = await list(bridge, {
+        provider: "codex",
+        pinnedOnly: true,
+        pinnedSessions: [{ provider: "codex", sessionId: "a-new" }],
+      });
+
+      expect(createProcess).not.toHaveBeenCalled();
+      expect(getAllRecentSessionsMock.mock.calls[0][0]).toMatchObject({
+        provider: "codex",
+      });
+      expect(Array.isArray(result.sessions)).toBe(true);
+      bridge.close();
+    });
+
+    it("returns nothing for pinnedOnly without pins", async () => {
+      mockIndexedListing();
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+
+      const result = await list(bridge, { pinnedOnly: true });
+
+      expect(result).toEqual({ sessions: [], hasMore: false });
+      expect(getAllRecentSessionsMock).not.toHaveBeenCalled();
+      bridge.close();
+    });
+
+    it("applies filters to project-scoped requests and ignores projectFilters there", async () => {
+      mockIndexedListing();
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+
+      const result = await list(bridge, {
+        requestScope: "project",
+        offset: 20,
+        projectPath: "/tmp/c",
+        projectFilters: [{ projectPath: "/tmp/a" }],
+        pinnedOnly: true,
+        pinnedSessions: [{ provider: "claude", sessionId: "c-old" }],
+        modifiedAfter: "2026-10-01T00:00:00.000Z",
+      });
+      const firstPage = await list(bridge, {
+        requestScope: "project",
+        projectPath: "/tmp/c",
+        projectFilters: [{ projectPath: "/tmp/a" }],
+        pinnedOnly: true,
+        pinnedSessions: [{ provider: "claude", sessionId: "c-old" }],
+        modifiedAfter: "2026-10-01T00:00:00.000Z",
+      });
+
+      expect(ids(result)).toEqual([]);
+      expect(getAllRecentSessionsMock.mock.calls[0][0].limit).toBe(41);
+      expect(ids(firstPage)).toEqual(["c-old"]);
+      expect(firstPage.pinnedSessions).toBeUndefined();
+      bridge.close();
+    });
+
+    it("continues content search past the previous page's file depth", async () => {
+      getAllRecentSessionsMock.mockReset();
+      getAllRecentSessionsMock.mockResolvedValue({
+        sessions: [],
+        hasMore: false,
+        contentSearchIncomplete: true,
+        contentSearchFilesRead: 400,
+      });
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      (bridge as any).createStandaloneCodexProcess = vi.fn();
+      const query = { searchQuery: "needle", searchContent: true };
+
+      const first = await list(bridge, query);
+      await list(bridge, { ...query, offset: 5 });
+      await list(bridge, { ...query, searchQuery: "other", offset: 5 });
+
+      expect(first.hasMore).toBe(true);
+      const maxFiles = getAllRecentSessionsMock.mock.calls.map(
+        (call) => call[0].contentSearchLimits?.maxFiles,
+      );
+      // First page: base budget; next page of the same query: depth + budget;
+      // a different query never inherits the depth.
+      expect(maxFiles).toEqual([400, 800, 400]);
+      bridge.close();
+    });
+
+    it("routes content search through the index for every provider", async () => {
+      getAllRecentSessionsMock.mockReset();
+      getAllRecentSessionsMock.mockResolvedValue({
+        sessions: [
+          {
+            sessionId: "hit",
+            provider: "codex",
+            projectPath: "/tmp/a",
+            searchMatch: { field: "content", snippet: "…needle…" },
+          },
+        ],
+        hasMore: false,
+        contentSearchIncomplete: true,
+      });
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const createProcess = vi.fn();
+      (bridge as any).createStandaloneCodexProcess = createProcess;
+
+      const result = await list(bridge, {
+        provider: "codex",
+        searchQuery: "needle",
+        searchContent: true,
+      });
+
+      expect(createProcess).not.toHaveBeenCalled();
+      expect(getAllRecentSessionsMock.mock.calls[0][0]).toMatchObject({
+        provider: "codex",
+        searchQuery: "needle",
+        searchContent: true,
+      });
+      expect(result.sessions[0].searchMatch).toEqual({
+        field: "content",
+        snippet: "…needle…",
+      });
+      // A content-search bound was hit, so more matches may exist.
+      expect(result.hasMore).toBe(true);
+      bridge.close();
+    });
+
+    it("ignores searchContent without a search query", () => {
+      expect(
+        recentSessionsFiltersRequested({
+          type: "list_recent_sessions",
+          searchContent: true,
+          searchQuery: "  ",
+        }),
+      ).toBe(false);
+    });
+
+    it("adds compressed-only Codex threads from the snapshot to filtered listings", async () => {
+      const thread = (id: string, updatedAt: number, branch = "feat/needle") => ({
+        id,
+        preview: `preview ${id}`,
+        createdAt: updatedAt,
+        updatedAt,
+        cwd: "/tmp/a",
+        agentNickname: null,
+        agentRole: null,
+        gitBranch: branch,
+        name: null,
+      });
+      const after = Date.parse("2026-11-01T00:00:00.000Z") / 1000;
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const createProcess = vi.fn();
+      (bridge as any).createStandaloneCodexProcess = createProcess;
+      (bridge as any).loadAllCodexThreads = vi.fn(async (onPage: any) => {
+        onPage({
+          data: [
+            thread("archived-new", after + 120),
+            thread("indexed", after + 90),
+            thread("other-branch", after + 60, "main"),
+            thread("archived-old", after - 60),
+          ],
+          nextCursor: null,
+        });
+      });
+      // "indexed" has a plain rollout, so the index entry wins.
+      listIndexedCodexThreadIdsMock.mockResolvedValue(new Set(["indexed"]));
+      getAllRecentSessionsMock.mockResolvedValue({
+        sessions: [
+          {
+            sessionId: "indexed",
+            provider: "codex",
+            projectPath: "/tmp/a",
+            modified: new Date((after + 90) * 1000).toISOString(),
+            searchMatch: { field: "name" },
+          },
+        ],
+        hasMore: false,
+      });
+
+      // Before the first load the listing answers from the index alone
+      // without waiting, and starts loading the snapshot.
+      const cold = await list(bridge, {
+        provider: "codex",
+        searchQuery: "needle",
+        modifiedAfter: "2026-11-01T00:00:00.000Z",
+      });
+      expect(ids(cold)).toEqual(["indexed"]);
+      await (bridge as any).codexThreadSnapshot.get();
+
+      const result = await list(bridge, {
+        provider: "codex",
+        searchQuery: "needle",
+        modifiedAfter: "2026-11-01T00:00:00.000Z",
+      });
+
+      expect(createProcess).not.toHaveBeenCalled();
+      expect(ids(result)).toEqual(["archived-new", "indexed"]);
+      expect(result.sessions[0]).toMatchObject({
+        modified: new Date((after + 120) * 1000).toISOString(),
+        searchMatch: { field: "branch" },
+      });
+      // The index entry, not the snapshot copy, represents "indexed".
+      expect(result.sessions[1].searchMatch).toEqual({ field: "name" });
+      bridge.close();
+    });
+
+    it("routes plain keyword searches through the index and snapshot", async () => {
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const listRecentCodexThreads = vi.spyOn(
+        bridge as any,
+        "listRecentCodexThreads",
+      );
+
+      await list(bridge, { searchQuery: "needle" });
+
+      expect(listRecentCodexThreads).not.toHaveBeenCalled();
+      expect(getAllRecentSessionsMock.mock.calls[0][0]).toMatchObject({
+        searchQuery: "needle",
+      });
+      bridge.close();
+    });
+
+    it("computes searchMatch locally for thread/list pages", async () => {
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      (bridge as any).createStandaloneCodexProcess = vi.fn(async () => ({
+        listThreads: vi.fn(async () => ({
+          data: [
+            {
+              id: "t1",
+              preview: "Fix the Needle bug",
+              createdAt: 1771492643,
+              updatedAt: 1771496243,
+              cwd: "/tmp/a",
+              agentNickname: null,
+              agentRole: null,
+              gitBranch: "main",
+              name: null,
+            },
+            {
+              id: "t2",
+              preview: "server-side match only",
+              createdAt: 1771492643,
+              updatedAt: 1771496243,
+              cwd: "/tmp/a",
+              agentNickname: null,
+              agentRole: null,
+              gitBranch: "main",
+              name: null,
+            },
+          ],
+          nextCursor: null,
+        })),
+        stop: vi.fn(),
+      }));
+      getCodexSessionIndexMetadataMock.mockResolvedValue(new Map());
+      loadCodexSessionNamesMock.mockResolvedValue(new Map());
+
+      const page = await (bridge as any).listRecentCodexThreads({
+        type: "list_recent_sessions",
+        provider: "codex",
+        searchQuery: "needle",
+      });
+
+      expect(page.sessions[0].searchMatch).toEqual({ field: "firstPrompt" });
+      expect(page.sessions[1]).not.toHaveProperty("searchMatch");
+      bridge.close();
+    });
+
+    it("distinguishes every filter in the coalescing key", () => {
+      const base = {
+        type: "list_recent_sessions" as const,
+        limit: 20,
+        offset: 0,
+      };
+      const variants: Record<string, unknown>[] = [
+        {},
+        { projectFilters: [{ projectPath: "/tmp/a" }] },
+        { projectFilters: [{ projectPath: "/tmp/b" }] },
+        { modifiedAfter: "2026-11-01T00:00:00.000Z" },
+        { modifiedBefore: "2026-11-01T00:00:00.000Z" },
+        { modifiedBefore: "2026-11-01T00:00:00.000Z", dateField: "created" },
+        { pinnedOnly: true, pinnedSessions: [{ provider: "claude", sessionId: "x" }] },
+        { pinnedOnly: true, pinnedSessions: [{ provider: "claude", sessionId: "y" }] },
+        { pinnedOnly: true, pinnedProjects: [{ projectPath: "/tmp/a" }] },
+        { searchQuery: "q" },
+        { searchQuery: "q", searchContent: true },
+        { requestScope: "project" },
+      ];
+      const keys = variants.map((variant) =>
+        recentSessionsCoalescingKey({ ...base, ...variant } as any),
+      );
+      expect(new Set(keys).size).toBe(variants.length);
+      // Order of project filters does not matter.
+      expect(
+        recentSessionsCoalescingKey({
+          ...base,
+          projectFilters: [{ projectPath: "/tmp/a" }, { projectId: "p" }],
+        }),
+      ).toBe(
+        recentSessionsCoalescingKey({
+          ...base,
+          projectFilters: [{ projectId: "p" }, { projectPath: "/tmp/a" }],
+        }),
+      );
+    });
+
+    it("coalesces identical filtered requests only", async () => {
+      mockIndexedListing();
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const msg = {
+        type: "list_recent_sessions",
+        provider: "claude",
+        modifiedAfter: "2026-11-01T00:00:00.000Z",
+      };
+
+      const first = (bridge as any).listRecentSessionsCoalesced(msg);
+      const same = (bridge as any).listRecentSessionsCoalesced({ ...msg });
+      const other = (bridge as any).listRecentSessionsCoalesced({
+        ...msg,
+        dateField: "created",
+      });
+      expect(same).toBe(first);
+      expect(other).not.toBe(first);
+      await Promise.all([first, other]);
+      expect(getAllRecentSessionsMock).toHaveBeenCalledTimes(2);
+      bridge.close();
+    });
   });
 
   it("echoes gallery request correlation and canonical project path", async () => {
@@ -1716,6 +2503,62 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     bridge.close();
   });
 
+  it("sends version-free Claude alias fallback with display metadata", () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+
+    (bridge as any).sendSessionList(ws);
+
+    const sessionList = ws.send.mock.calls
+      .map((c: unknown[]) => JSON.parse(c[0] as string))
+      .find((msg: any) => msg.type === "session_list");
+
+    expect(sessionList.claudeModels).toEqual(["default", "opus", "sonnet", "haiku"]);
+    expect(sessionList.claudeModelOptions[0]).toEqual({
+      value: "default",
+      displayName: "Default",
+    });
+    for (const model of sessionList.claudeModels) {
+      expect(model).not.toMatch(/\d-\d/);
+    }
+    expect(sessionList.claudeModelEfforts.haiku).toEqual([]);
+
+    bridge.close();
+  });
+
+  it("sends Claude model display metadata from the SDK", () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+
+    (bridge as any).applyClaudeModels([
+      {
+        model: "opus",
+        displayName: "Opus",
+        description: "Opus 5.5 · Best for everyday, complex tasks",
+        effortLevels: ["low", "high"],
+      },
+      { model: "claude-fable-5-1[1m]", displayName: "Fable", effortLevels: [] },
+    ]);
+    (bridge as any).sendSessionList(ws);
+
+    const sessionList = ws.send.mock.calls
+      .map((c: unknown[]) => JSON.parse(c[0] as string))
+      .find((msg: any) => msg.type === "session_list");
+
+    expect(sessionList.claudeModels).toEqual(["opus", "claude-fable-5-1[1m]"]);
+    expect(sessionList.claudeModelOptions).toEqual([
+      {
+        value: "opus",
+        displayName: "Opus",
+        description: "Opus 5.5 · Best for everyday, complex tasks",
+      },
+      { value: "claude-fable-5-1[1m]", displayName: "Fable" },
+    ]);
+    expect(sessionList.claudeModelEfforts.opus).toEqual(["low", "high"]);
+
+    bridge.close();
+  });
+
   it("sends codex model list without deprecated models", () => {
     const bridge = new BridgeWebSocketServer({ server: httpServer });
     const ws = {
@@ -1848,6 +2691,31 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     bridge.close();
   });
 
+  it.each(["2026-11-03T02:40:00.000Z", undefined])("restores usage-limit queue metadata in reconnect snapshots (%s)", async (retryAt) => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+    await (bridge as any).handleClientMessage({
+      type: "client_capabilities", supportedServerMessages: ["conversation_queue"],
+    }, ws);
+    ws.send.mockClear();
+    (bridge as any).sendQueueState(ws, "limited-session", {
+      queuedInput: {
+        itemId: "q-limit", clientMessageId: "cm-limit", text: "after reset",
+        createdAt: "2026-11-03T01:00:00.000Z", waitingForUsageLimit: true, retryAt,
+        images: [{ base64: "private-payload", mimeType: "image/png" }],
+      },
+    });
+    const snapshot = JSON.parse(ws.send.mock.calls.at(-1)![0]);
+    expect(snapshot).toEqual({
+      type: "conversation_queue", sessionId: "limited-session", limit: 1,
+      items: [{ itemId: "q-limit", clientMessageId: "cm-limit", text: "after reset",
+        createdAt: "2026-11-03T01:00:00.000Z", waitingForUsageLimit: true,
+        ...(retryAt ? { retryAt } : {}),
+      }],
+    });
+    bridge.close();
+  });
+
   it("suppresses conversation_queue for clients that did not opt in", async () => {
     const bridge = new BridgeWebSocketServer({ server: httpServer });
     const ws = {
@@ -1868,6 +2736,34 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       {
         type: "client_capabilities",
         supportedServerMessages: ["conversation_queue"],
+      },
+      ws,
+    );
+    (bridge as any).send(ws, msg);
+    expect(ws.send).toHaveBeenCalledWith(JSON.stringify(msg));
+
+    bridge.close();
+  });
+
+  it("suppresses background_tasks for clients that did not opt in", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const ws = {
+      readyState: OPEN_STATE,
+      send: vi.fn(),
+    } as any;
+    const msg = {
+      type: "background_tasks",
+      sessionId: "s-1",
+      tasks: [{ taskId: "b1", taskType: "local_bash" }],
+    };
+
+    (bridge as any).send(ws, msg);
+    expect(ws.send).not.toHaveBeenCalled();
+
+    await (bridge as any).handleClientMessage(
+      {
+        type: "client_capabilities",
+        supportedServerMessages: ["background_tasks"],
       },
       ws,
     );
@@ -1967,6 +2863,54 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       4406,
       "Incompatible protocol version",
     );
+    bridge.close();
+  });
+
+  it("reports handler rejections to the client instead of leaking them", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const handlers = new Map<string, (data?: unknown) => void>();
+    const ws = {
+      readyState: OPEN_STATE,
+      send: vi.fn(),
+      close: vi.fn(),
+      on: vi.fn((event: string, handler: (data?: unknown) => void) => {
+        handlers.set(event, handler);
+      }),
+    } as any;
+    (bridge as any).handleConnection(ws);
+    ws.send.mockClear();
+
+    const original = (bridge as any).handleClientMessage.bind(bridge);
+    const spy = vi
+      .spyOn(bridge as any, "handleClientMessage")
+      .mockImplementation(async (...args: unknown[]) => {
+        const msg = args[0] as { type: string };
+        if (msg.type === "get_history") throw new Error("boom");
+        return original(...args);
+      });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    handlers.get("message")!(
+      Buffer.from(
+        JSON.stringify({ type: "get_history", sessionId: "session-x" }),
+      ),
+    );
+    await new Promise((r) => setImmediate(r));
+
+    const sends = ws.send.mock.calls.map((c: unknown[]) =>
+      JSON.parse(c[0] as string),
+    );
+    expect(sends).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        sessionId: "session-x",
+        message: expect.stringContaining("boom"),
+      }),
+    );
+    expect(errorSpy).toHaveBeenCalled();
+
+    spy.mockRestore();
+    errorSpy.mockRestore();
     bridge.close();
   });
 
@@ -2518,6 +3462,51 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     bridge.close();
   });
 
+  it("includes requestId when a Project root is outside bridge allowed directories", async () => {
+    const workspaceStore = {
+      getProject: vi.fn(() => ({
+        id: "project-1",
+        name: "Outside",
+        rootPaths: ["/tmp/other"],
+      })),
+    };
+    const bridge = new BridgeWebSocketServer({
+      server: httpServer,
+      allowedDirs: ["/tmp/project-a"],
+      workspaceStore: workspaceStore as any,
+    });
+    const ws = {
+      readyState: OPEN_STATE,
+      send: vi.fn(),
+    } as any;
+
+    await (bridge as any).handleClientMessage(
+      {
+        type: "start",
+        projectPath: "/tmp/other",
+        projectId: "project-1",
+        workspaceKind: "project",
+        provider: "codex",
+        requestId: "start-outside",
+      },
+      ws,
+    );
+
+    const sends = ws.send.mock.calls.map((c: unknown[]) =>
+      JSON.parse(c[0] as string),
+    );
+    expect(sends).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        errorCode: "path_not_allowed",
+        requestId: "start-outside",
+      }),
+    );
+    expect((bridge as any).sessionManager.get("s-1")).toBeUndefined();
+
+    bridge.close();
+  });
+
   it("forwards selected codex profile without an explicit permissions mode on resume", async () => {
     const bridge = new BridgeWebSocketServer({ server: httpServer });
     const ws = {
@@ -2593,6 +3582,54 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     expect(ws.send).not.toHaveBeenCalledWith(
       expect.stringContaining("Codex profile not found"),
     );
+
+    bridge.close();
+  });
+
+  it("reports resume failure when the codex resume profile cannot be resolved", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const ws = {
+      readyState: OPEN_STATE,
+      send: vi.fn(),
+    } as any;
+
+    vi.spyOn(bridge as any, "loadCodexProfiles").mockRejectedValue(
+      new Error("config/read failed"),
+    );
+
+    await (bridge as any).handleClientMessage(
+      {
+        type: "resume_session",
+        sessionId: "thr_profile_fail",
+        projectPath: "/tmp/project-a",
+        provider: "codex",
+        profile: "ccpocket",
+        resumeRequestId: "resume-profile-fail",
+      },
+      ws,
+    );
+
+    const messages = ws.send.mock.calls.map((call: unknown[]) =>
+      JSON.parse(call[0] as string),
+    );
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        type: "system",
+        subtype: "session_resume_failed",
+        provider: "codex",
+        sourceSessionId: "thr_profile_fail",
+        resumeRequestId: "resume-profile-fail",
+      }),
+    );
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        sessionId: "thr_profile_fail",
+        requestId: "resume-profile-fail",
+        message: expect.stringContaining("config/read failed"),
+      }),
+    );
+    expect((bridge as any).sessionManager.get("s-1")).toBeUndefined();
 
     bridge.close();
   });
@@ -2777,9 +3814,197 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       sessionId: newSessionId,
     });
     expect(historySends[1]).toMatchObject({ type: "history", sessionId: newSessionId });
-    expect(historySends[2]).toMatchObject({ type: "status", sessionId: newSessionId });
+    expect(historySends[2]).toMatchObject({
+      type: "system",
+      subtype: "claude_settings",
+      sessionId: newSessionId,
+    });
+    expect(historySends[3]).toMatchObject({ type: "status", sessionId: newSessionId });
 
     bridge.close();
+  });
+
+  describe("context compaction (context_compaction_v1)", () => {
+    const compactedHistory = [
+      { role: "user", uuid: "u1", content: [{ type: "text", text: "first" }] },
+      { role: "assistant", uuid: "a1", content: [{ type: "text", text: "answer" }] },
+      {
+        role: "compaction",
+        uuid: "b1",
+        content: [],
+        compaction: { trigger: "auto", preTokens: 180000, summary: "Earlier work" },
+      },
+      { role: "user", uuid: "u2", content: [{ type: "text", text: "second" }] },
+      { role: "assistant", uuid: "a2", content: [{ type: "text", text: "reply" }] },
+    ];
+
+    async function resumeClaude(bridge: any, ws: any): Promise<string> {
+      await bridge.handleClientMessage(
+        {
+          type: "resume_session",
+          sessionId: "claude-session-compact",
+          projectPath: "/tmp/project-a",
+          provider: "claude",
+        },
+        ws,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      const created = ws.send.mock.calls
+        .map((c: unknown[]) => JSON.parse(c[0] as string))
+        .find((m: any) => m.type === "system" && m.subtype === "session_created");
+      ws.send.mockClear();
+      return created.sessionId as string;
+    }
+
+    function sent(ws: any): any[] {
+      return ws.send.mock.calls.map((c: unknown[]) => JSON.parse(c[0] as string));
+    }
+
+    it("advertises the capability", () => {
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+      (bridge as any).sendSessionList(ws);
+      const catalog = sent(ws).find((m) => m.type === "session_list");
+      expect(catalog.protocolCapabilities).toContain("context_compaction_v1");
+      bridge.close();
+    });
+
+    it("strips compaction markers from past_history for older clients", async () => {
+      getSessionHistoryMock.mockResolvedValue(compactedHistory);
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+      const sessionId = await resumeClaude(bridge, ws);
+
+      await (bridge as any).handleClientMessage({ type: "get_history", sessionId }, ws);
+      const past = sent(ws).find((m) => m.type === "past_history");
+      expect(past.messages.map((m: any) => m.role)).toEqual([
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+      ]);
+      bridge.close();
+    });
+
+    it("keeps compaction markers for clients that support them", async () => {
+      getSessionHistoryMock.mockResolvedValue(compactedHistory);
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+      (bridge as any).clientSupportedServerMessages.set(
+        ws,
+        new Set(["context_compaction"]),
+      );
+      const sessionId = await resumeClaude(bridge, ws);
+
+      await (bridge as any).handleClientMessage({ type: "get_history", sessionId }, ws);
+      const past = sent(ws).find((m) => m.type === "past_history");
+      expect(past.messages[2]).toMatchObject({
+        role: "compaction",
+        compaction: { trigger: "auto", summary: "Earlier work" },
+      });
+      bridge.close();
+    });
+
+    it("filters live context_compaction for older clients only", () => {
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const oldWs = { readyState: OPEN_STATE, send: vi.fn() } as any;
+      const newWs = { readyState: OPEN_STATE, send: vi.fn() } as any;
+      (bridge as any).clientSupportedServerMessages.set(
+        newWs,
+        new Set(["context_compaction"]),
+      );
+      const marker = { type: "context_compaction", provider: "claude", id: "b1" };
+      const history = {
+        type: "history_delta",
+        sessionId: "s1",
+        fromSeq: 1,
+        toSeq: 1,
+        messages: [{ seq: 1, message: marker }],
+      };
+      expect((bridge as any).prepareServerMessageForClient(oldWs, marker)).toBeNull();
+      expect((bridge as any).prepareServerMessageForClient(newWs, marker)).toEqual(marker);
+      expect(
+        (bridge as any).prepareServerMessageForClient(oldWs, history).messages,
+      ).toEqual([]);
+      expect(
+        (bridge as any).prepareServerMessageForClient(newWs, history).messages,
+      ).toHaveLength(1);
+      bridge.close();
+    });
+
+    it("pages the transcript from the latest compaction", async () => {
+      getSessionHistoryMock.mockResolvedValue(compactedHistory);
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+      (bridge as any).clientSupportedServerMessages.set(
+        ws,
+        new Set(["context_compaction"]),
+      );
+      const sessionId = await resumeClaude(bridge, ws);
+
+      await (bridge as any).handleClientMessage(
+        {
+          type: "get_session_transcript",
+          sessionId,
+          requestId: "t1",
+          untilLatestCompaction: true,
+          limit: 2,
+        },
+        ws,
+      );
+      const first = sent(ws).find((m) => m.type === "session_transcript");
+      expect(first).toMatchObject({
+        requestId: "t1",
+        sessionId,
+        provider: "claude",
+        startIndex: 1,
+        endIndex: 3,
+        total: 5,
+      });
+      expect(first.messages.map((m: any) => m.uuid)).toEqual(["a1", "b1"]);
+      expect(getSessionHistoryMock).toHaveBeenLastCalledWith("claude-session-compact");
+
+      ws.send.mockClear();
+      await (bridge as any).handleClientMessage(
+        { type: "get_session_transcript", sessionId, requestId: "t2", beforeIndex: 1 },
+        ws,
+      );
+      const older = sent(ws).find((m) => m.type === "session_transcript");
+      expect(older).toMatchObject({ requestId: "t2", startIndex: 0, endIndex: 1 });
+      expect(older.messages.map((m: any) => m.uuid)).toEqual(["u1"]);
+      bridge.close();
+    });
+
+    it("converts Codex compaction history into a deduplicable marker", async () => {
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const marker = await (bridge as any).codexHistoryMessageToServerMessage(
+        { id: "s1", provider: "codex" },
+        { role: "compaction", uuid: "c1", content: [], compaction: {} },
+      );
+      expect(marker).toEqual({ type: "context_compaction", provider: "codex", id: "c1" });
+      expect((bridge as any).codexHistoryMessageIdentityKeys(marker)).toEqual([
+        "compaction:c1",
+      ]);
+      bridge.close();
+    });
+
+    it("reports a missing session to the transcript request", async () => {
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+      await (bridge as any).handleClientMessage(
+        { type: "get_session_transcript", sessionId: "missing", requestId: "t3" },
+        ws,
+      );
+      expect(sent(ws)).toContainEqual(
+        expect.objectContaining({
+          type: "error",
+          errorCode: "session_not_found",
+          requestId: "t3",
+        }),
+      );
+      bridge.close();
+    });
   });
 
   it("queues input addressed to a Claude session while resume history loads", async () => {
@@ -5316,6 +6541,22 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     } finally { bridge.close(); rmSync(projectPath, { recursive: true, force: true }); }
   });
 
+  it("converts dollar skills in a Claude initial prompt once skills arrive", async () => {
+    const projectPath = mkdtempSync(resolve(tmpdir(), "ccpocket-initial-skill-"));
+    const bridge = new BridgeWebSocketServer({ server: httpServer, allowedDirs: [projectPath] });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+    // The first lookups happen before the provider has reported its skills.
+    vi.spyOn((bridge as any).sessionManager, "getCachedCommands")
+      .mockReturnValueOnce(undefined)
+      .mockReturnValueOnce(undefined)
+      .mockReturnValueOnce(undefined)
+      .mockReturnValue({ slashCommands: ["review-pr", "compact"], skills: ["review-pr"], apps: [], plugins: [] });
+    try {
+      await (bridge as any).handleClientMessage({ type: "start", projectPath, provider: "claude", initialPrompt: "$review-pr 42 costs $5 $compact", requestId: "skill" }, ws);
+      await expect.poll(() => ws.send.mock.calls.map((c: unknown[]) => JSON.parse(c[0] as string)).find((m: any) => m.type === "user_input")?.text).toBe("/review-pr 42 costs $5 $compact");
+    } finally { bridge.close(); rmSync(projectPath, { recursive: true, force: true }); }
+  });
+
   it("bootstraps a project and returns correlated unborn diffs without restarting a session", async () => {
     const parentPath = mkdtempSync(resolve(tmpdir(), "ccpocket-new-project-"));
     const bridge = new BridgeWebSocketServer({ server: httpServer, allowedDirs: [parentPath] });
@@ -5336,6 +6577,28 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
         if (staged !== true) expect(result.diff).toContain("new file");
       }
     } finally { bridge.close(); rmSync(parentPath, { recursive: true, force: true }); }
+  });
+
+  it("reports an error instead of throwing when the diff cwd no longer exists", async () => {
+    const parentPath = mkdtempSync(resolve(tmpdir(), "ccpocket-diff-missing-"));
+    const missingPath = resolve(parentPath, "deleted-worktree");
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    try {
+      const result = await new Promise<{ diff: string; error?: string }>(
+        (resolvePromise, reject) => {
+          try {
+            (bridge as any).collectGitDiff(missingPath, resolvePromise);
+          } catch (err) {
+            reject(err);
+          }
+        },
+      );
+      expect(result.diff).toBe("");
+      expect(result.error).toEqual(expect.any(String));
+    } finally {
+      bridge.close();
+      rmSync(parentPath, { recursive: true, force: true });
+    }
   });
 
   it("returns unstaged diff for mixed ASCII and non-ASCII untracked paths", async () => {
@@ -7153,6 +8416,98 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     bridge.close();
   });
 
+  it("preserves catalog tiers on start and speed changes, and rejects unsupported changes", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+    (bridge as any).wss.clients.add(ws);
+    (bridge as any).applyCodexModels([
+      { model: "gpt-6-astra", supportedReasoningEfforts: ["high"],
+        supportedServiceTiers: ["fast", "ultrafast"],
+        serviceTierMetadata: [{ id: "fast", name: "Fast" },
+          { id: "ultrafast", name: "Ultrafast", description: "Fastest responses" }] },
+      { model: "gpt-6-luna", supportedReasoningEfforts: ["high"],
+        supportedServiceTiers: ["fast"], serviceTierMetadata: [{ id: "fast", name: "Fast" }] },
+    ]);
+    try {
+      await (bridge as any).handleClientMessage({ type: "start", projectPath: "/tmp/tier-project",
+        provider: "codex", model: "gpt-6-astra", serviceTier: "ultrafast" }, ws);
+      const session = (bridge as any).sessionManager.list()[0];
+      const stored = (bridge as any).sessionManager.get(session.id);
+      expect(stored.codexOptions.serviceTier).toBe("ultrafast");
+      (bridge as any).sendSessionList(ws);
+      const catalog = ws.send.mock.calls.map((call: unknown[]) => JSON.parse(call[0] as string))
+        .find((message: any) => message.type === "session_list");
+      expect(catalog.protocolCapabilities).toContain("codex_service_tiers_v1");
+      expect(catalog.codexModelServiceTierMetadata["gpt-6-astra"][1]).toEqual(
+        { id: "ultrafast", name: "Ultrafast", description: "Fastest responses" });
+      ws.send.mockClear();
+      await (bridge as any).handleClientMessage({ type: "set_codex_speed", sessionId: session.id,
+        serviceTier: "fast" }, ws);
+      await (bridge as any).handleClientMessage({ type: "set_codex_speed", sessionId: session.id,
+        serviceTier: "ultrafast" }, ws);
+      expect(stored.process.setServiceTier).toHaveBeenLastCalledWith("ultrafast");
+      expect(stored.codexSettings.serviceTier).toBe("ultrafast");
+      ws.send.mockClear();
+      await (bridge as any).handleClientMessage({ type: "set_codex_speed", sessionId: session.id,
+        serviceTier: "imaginary-tier" }, ws);
+      expect(JSON.parse(ws.send.mock.calls[0][0]).errorCode).toBe("set_codex_speed_rejected");
+      expect(stored.codexSettings.serviceTier).toBe("ultrafast");
+      ws.send.mockClear();
+      await (bridge as any).handleClientMessage({ type: "set_codex_model", sessionId: session.id,
+        model: "gpt-6-luna" }, ws);
+      expect(JSON.parse(ws.send.mock.calls[0][0]).errorCode).toBe("set_codex_model_rejected");
+      expect(stored.codexSettings.model).toBe("gpt-6-astra");
+    } finally { bridge.close(); }
+  });
+
+  it("keeps legacy model-then-Standard changes compatible from Fast", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+    (bridge as any).wss.clients.add(ws);
+    (bridge as any).applyCodexModels([
+      { model: "gpt-6-astra", supportedReasoningEfforts: ["high"], supportedServiceTiers: ["fast"] },
+      { model: "gpt-6-luna", supportedReasoningEfforts: ["high"], supportedServiceTiers: [] },
+    ]);
+    try {
+      await (bridge as any).handleClientMessage({ type: "start", projectPath: "/tmp/tier-project",
+        provider: "codex", model: "gpt-6-astra", serviceTier: "fast" }, ws);
+      const { id: sessionId } = (bridge as any).sessionManager.list()[0];
+      const session = (bridge as any).sessionManager.get(sessionId);
+      ws.send.mockClear();
+      await (bridge as any).handleClientMessage({ type: "set_codex_model", sessionId,
+        model: "gpt-6-luna", modelReasoningEffort: "high" }, ws);
+      await (bridge as any).handleClientMessage({ type: "set_codex_speed", sessionId,
+        serviceTier: "standard" }, ws);
+      expect(session.process.setModel).toHaveBeenCalledWith("gpt-6-luna", "high");
+      expect(session.process.setServiceTier).toHaveBeenLastCalledWith("standard");
+      expect(session.codexSettings).toMatchObject({ model: "gpt-6-luna", serviceTier: "standard" });
+      expect(ws.send.mock.calls.map((call: unknown[]) => JSON.parse(call[0] as string))
+        .filter((message: any) => message.type === "error")).toEqual([]);
+    } finally { bridge.close(); }
+  });
+
+  it("rejects unsupported tiers before creating or resuming a session", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+    (bridge as any).applyCodexModels([{ model: "gpt-6-luna", supportedReasoningEfforts: ["high"],
+      supportedServiceTiers: ["fast"] }]);
+    try {
+      await (bridge as any).handleClientMessage({ type: "start", projectPath: "/tmp/tier-project",
+        provider: "codex", model: "gpt-6-luna", serviceTier: "ultrafast", requestId: "start-id" }, ws);
+      expect((bridge as any).sessionManager.list()).toEqual([]);
+      expect(JSON.parse(ws.send.mock.calls[0][0])).toMatchObject({
+        type: "error", errorCode: "codex_service_tier_unavailable", requestId: "start-id" });
+      ws.send.mockClear();
+      await (bridge as any).handleClientMessage({ type: "resume_session", sessionId: "old-thread",
+        projectPath: "/tmp/tier-project", provider: "codex", model: "gpt-6-luna",
+        serviceTier: "ultrafast", resumeRequestId: "resume-id" }, ws);
+      expect((bridge as any).sessionManager.list()).toEqual([]);
+      expect(ws.send.mock.calls.map((call: unknown[]) => JSON.parse(call[0] as string))).toContainEqual(
+        expect.objectContaining({ type: "error", errorCode: "codex_service_tier_unavailable",
+          requestId: "resume-id" }));
+    } finally { bridge.close(); }
+  });
+
   it("updates codex model in-place and broadcasts session settings", async () => {
     const bridge = new BridgeWebSocketServer({ server: httpServer });
     const ws = {
@@ -8061,6 +9416,113 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     bridge.close();
   });
 
+  it("Claude sandbox change keeps the selected model, effort and fast mode", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const ws = {
+      readyState: OPEN_STATE,
+      send: vi.fn(),
+    } as any;
+
+    await (bridge as any).handleClientMessage(
+      {
+        type: "start",
+        projectPath: "/tmp/project-a",
+        provider: "claude",
+      },
+      ws,
+    );
+
+    const created = ws.send.mock.calls
+      .map((c: unknown[]) => JSON.parse(c[0] as string))
+      .find((m: any) => m.type === "system" && m.subtype === "session_created");
+    const session = (bridge as any).sessionManager.get(created.sessionId);
+    session.claudeSessionId = "claude-session-1";
+    session.sandboxEnabled = false;
+    session.process.model = "claude-opus-resolved-id";
+    session.process.settings = {
+      model: "opus",
+      effort: "xhigh",
+      fastMode: true,
+    };
+
+    (bridge as any).handleClientMessage(
+      {
+        type: "set_sandbox_mode",
+        sessionId: created.sessionId,
+        sandboxMode: "on",
+      },
+      ws,
+    );
+
+    const sessions = (bridge as any).sessionManager.list();
+    expect(sessions).toHaveLength(1);
+    const newSession = (bridge as any).sessionManager.get(sessions[0].id);
+    expect(newSession.startOptions).toMatchObject({
+      sessionId: "claude-session-1",
+      model: "opus",
+      effort: "xhigh",
+      fastMode: true,
+      sandboxEnabled: true,
+    });
+
+    bridge.close();
+  });
+
+  it("clearContext approve keeps Claude model settings and sandbox", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const ws = {
+      readyState: OPEN_STATE,
+      send: vi.fn(),
+    } as any;
+
+    await (bridge as any).handleClientMessage(
+      {
+        type: "start",
+        projectPath: "/tmp/project-a",
+        provider: "claude",
+      },
+      ws,
+    );
+
+    const created = ws.send.mock.calls
+      .map((c: unknown[]) => JSON.parse(c[0] as string))
+      .find((m: any) => m.type === "system" && m.subtype === "session_created");
+    const sessionId = created.sessionId as string;
+    const session = (bridge as any).sessionManager.get(sessionId);
+    session.claudeSessionId = "claude-session-1";
+    session.sandboxEnabled = true;
+    session.process.model = "claude-opus-resolved-id";
+    session.process.settings = {
+      model: "opus",
+      effort: "xhigh",
+      fastMode: true,
+    };
+
+    (bridge as any).handleClientMessage(
+      {
+        type: "approve",
+        id: "tool-exit-1",
+        clearContext: true,
+        sessionId,
+      },
+      ws,
+    );
+
+    const sessions = (bridge as any).sessionManager.list();
+    expect(sessions).toHaveLength(1);
+    const newSession = (bridge as any).sessionManager.get(sessions[0].id);
+    expect(newSession.startOptions).toMatchObject({
+      sessionId: "claude-session-1",
+      continueMode: true,
+      model: "opus",
+      effort: "xhigh",
+      fastMode: true,
+      sandboxEnabled: true,
+    });
+
+    bridge.close();
+  });
+
   it("routes tool suggestion installation to the Codex process", async () => {
     const bridge = new BridgeWebSocketServer({ server: httpServer });
     const ws = {
@@ -8595,6 +10057,117 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       eventType: "session_completed",
     });
 
+    bridge.close();
+  });
+
+  it("holds Claude completion pushes until background agents settle", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(async () => new Response("", { status: 200 }));
+      globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+      const bridge = new BridgeWebSocketServer({ server: httpServer, firebaseAuth: {
+        uid: "bridge-test", getIdToken: vi.fn(async () => "mock-token"),
+        initialize: vi.fn(async () => {}),
+      } as any });
+      (bridge as any).tokenLocales.set("token-1", "en");
+      const session: Record<string, unknown> = {
+        id: "s-1",
+        provider: "claude",
+        status: "running",
+        backgroundTasks: [
+          { taskId: "a1", taskType: "local_agent" },
+          { taskId: "b1", taskType: "local_bash" },
+        ],
+      };
+      vi.spyOn((bridge as any).sessionManager, "get").mockImplementation(
+        (id: unknown) => (id === "s-1" ? session : undefined),
+      );
+      const send = (msg: Record<string, unknown>) =>
+        (bridge as any).broadcastSessionMessage("s-1", msg);
+
+      session.status = "idle";
+      send({ type: "result", subtype: "success", result: "launched" });
+      send({ type: "status", status: "idle" });
+      session.status = "running";
+      send({ type: "status", status: "running" });
+      session.status = "idle";
+      send({ type: "result", subtype: "success", result: "still waiting" });
+      send({ type: "status", status: "idle" });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      // The agent finished; a long-lived shell (dev server) keeps running.
+      const shellOnly = [{ taskId: "b1", taskType: "local_bash" }];
+      session.backgroundTasks = shellOnly;
+      send({ type: "background_tasks", tasks: shellOnly });
+      await vi.advanceTimersByTimeAsync(2_000);
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+      expect(JSON.parse(String(init.body))).toMatchObject({
+        eventType: "session_completed",
+        body: "still waiting",
+      });
+      bridge.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not hold Claude completion pushes for background shells", async () => {
+    const fetchMock = vi.fn(async () => new Response("", { status: 200 }));
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+    const bridge = new BridgeWebSocketServer({ server: httpServer, firebaseAuth: {
+      uid: "bridge-test", getIdToken: vi.fn(async () => "mock-token"),
+      initialize: vi.fn(async () => {}),
+    } as any });
+    (bridge as any).tokenLocales.set("token-1", "en");
+    vi.spyOn((bridge as any).sessionManager, "get").mockImplementation(
+      (id: unknown) => id === "s-1"
+        ? {
+          id: "s-1",
+          provider: "claude",
+          status: "idle",
+          backgroundTasks: [
+            { taskId: "b1", taskType: "local_bash" },
+            { taskId: "m1", taskType: "monitor" },
+          ],
+        }
+        : undefined,
+    );
+    (bridge as any).broadcastSessionMessage("s-1", {
+      type: "result",
+      subtype: "success",
+      result: "done",
+    });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    bridge.close();
+  });
+
+  it("does not hold Codex completion pushes for background terminals", async () => {
+    const fetchMock = vi.fn(async () => new Response("", { status: 200 }));
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+    const bridge = new BridgeWebSocketServer({ server: httpServer, firebaseAuth: {
+      uid: "bridge-test", getIdToken: vi.fn(async () => "mock-token"),
+      initialize: vi.fn(async () => {}),
+    } as any });
+    (bridge as any).tokenLocales.set("token-1", "en");
+    vi.spyOn((bridge as any).sessionManager, "get").mockImplementation(
+      (id: unknown) => id === "s-1"
+        ? {
+          id: "s-1",
+          provider: "codex",
+          status: "idle",
+          backgroundTasks: [{ taskId: "cmd-1", taskType: "codex_terminal" }],
+        }
+        : undefined,
+    );
+    (bridge as any).broadcastSessionMessage("s-1", {
+      type: "result",
+      subtype: "success",
+      result: "done",
+    });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     bridge.close();
   });
 
@@ -9141,7 +10714,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       sessionId,
       queued: true,
     });
-    expect(session.codexQueuedInput).toMatchObject({
+    expect(session.queuedInput).toMatchObject({
       text: "while busy",
       clientMessageId: "cm-busy-input",
     });
@@ -9315,6 +10888,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       },
     ];
     const forkThread = session.process.forkThreadAtUserTurn;
+    session.process.archiveThread = vi.fn(async () => {});
 
     ws.send.mockClear();
     await (bridge as any).handleClientMessage(
@@ -9326,8 +10900,16 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       },
       ws,
     );
-    await Promise.resolve();
+    await vi.waitFor(() => {
+      expect(
+        ws.send.mock.calls.some((c: unknown[]) =>
+          String(c[0]).includes('"rewind_result"'),
+        ),
+      ).toBe(true);
+    });
 
+    // Like Codex App's edit-and-resend, the old thread leaves history.
+    expect(session.process.archiveThread).toHaveBeenCalledWith("thread-rollback");
     if (target === 1) expect(forkThread).not.toHaveBeenCalled();
     else expect(forkThread).toHaveBeenCalledWith(1);
     expect(getCodexSessionHistoryMock).not.toHaveBeenCalled();
@@ -9350,6 +10932,86 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     expect(newSession.pastMessages.filter((m: any) => m.role === "user")).toHaveLength(target - 1);
 
     bridge.close();
+  });
+
+  describe("edit_message", () => {
+    const start = async (bridge: any, ws: any) => {
+      bridge.handleClientMessage(
+        { type: "start", projectPath: "/tmp/edit-test", provider: "claude" },
+        ws,
+      );
+      await Promise.resolve();
+      const created = ws.send.mock.calls
+        .map((c: unknown[]) => JSON.parse(c[0] as string))
+        .find((m: any) => m.type === "system" && m.subtype === "session_created");
+      ws.send.mockClear();
+      return created.sessionId as string;
+    };
+
+    it("rewinds in place, then sends the edited text as new input", async () => {
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+      const sessionId = await start(bridge, ws);
+      const manager = (bridge as any).sessionManager;
+      const handle = vi.spyOn(bridge as any, "handleClientMessage");
+
+      await (bridge as any).handleClientMessage(
+        { type: "edit_message", sessionId, targetUuid: "u2", text: "fixed", clientMessageId: "c1" },
+        ws,
+      );
+
+      expect(manager.rewindInPlace).toHaveBeenCalledWith(sessionId, "u2");
+      expect(handle).toHaveBeenCalledWith(
+        { type: "input", sessionId, text: "fixed", clientMessageId: "c1" },
+        ws,
+      );
+      bridge.close();
+    });
+
+    it("refuses while a turn is running", async () => {
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+      const sessionId = await start(bridge, ws);
+      const manager = (bridge as any).sessionManager;
+      manager.get(sessionId).status = "running";
+
+      await (bridge as any).handleClientMessage(
+        { type: "edit_message", sessionId, targetUuid: "u2", text: "fixed" },
+        ws,
+      );
+
+      expect(manager.rewindInPlace).not.toHaveBeenCalled();
+      const sends = ws.send.mock.calls.map((c: unknown[]) => JSON.parse(c[0] as string));
+      expect(sends).toContainEqual(
+        expect.objectContaining({ type: "error", errorCode: "edit_message_failed" }),
+      );
+      bridge.close();
+    });
+
+    it("reports a failed rewind without sending input", async () => {
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+      const sessionId = await start(bridge, ws);
+      const manager = (bridge as any).sessionManager;
+      manager.rewindInPlace.mockRejectedValueOnce(new Error("Rewind target not found"));
+      const handle = vi.spyOn(bridge as any, "handleClientMessage");
+
+      await (bridge as any).handleClientMessage(
+        { type: "edit_message", sessionId, targetUuid: "zz", text: "fixed" },
+        ws,
+      );
+
+      expect(handle).toHaveBeenCalledTimes(1);
+      const sends = ws.send.mock.calls.map((c: unknown[]) => JSON.parse(c[0] as string));
+      expect(sends).toContainEqual(
+        expect.objectContaining({
+          type: "error",
+          errorCode: "edit_message_failed",
+          message: "Rewind target not found",
+        }),
+      );
+      bridge.close();
+    });
   });
 
   it("forks codex conversation directly at a target turn", async () => {
@@ -9375,10 +11037,17 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     const sessionId = created.sessionId as string;
     const session = (bridge as any).sessionManager.get(sessionId);
     session.process.sessionId = "thread-source";
-    session.process.forkThreadAtUserTurn.mockResolvedValueOnce({
-      threadId: "thread-forked",
-      thread: { id: "thread-forked", turns: [] },
-    });
+    // The fork runs in a throwaway app-server that must release the forked
+    // thread before the new session resumes it.
+    const forker = {
+      forkThreadAtUserTurn: vi.fn().mockResolvedValue({
+        threadId: "thread-forked",
+        thread: { id: "thread-forked", turns: [] },
+      }),
+      stop: vi.fn(),
+      waitForShutdown: vi.fn(async () => {}),
+    };
+    vi.spyOn(bridge as any, "createStandaloneCodexProcess").mockResolvedValue(forker);
     session.history = [
       {
         type: "user_input",
@@ -9419,8 +11088,10 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(session.process.forkThreadAtUserTurn).toHaveBeenCalledTimes(1);
-    expect(session.process.forkThreadAtUserTurn).toHaveBeenCalledWith(1);
+    expect(session.process.forkThreadAtUserTurn).not.toHaveBeenCalled();
+    expect(forker.forkThreadAtUserTurn).toHaveBeenCalledWith(1, "thread-source");
+    expect(forker.stop).toHaveBeenCalled();
+    expect(forker.waitForShutdown).toHaveBeenCalled();
     expect(getCodexSessionHistoryMock).not.toHaveBeenCalled();
 
     const sends = ws.send.mock.calls.map((c: unknown[]) => JSON.parse(c[0] as string));
@@ -9450,6 +11121,104 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     ]);
 
     bridge.close();
+  });
+
+  describe("claude fork from an assistant message", () => {
+    async function startClaude() {
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+      (bridge as any).handleClientMessage(
+        { type: "start", projectPath: "/tmp/project-claude", provider: "claude" },
+        ws,
+      );
+      await Promise.resolve();
+      const created = ws.send.mock.calls
+        .map((c: unknown[]) => JSON.parse(c[0] as string))
+        .find(
+          (m: any) => m.type === "system" && m.subtype === "session_created",
+        );
+      const sessionId = created.sessionId as string;
+      const session = (bridge as any).sessionManager.get(sessionId);
+      session.claudeSessionId = "claude-source";
+      session.process.settings = { model: "opus", effort: "xhigh" };
+      session.process.permissionMode = "acceptEdits";
+      ws.send.mockClear();
+      return { bridge, ws, sessionId, session };
+    }
+
+    async function flush() {
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+    }
+
+    it("creates a forked session that keeps the source", async () => {
+      const { bridge, ws, sessionId } = await startClaude();
+      getSessionHistoryMock.mockResolvedValueOnce([
+        { role: "user", uuid: "u1", content: [{ type: "text", text: "one" }] },
+        { role: "assistant", uuid: "a1", content: [{ type: "text", text: "1" }] },
+        { role: "user", uuid: "u2", content: [{ type: "text", text: "two" }] },
+        { role: "assistant", uuid: "a2", content: [{ type: "text", text: "2" }] },
+      ]);
+
+      await (bridge as any).handleClientMessage(
+        { type: "fork", sessionId, targetUuid: "a1" },
+        ws,
+      );
+      await flush();
+
+      expect(getSessionHistoryMock).toHaveBeenCalledWith("claude-source");
+      const newCreated = ws.send.mock.calls
+        .map((c: unknown[]) => JSON.parse(c[0] as string))
+        .find(
+          (m: any) => m.type === "system" && m.subtype === "session_created",
+        );
+      expect(newCreated).toMatchObject({
+        provider: "claude",
+        sourceSessionId: sessionId,
+        forked: true,
+      });
+      expect((bridge as any).sessionManager.get(sessionId)).toBeDefined();
+      const forked = (bridge as any).sessionManager.get(newCreated.sessionId);
+      expect(forked.startOptions).toMatchObject({
+        sessionId: "claude-source",
+        forkSession: true,
+        resumeSessionAt: "a1",
+        permissionMode: "acceptEdits",
+        model: "opus",
+        effort: "xhigh",
+      });
+      expect(forked.pastMessages.map((m: any) => m.uuid)).toEqual(["u1", "a1"]);
+      bridge.close();
+    });
+
+    it("rejects unknown targets and running sessions", async () => {
+      const { bridge, ws, sessionId, session } = await startClaude();
+      getSessionHistoryMock.mockResolvedValueOnce([
+        { role: "user", uuid: "u1", content: [] },
+      ]);
+      await (bridge as any).handleClientMessage(
+        { type: "fork", sessionId, targetUuid: "u1" },
+        ws,
+      );
+      await flush();
+      expect(JSON.parse(ws.send.mock.calls.at(-1)?.[0] as string)).toMatchObject({
+        type: "error",
+        errorCode: "fork_failed",
+        message: "Fork target not found in the Claude transcript",
+      });
+
+      session.status = "running";
+      ws.send.mockClear();
+      await (bridge as any).handleClientMessage(
+        { type: "fork", sessionId, targetUuid: "a1" },
+        ws,
+      );
+      await flush();
+      expect(JSON.parse(ws.send.mock.calls.at(-1)?.[0] as string)).toMatchObject({
+        errorCode: "fork_failed",
+        message: "Cannot fork while Claude is running",
+      });
+      bridge.close();
+    });
   });
 
   it("rejects codex code rewind modes", async () => {
@@ -9519,7 +11288,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     const sessionId = created.sessionId as string;
     const session = (bridge as any).sessionManager.get(sessionId);
     session.process.isWaitingForInput = false;
-    session.codexQueuedInput = {
+    session.queuedInput = {
       itemId: "queued-1",
       text: "already queued",
       createdAt: new Date().toISOString(),
@@ -9568,7 +11337,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       .find((m: any) => m.type === "system" && m.subtype === "session_created");
     const sessionId = created.sessionId as string;
     const session = (bridge as any).sessionManager.get(sessionId);
-    session.codexQueuedInput = {
+    session.queuedInput = {
       itemId: "queued-1",
       text: "original",
       createdAt: new Date().toISOString(),
@@ -9583,7 +11352,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       },
       ws,
     );
-    expect(session.codexQueuedInput.text).toBe("edited");
+    expect(session.queuedInput.text).toBe("edited");
 
     (bridge as any).handleClientMessage(
       {
@@ -9593,7 +11362,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       },
       ws,
     );
-    expect(session.codexQueuedInput).toBeUndefined();
+    expect(session.queuedInput).toBeUndefined();
 
     bridge.close();
   });
@@ -9626,7 +11395,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       .find((m: any) => m.type === "system" && m.subtype === "session_created");
     const sessionId = created.sessionId as string;
     const session = (bridge as any).sessionManager.get(sessionId);
-    session.codexQueuedInput = {
+    session.queuedInput = {
       itemId: "queued-1",
       text: "steer now",
       createdAt: new Date().toISOString(),
@@ -9653,7 +11422,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
         mentions: undefined,
       },
     );
-    expect(session.codexQueuedInput).toBeUndefined();
+    expect(session.queuedInput).toBeUndefined();
     const peerMessages = otherWs.send.mock.calls.map((c: unknown[]) =>
       JSON.parse(c[0] as string),
     );
@@ -9690,7 +11459,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       .find((m: any) => m.type === "system" && m.subtype === "session_created");
     const sessionId = created.sessionId as string;
     const session = (bridge as any).sessionManager.get(sessionId);
-    session.codexQueuedInput = {
+    session.queuedInput = {
       itemId: "queued-1",
       text: "steer now",
       createdAt: new Date().toISOString(),
@@ -9709,7 +11478,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       ws,
     );
 
-    expect(session.codexQueuedInput?.text).toBe("steer now");
+    expect(session.queuedInput?.text).toBe("steer now");
     const error = ws.send.mock.calls
       .map((c: unknown[]) => JSON.parse(c[0] as string))
       .find((m: any) => m.type === "error");
@@ -9721,12 +11490,13 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     bridge.close();
   });
 
-  it("rejects steer_queued_input for claude sessions", async () => {
+  it("steers claude queued input into the running turn", async () => {
     const bridge = new BridgeWebSocketServer({ server: httpServer });
     const ws = {
       readyState: OPEN_STATE,
       send: vi.fn(),
     } as any;
+    (bridge as any).wss.clients.add(ws);
 
     (bridge as any).handleClientMessage(
       {
@@ -9742,6 +11512,12 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       .map((c: unknown[]) => JSON.parse(c[0] as string))
       .find((m: any) => m.type === "system" && m.subtype === "session_created");
     const sessionId = created.sessionId as string;
+    const session = (bridge as any).sessionManager.get(sessionId);
+    session.queuedInput = {
+      itemId: "queued-1",
+      text: "steer claude",
+      createdAt: new Date().toISOString(),
+    };
 
     ws.send.mockClear();
     await (bridge as any).handleClientMessage(
@@ -9753,13 +11529,383 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       ws,
     );
 
-    const error = JSON.parse(ws.send.mock.calls.at(-1)?.[0] as string);
-    expect(error).toMatchObject({
-      type: "error",
-      message: "No active Codex session.",
-    });
+    expect(session.process.steerInput).toHaveBeenCalledWith(
+      "steer claude",
+      undefined,
+    );
+    expect(session.process.steerInputStructured).not.toHaveBeenCalled();
+    expect(session.queuedInput).toBeUndefined();
 
     bridge.close();
+  });
+
+  it("changes Claude model, effort and fast mode mid-session", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+    (bridge as any).wss.clients.add(ws);
+    (bridge as any).handleClientMessage(
+      { type: "start", projectPath: "/tmp/project-claude", provider: "claude" },
+      ws,
+    );
+    await Promise.resolve();
+    const created = ws.send.mock.calls
+      .map((c: unknown[]) => JSON.parse(c[0] as string))
+      .find((m: any) => m.type === "system" && m.subtype === "session_created");
+    const sessionId = created.sessionId as string;
+    const session = (bridge as any).sessionManager.get(sessionId);
+    ws.send.mockClear();
+
+    await (bridge as any).handleClientMessage(
+      {
+        type: "set_claude_settings",
+        sessionId,
+        model: "opus",
+        effort: "xhigh",
+        fastMode: true,
+      },
+      ws,
+    );
+
+    expect(session.process.updateSettings).toHaveBeenCalledWith({
+      model: "opus",
+      effort: "xhigh",
+      fastMode: true,
+    });
+    const messages = ws.send.mock.calls.map((c: unknown[]) =>
+      JSON.parse(c[0] as string),
+    );
+    expect(
+      messages.find(
+        (m: any) => m.type === "system" && m.subtype === "claude_settings",
+      ),
+    ).toMatchObject({
+      sessionId,
+      provider: "claude",
+      model: "opus",
+      effort: "xhigh",
+      fastMode: true,
+    });
+    bridge.close();
+  });
+
+  it("reports rejected Claude settings and re-sends current settings", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+    (bridge as any).handleClientMessage(
+      { type: "start", projectPath: "/tmp/project-claude", provider: "claude" },
+      ws,
+    );
+    await Promise.resolve();
+    const created = ws.send.mock.calls
+      .map((c: unknown[]) => JSON.parse(c[0] as string))
+      .find((m: any) => m.type === "system" && m.subtype === "session_created");
+    const sessionId = created.sessionId as string;
+    const session = (bridge as any).sessionManager.get(sessionId);
+    session.process.updateSettings.mockRejectedValueOnce(new Error("nope"));
+    ws.send.mockClear();
+
+    await (bridge as any).handleClientMessage(
+      { type: "set_claude_settings", sessionId, model: "haiku" },
+      ws,
+    );
+
+    const messages = ws.send.mock.calls.map((c: unknown[]) =>
+      JSON.parse(c[0] as string),
+    );
+    expect(messages.find((m: any) => m.type === "error")).toMatchObject({
+      errorCode: "set_claude_settings_rejected",
+    });
+    expect(
+      messages.find(
+        (m: any) => m.type === "system" && m.subtype === "claude_settings",
+      ),
+    ).toMatchObject({ model: "sonnet", effort: "high", fastMode: false });
+    bridge.close();
+  });
+
+  it("rejects set_claude_settings for codex sessions", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+    (bridge as any).handleClientMessage(
+      { type: "start", projectPath: "/tmp/project-codex", provider: "codex" },
+      ws,
+    );
+    await Promise.resolve();
+    const created = ws.send.mock.calls
+      .map((c: unknown[]) => JSON.parse(c[0] as string))
+      .find((m: any) => m.type === "system" && m.subtype === "session_created");
+    ws.send.mockClear();
+    await (bridge as any).handleClientMessage(
+      {
+        type: "set_claude_settings",
+        sessionId: created.sessionId,
+        effort: "low",
+      },
+      ws,
+    );
+    expect(JSON.parse(ws.send.mock.calls.at(-1)?.[0] as string)).toMatchObject({
+      type: "error",
+      errorCode: "set_claude_settings_unsupported",
+    });
+    bridge.close();
+  });
+
+  describe("claude input delivery while a turn is active", () => {
+    async function startBusyClaude() {
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+      (bridge as any).wss.clients.add(ws);
+      (bridge as any).handleClientMessage(
+        { type: "start", projectPath: "/tmp/project-claude", provider: "claude" },
+        ws,
+      );
+      await Promise.resolve();
+      const created = ws.send.mock.calls
+        .map((c: unknown[]) => JSON.parse(c[0] as string))
+        .find(
+          (m: any) => m.type === "system" && m.subtype === "session_created",
+        );
+      const sessionId = created.sessionId as string;
+      const session = (bridge as any).sessionManager.get(sessionId);
+      session.process.isTurnActive = true;
+      session.process.dispatchInput = vi.fn(() => ({
+        queued: true,
+        shouldInterrupt: true,
+      }));
+      ws.send.mockClear();
+      return { bridge, ws, sessionId, session };
+    }
+
+    function sent(ws: any) {
+      return ws.send.mock.calls.map((c: unknown[]) =>
+        JSON.parse(c[0] as string),
+      );
+    }
+
+    it.each(["claude", "codex"])("queues %s input during a usage limit even with steer selected", async (provider) => {
+      const { bridge, ws, sessionId, session } = await startBusyClaude();
+      session.provider = provider;
+      session.process.isTurnActive = false;
+      session.process.isWaitingForInput = true;
+      session.usageLimitUntil = Date.now() + 3600000;
+      session.process.sendInputStructured = vi.fn();
+      session.process.steerInput = vi.fn();
+      await (bridge as any).handleClientMessage({
+        type: "input", sessionId, text: "after limit", clientMessageId: "limit-1", delivery: "steer",
+      }, ws);
+      expect(session.queuedInput).toMatchObject({ text: "after limit", clientMessageId: "limit-1" });
+      expect(session.process.dispatchInput).not.toHaveBeenCalled();
+      expect(session.process.sendInputStructured).not.toHaveBeenCalled();
+      expect(session.process.steerInput).not.toHaveBeenCalled();
+      expect(sent(ws).find((m: any) => m.type === "input_ack")).toMatchObject({ queued: true });
+      bridge.close();
+    });
+
+    it("holds queue delivery without interrupting the turn", async () => {
+      const { bridge, ws, sessionId, session } = await startBusyClaude();
+      await (bridge as any).handleClientMessage(
+        {
+          type: "input",
+          sessionId,
+          text: "next turn please",
+          clientMessageId: "c-1",
+          delivery: "queue",
+        },
+        ws,
+      );
+      expect(session.queuedInput).toMatchObject({
+        text: "next turn please",
+        clientMessageId: "c-1",
+      });
+      expect(session.queuedInput.userMessageUuid).toBeUndefined();
+      expect(session.process.interrupt).not.toHaveBeenCalled();
+      expect(session.process.dispatchInput).not.toHaveBeenCalled();
+      expect(sent(ws).find((m: any) => m.type === "input_ack")).toMatchObject({
+        clientMessageId: "c-1",
+        queued: true,
+      });
+      bridge.close();
+    });
+
+    it("rejects queue delivery when the queue is occupied", async () => {
+      const { bridge, ws, sessionId, session } = await startBusyClaude();
+      session.queuedInput = {
+        itemId: "queued-1",
+        text: "first",
+        createdAt: new Date().toISOString(),
+      };
+      await (bridge as any).handleClientMessage(
+        {
+          type: "input",
+          sessionId,
+          text: "second",
+          clientMessageId: "c-2",
+          delivery: "queue",
+        },
+        ws,
+      );
+      expect(sent(ws).find((m: any) => m.type === "input_rejected")).toMatchObject({
+        clientMessageId: "c-2",
+        reason: "Queue is full",
+      });
+      bridge.close();
+    });
+
+    it("steers into the running turn even when a message is queued", async () => {
+      const { bridge, ws, sessionId, session } = await startBusyClaude();
+      session.queuedInput = {
+        itemId: "queued-1",
+        text: "first",
+        createdAt: new Date().toISOString(),
+      };
+      await (bridge as any).handleClientMessage(
+        {
+          type: "input",
+          sessionId,
+          text: "steer now",
+          clientMessageId: "c-3",
+          delivery: "steer",
+        },
+        ws,
+      );
+      expect(session.process.steerInput).toHaveBeenCalledWith(
+        "steer now",
+        undefined,
+      );
+      expect(session.process.interrupt).not.toHaveBeenCalled();
+      expect(session.queuedInput.text).toBe("first");
+      expect(sent(ws).find((m: any) => m.type === "input_ack")).toMatchObject({
+        clientMessageId: "c-3",
+        queued: false,
+      });
+      bridge.close();
+    });
+
+    it("keeps the legacy interrupt path when delivery is omitted", async () => {
+      const { bridge, ws, sessionId, session } = await startBusyClaude();
+      await (bridge as any).handleClientMessage(
+        { type: "input", sessionId, text: "legacy", clientMessageId: "c-4" },
+        ws,
+      );
+      expect(session.process.dispatchInput).toHaveBeenCalledWith("legacy");
+      expect(session.process.interrupt).toHaveBeenCalled();
+      expect(session.queuedInput).toBeUndefined();
+      bridge.close();
+    });
+  });
+
+  describe("interrupt with retract", () => {
+    const startClaude = async (bridge: any, ws: any) => {
+      bridge.handleClientMessage(
+        { type: "start", projectPath: "/tmp/retract-test", provider: "claude" },
+        ws,
+      );
+      await Promise.resolve();
+      const created = ws.send.mock.calls
+        .map((c: unknown[]) => JSON.parse(c[0] as string))
+        .find((m: any) => m.type === "system" && m.subtype === "session_created");
+      const sessionId = created.sessionId as string;
+      const session = bridge.sessionManager.get(sessionId);
+      session.status = "running";
+      session.process.interrupt = vi.fn(() => {
+        session.status = "idle";
+      });
+      ws.send.mockClear();
+      return { sessionId, session };
+    };
+    const flush = async () => {
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    };
+    const sent = (ws: any) =>
+      ws.send.mock.calls.map((c: unknown[]) => JSON.parse(c[0] as string));
+
+    it("rewinds in place and hands the prompt back", async () => {
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+      const { sessionId, session } = await startClaude(bridge, ws);
+      const manager = (bridge as any).sessionManager;
+      manager.retractableUserInput.mockReturnValue({ text: "typo", historySeq: 3 });
+
+      (bridge as any).handleClientMessage(
+        { type: "interrupt", sessionId, retract: true },
+        ws,
+      );
+      await flush();
+
+      expect(session.process.interrupt).toHaveBeenCalledOnce();
+      expect(manager.rewindInPlace).toHaveBeenCalledWith(sessionId, null);
+      const messages = sent(ws);
+      expect(messages).toContainEqual({ type: "input_retracted", sessionId, text: "typo" });
+      expect(
+        messages.some((m: any) => m.type === "system" && m.subtype === "session_created"),
+      ).toBe(false);
+      expect(manager.get(sessionId)).toBe(session);
+      bridge.close();
+    });
+
+    it("waits for a just-sent prompt's turn to start before retracting", async () => {
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+      const { sessionId, session } = await startClaude(bridge, ws);
+      const manager = (bridge as any).sessionManager;
+      manager.retractableUserInput.mockReturnValue({ text: "typo", historySeq: 3 });
+      const events = new EventEmitter();
+      session.process.on = events.on.bind(events);
+      session.process.off = events.off.bind(events);
+      session.status = "idle";
+
+      (bridge as any).handleClientMessage(
+        { type: "interrupt", sessionId, retract: true },
+        ws,
+      );
+      await flush();
+      expect(session.process.interrupt).not.toHaveBeenCalled();
+
+      session.status = "running";
+      events.emit("status", "running");
+      await flush();
+
+      expect(session.process.interrupt).toHaveBeenCalledOnce();
+      expect(manager.rewindInPlace).toHaveBeenCalledWith(sessionId, null);
+      bridge.close();
+    });
+
+    it("keeps the prompt when output arrived before the abort landed", async () => {
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+      const { sessionId, session } = await startClaude(bridge, ws);
+      const manager = (bridge as any).sessionManager;
+      manager.retractableUserInput
+        .mockReturnValueOnce({ text: "typo", historySeq: 3 })
+        .mockReturnValueOnce(null);
+
+      (bridge as any).handleClientMessage(
+        { type: "interrupt", sessionId, retract: true },
+        ws,
+      );
+      await flush();
+
+      expect(session.process.interrupt).toHaveBeenCalledOnce();
+      expect(sent(ws).some((m: any) => m.type === "input_retracted")).toBe(false);
+      expect(manager.get(sessionId)).toBe(session);
+      bridge.close();
+    });
+
+    it("only interrupts when the prompt is not retractable", async () => {
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+      const { sessionId, session } = await startClaude(bridge, ws);
+
+      (bridge as any).handleClientMessage(
+        { type: "interrupt", sessionId, retract: true },
+        ws,
+      );
+      await flush();
+
+      expect(session.process.interrupt).toHaveBeenCalledOnce();
+      expect(sent(ws)).toEqual([]);
+      bridge.close();
+    });
   });
 
   it("includes sourceSessionId in rewind conversation session_created", async () => {
@@ -10429,7 +12575,9 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     bridge.close();
   });
 
-  it("keeps one Codex cursor across sparse Project-scoped history pages", async () => {
+  it("pages every Codex thread once into the snapshot for Project-scoped listings", async () => {
+    // Use the real snapshot loader (spied in beforeEach) with a fake app-server.
+    (BridgeWebSocketServer.prototype as any).loadAllCodexThreads.mockRestore();
     const workspaceStore = {
       resolveRecentWorkspace: vi.fn(
         (_provider: string, sessionId: string) => ({
@@ -10473,6 +12621,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       stop,
     }));
 
+    await (bridge as any).codexThreadSnapshot.get();
     const result = await (bridge as any).listRecentSessions({
       type: "list_recent_sessions",
       provider: "codex",
@@ -10490,11 +12639,8 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     ]);
     expect(listThreads).toHaveBeenNthCalledWith(1, {
       limit: 500,
-      searchTerm: undefined,
       sourceKinds: ["cli", "vscode", "appServer"],
     });
-    expect(getCodexSessionIndexMetadataMock).toHaveBeenCalledWith(["target"]);
-    expect(getAllRecentSessionsMock).not.toHaveBeenCalled();
     expect(result.sessions).toHaveLength(1);
     expect(result.sessions[0]).toMatchObject({ sessionId: "target" });
     expect(result.hasMore).toBe(false);

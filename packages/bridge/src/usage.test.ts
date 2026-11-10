@@ -69,11 +69,16 @@ describe("isGlobalCodexRateLimit", () => {
   });
 });
 
-const { initializeMock, readMock, stopMock, consumeMock } = vi.hoisted(() => ({
+const { initializeMock, readMock, stopMock, consumeMock, claudeUsageMock } = vi.hoisted(() => ({
   initializeMock: vi.fn(),
   readMock: vi.fn(),
   stopMock: vi.fn(),
   consumeMock: vi.fn(),
+  claudeUsageMock: vi.fn(),
+}));
+
+vi.mock("./claude-usage.js", () => ({
+  fetchClaudeUsage: claudeUsageMock,
 }));
 
 vi.mock("./codex-process.js", () => ({
@@ -90,6 +95,7 @@ describe("fetchCodexUsage", () => {
     vi.resetAllMocks();
     initializeMock.mockResolvedValue(undefined);
     readMock.mockResolvedValue({ rateLimits: { primary: sevenDayWindow } });
+    claudeUsageMock.mockResolvedValue(null);
   });
 
   it("preserves the authoritative reset count when detail rows are absent", async () => {
@@ -195,5 +201,48 @@ describe("consumeCodexReset", () => {
     expect(await consumeCodexReset("attempt-2")).toBe("reset");
     expect(consumeMock).toHaveBeenCalledTimes(2);
     expect(stopMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("fetchAllUsage", () => {
+  const claudeUsage = {
+    provider: "claude",
+    fiveHour: { utilization: 42, resetsAt: "2026-11-01T03:00:00.000Z" },
+    sevenDay: null,
+  };
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    initializeMock.mockResolvedValue(undefined);
+    readMock.mockResolvedValue({ rateLimits: { primary: sevenDayWindow } });
+  });
+
+  it("returns Claude before Codex when both are available", async () => {
+    claudeUsageMock.mockResolvedValue(claudeUsage);
+    const providers = await fetchAllUsage();
+    expect(providers.map((p) => p.provider)).toEqual(["claude", "codex"]);
+    expect(providers[0]).toEqual(claudeUsage);
+    expect(providers[1].sevenDay?.utilization).toBe(80);
+  });
+
+  it("omits Claude when its plan limits do not apply", async () => {
+    claudeUsageMock.mockResolvedValue(null);
+    expect((await fetchAllUsage()).map((p) => p.provider)).toEqual(["codex"]);
+  });
+
+  it("keeps Codex usage when Claude usage fails", async () => {
+    claudeUsageMock.mockResolvedValue({
+      provider: "claude", fiveHour: null, sevenDay: null,
+      error: "Failed to fetch Claude usage: boom",
+    });
+    const providers = await fetchAllUsage();
+    expect(providers[0].error).toContain("boom");
+    expect(providers[1].sevenDay?.utilization).toBe(80);
+  });
+
+  it("keeps Codex usage even if the Claude adapter rejects", async () => {
+    claudeUsageMock.mockRejectedValue(new Error("unexpected"));
+    const providers = await fetchAllUsage();
+    expect(providers.map((p) => p.provider)).toEqual(["codex"]);
   });
 });

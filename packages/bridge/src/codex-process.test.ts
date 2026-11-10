@@ -90,6 +90,51 @@ describe("CodexProcess (app-server)", () => {
     });
   });
 
+  it("waits for a stopped private app-server to exit before reporting shutdown", async () => {
+    process.env.BRIDGE_CODEX_APP_SERVER_MODE = "private";
+    spawnMock.mockImplementation(() => {
+      const child = new FakeChildProcess();
+      // A real app-server exits some time after SIGTERM.
+      child.kill = () => {
+        child.killed = true;
+        return true;
+      };
+      fakeChildren.push(child);
+      return child;
+    });
+    const proc = new CodexProcess("linux");
+    proc.start("/tmp/shutdown-project");
+    proc.waitUntilReady().catch(() => {});
+    proc.stop();
+
+    let settled = false;
+    const waiting = proc.waitForShutdown(5_000).then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    fakeChildren[0].emit("exit", 0);
+    await waiting;
+    expect(settled).toBe(true);
+  });
+
+  it("bounds the shutdown wait when the app-server never exits", async () => {
+    process.env.BRIDGE_CODEX_APP_SERVER_MODE = "private";
+    spawnMock.mockImplementation(() => {
+      const child = new FakeChildProcess();
+      child.kill = () => true;
+      fakeChildren.push(child);
+      return child;
+    });
+    const proc = new CodexProcess("linux");
+    proc.start("/tmp/shutdown-project");
+    proc.waitUntilReady().catch(() => {});
+    proc.stop();
+
+    await expect(proc.waitForShutdown(10)).resolves.toBeUndefined();
+  });
+
   it("trusts and reloads an idle private thread without accepting input on the old process", async () => {
     process.env.BRIDGE_CODEX_APP_SERVER_MODE = "private";
     const requests: Array<Record<string, any>> = [];
@@ -134,6 +179,105 @@ describe("CodexProcess (app-server)", () => {
     await tick();
     expect(requests.filter((r) => r.method === "turn/start")).toHaveLength(1);
     proc.stop();
+  });
+
+  it.each([false, true])("preserves inherited Ultrafast settings before input (resume=%s)", async (resume) => {
+    const proc = new CodexProcess("linux");
+    const requests: Array<{ method: string; params: any }> = [];
+    vi.spyOn(proc as any, "request").mockImplementation(async (...args: unknown[]) => {
+      const method = args[0] as string;
+      const params = args[1];
+      requests.push({ method, params });
+      if (method === "thread/start" || method === "thread/resume") {
+        return { thread: { id: "thread-inherited", model: "gpt-6-astra" },
+          model: "gpt-6-astra", serviceTier: "ultrafast" };
+      }
+      if (method === "model/list") return { data: [{ model: "gpt-6-astra",
+        serviceTiers: [{ id: "ultrafast", name: "Ultrafast" }] }], nextCursor: null };
+      return {};
+    });
+    try {
+      proc.start("/tmp/inherited-tier", resume ? { threadId: "thread-inherited", profile: "custom" } : {});
+      await proc.waitUntilReady();
+      expect(proc.serviceTier).toBe("ultrafast");
+      expect(requests.some((request) => request.method === "turn/start")).toBe(false);
+      proc.sendInput("continue");
+      await tick();
+      expect(requests.find((request) => request.method === "turn/start")?.params.serviceTier).toBe("ultrafast");
+    } finally { proc.stop(); }
+  });
+
+  it("rejects a requested tier that the thread response silently downgraded", async () => {
+    const proc = new CodexProcess("linux");
+    const messages: any[] = [];
+    proc.on("message", (message) => messages.push(message));
+    const request = vi.spyOn(proc as any, "request").mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === "thread/start") return { thread: { id: "thread-downgraded" },
+        model: "gpt-6-astra", serviceTier: "default" };
+      return {};
+    });
+    try {
+      proc.start("/tmp/rejected-tier", { model: "gpt-6-astra", serviceTier: "ultrafast" });
+      await expect(proc.waitUntilReady()).rejects.toThrow('after "ultrafast" was requested');
+      expect(request.mock.calls.some((call) => call[0] === "turn/start")).toBe(false);
+      expect(messages.some((message) => message.type === "system" && message.subtype === "init")).toBe(false);
+    } finally { proc.stop(); }
+  });
+
+  it.each([undefined, null])("rejects an unconfirmed requested Ultrafast tier (%s)", async (serviceTier) => {
+    const proc = new CodexProcess("linux");
+    const request = vi.spyOn(proc as any, "request").mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === "thread/start") return { thread: { id: "thread-unconfirmed" },
+        model: "gpt-6-astra", serviceTier };
+      return {};
+    });
+    try {
+      proc.start("/tmp/unconfirmed-tier", { model: "gpt-6-astra", serviceTier: "ultrafast" });
+      await expect(proc.waitUntilReady()).rejects.toThrow('did not confirm requested speed "ultrafast"');
+      expect(request.mock.calls.some((call) => call[0] === "turn/start")).toBe(false);
+    } finally { proc.stop(); }
+  });
+
+  it.each([undefined, "default"])("keeps legacy Fast response compatibility (%s)", async (serviceTier) => {
+    const proc = new CodexProcess("linux");
+    vi.spyOn(proc as any, "request").mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === "thread/start") return { thread: { id: "thread-legacy-fast" },
+        model: "gpt-6-luna", serviceTier };
+      return {};
+    });
+    try {
+      proc.start("/tmp/legacy-fast", { model: "gpt-6-luna", serviceTier: "fast" });
+      await proc.waitUntilReady();
+      expect(proc.serviceTier).toBe(serviceTier === undefined ? "fast" : "standard");
+    } finally { proc.stop(); }
+  });
+
+  it("rejects an unrequested upgrade from Fast to an extended tier", async () => {
+    const proc = new CodexProcess("linux");
+    vi.spyOn(proc as any, "request").mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === "thread/start") return { thread: { id: "thread-upgraded" },
+        model: "gpt-6-astra", serviceTier: "ultrafast" };
+      return {};
+    });
+    try {
+      proc.start("/tmp/unrequested-tier", { model: "gpt-6-astra", serviceTier: "fast" });
+      await expect(proc.waitUntilReady()).rejects.toThrow('after "fast" was requested');
+    } finally { proc.stop(); }
+  });
+
+  it("rejects an inherited unsupported tier before accepting input", async () => {
+    const proc = new CodexProcess("linux");
+    vi.spyOn(proc as any, "request").mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === "thread/resume") return { thread: { id: "thread-unavailable" },
+        model: "gpt-6-luna", serviceTier: "ultrafast" };
+      if (args[0] === "model/list") return { data: [{ model: "gpt-6-luna",
+        serviceTiers: [{ id: "priority", name: "Fast" }] }], nextCursor: null };
+      return {};
+    });
+    try {
+      proc.start("/tmp/unavailable-tier", { threadId: "thread-unavailable" });
+      await expect(proc.waitUntilReady()).rejects.toThrow('is not available for model "gpt-6-luna"');
+    } finally { proc.stop(); }
   });
 
   it("normalizes unsupported GPT-6 Astra reasoning efforts to low", () => {
@@ -378,6 +522,103 @@ describe("CodexProcess (app-server)", () => {
         }),
       ),
     ).toBe("invalid thread id");
+  });
+
+  it("reports context compaction as status and a marker", () => {
+    const proc = new CodexProcess("linux");
+    const messages: Array<Record<string, unknown>> = [];
+    const statuses: string[] = [];
+    proc.on("message", (message) =>
+      messages.push(message as Record<string, unknown>),
+    );
+    proc.on("status", (status) => statuses.push(status));
+    (proc as any)._threadId = "thread-1";
+
+    (proc as any).handleNotification("turn/started", {
+      threadId: "thread-1",
+      turn: { id: "turn-1" },
+    });
+    (proc as any).handleNotification("item/started", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      item: { type: "contextCompaction", id: "compact-1" },
+    });
+    expect(proc.status).toBe("compacting");
+    (proc as any).handleNotification("item/completed", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      item: { type: "contextCompaction", id: "compact-1" },
+    });
+
+    expect(proc.status).toBe("running");
+    expect(statuses.slice(-3)).toEqual(["running", "compacting", "running"]);
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        type: "context_compaction",
+        id: "compact-1",
+        provider: "codex",
+      }),
+    );
+  });
+
+  it("reports terminals and child agents that outlive the turn", () => {
+    const proc = new CodexProcess("linux");
+    const messages: Array<Record<string, unknown>> = [];
+    proc.on("message", (message) =>
+      messages.push(message as Record<string, unknown>),
+    );
+    (proc as any)._threadId = "thread-1";
+
+    (proc as any).handleNotification("turn/started", {
+      threadId: "thread-1",
+      turn: { id: "turn-1" },
+    });
+    (proc as any).handleNotification("item/started", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      item: {
+        type: "commandExecution",
+        id: "cmd-1",
+        command: "npm run dev",
+        cwd: "/tmp",
+        processId: "pty-1",
+        source: "unifiedExecStartup",
+        status: "inProgress",
+      },
+    });
+    (proc as any).handleNotification("thread/started", {
+      thread: { id: "child-1", parentThreadId: "thread-1", agentNickname: "Scout" },
+    });
+    (proc as any).handleNotification("turn/completed", {
+      threadId: "thread-1",
+      turn: { id: "turn-1", status: "completed" },
+    });
+    expect(proc.status).toBe("idle");
+
+    // A child agent's turn does not drive the parent session.
+    (proc as any).handleNotification("turn/started", {
+      threadId: "child-1",
+      turn: { id: "child-turn" },
+    });
+    expect(proc.status).toBe("idle");
+    (proc as any).handleNotification("turn/completed", {
+      threadId: "child-1",
+      turn: { id: "child-turn", status: "completed" },
+    });
+
+    const snapshots = messages
+      .filter((message) => message.type === "background_tasks")
+      .map((message) => message.tasks);
+    expect(snapshots).toEqual([
+      [
+        { taskId: "cmd-1", taskType: "codex_terminal", description: "npm run dev" },
+        { taskId: "child-1", taskType: "codex_agent", description: "Scout" },
+      ],
+      [{ taskId: "cmd-1", taskType: "codex_terminal", description: "npm run dev" }],
+    ]);
+    expect(
+      messages.filter((message) => message.type === "result"),
+    ).toHaveLength(1);
   });
 
   it("finalizes streamed agent text before turn completion", () => {
@@ -829,6 +1070,41 @@ describe("CodexProcess (app-server)", () => {
     }
 
     proc.stop();
+  });
+
+  it("rejects readiness and pending RPCs when Codex CLI spawn fails", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const proc = new CodexProcess("linux");
+    proc.on("message", () => {});
+    const exits: Array<number | null> = [];
+    proc.on("exit", (code) => exits.push(code));
+
+    try {
+      proc.start("/tmp/project-missing-codex");
+      const ready = proc.waitUntilReady();
+
+      const err = new Error("spawn codex ENOENT") as NodeJS.ErrnoException;
+      err.code = "ENOENT";
+      fakeChildren[0].emit("error", err);
+
+      await expect(ready).rejects.toThrow(/Codex CLI is not installed/);
+      expect((proc as any).pendingRpc.size).toBe(0);
+      expect((proc as any).transport).toBeNull();
+      expect(fakeChildren[0].killed).toBe(true);
+      expect(exits.length).toBeGreaterThan(0);
+
+      const initialized = proc.initializeOnly("/tmp/project-missing-codex");
+      const err2 = new Error("spawn codex ENOENT") as NodeJS.ErrnoException;
+      err2.code = "ENOENT";
+      fakeChildren[1].emit("error", err2);
+      await expect(initialized).rejects.toThrow(/Codex CLI is not installed/);
+      await expect(proc.waitUntilReady()).rejects.toThrow(
+        /Codex CLI is not installed/,
+      );
+    } finally {
+      errorSpy.mockRestore();
+      proc.stop();
+    }
   });
 
   it("starts codex app-server and sends initialize + thread/start", async () => {
@@ -1479,6 +1755,60 @@ describe("CodexProcess (app-server)", () => {
     proc.stop();
   });
 
+  it.each([
+    ["before", ["response", "started", "completed"]],
+    ["after", ["started", "completed", "response"]],
+  ])(
+    "does not reinstate a completed turn id from a turn/start response delivered %s its completion",
+    async (_label, order) => {
+      const proc = new CodexProcess("linux");
+      proc.on("message", () => {});
+      proc.start("/tmp/project-fast-turn");
+      const child = fakeChildren[0];
+
+      await tick();
+      const initReq = nextOutgoingRequest(child);
+      child.stdout.emit("data", `${JSON.stringify({ id: initReq.id, result: {} })}\n`);
+      await tick();
+      nextOutgoingNotification(child);
+      const threadReq = nextOutgoingRequest(child);
+      child.stdout.emit(
+        "data",
+        `${JSON.stringify({ id: threadReq.id, result: { thread: { id: "thr_fast" } } })}\n`,
+      );
+      await tick();
+
+      proc.sendInput("hello");
+      await tick();
+      const turnReq = nextOutgoingRequest(child);
+      expect(turnReq.method).toBe("turn/start");
+
+      const lines: Record<string, string> = {
+        response: JSON.stringify({
+          id: turnReq.id,
+          result: { turn: { id: "turn_fast", status: "inProgress", items: [] } },
+        }),
+        started: JSON.stringify({
+          method: "turn/started",
+          params: { threadId: "thr_fast", turn: { id: "turn_fast", status: "inProgress", items: [] } },
+        }),
+        completed: JSON.stringify({
+          method: "turn/completed",
+          params: { threadId: "thr_fast", turn: { id: "turn_fast", status: "completed", items: [] } },
+        }),
+      };
+      // Same stdout chunk: the RPC response resolves in a microtask after
+      // every notification in the chunk has already been handled.
+      child.stdout.emit("data", `${order.map((key) => lines[key]).join("\n")}\n`);
+      await tick();
+
+      expect((proc as any).pendingTurnId).toBeNull();
+      expect(proc.status).toBe("idle");
+
+      proc.stop();
+    },
+  );
+
   it("handles managed app-server spawn errors without crashing", () => {
     process.env.BRIDGE_CODEX_APP_SERVER_MODE = "managed";
     process.env.BRIDGE_CODEX_SHARED_APP_SERVER_URL = "ws://127.0.0.1:18767";
@@ -1902,6 +2232,56 @@ describe("CodexProcess (app-server)", () => {
     (proc as any).handleRpcResponse({ id: req.id, result: { thread: { id: "fork" } } });
     await expect(fork).resolves.toEqual({ threadId: "fork", thread: { id: "fork", turns: [first] } });
     expect(proc.sessionId).toBe("source");
+  });
+
+  it("interrupts a turn as soon as it starts when stop came first", async () => {
+    const proc = new CodexProcess("linux");
+    (proc as any)._threadId = "thread";
+    (proc as any).pendingTurnCompletion = { resolve: () => {}, reject: () => {} };
+    const request = vi.spyOn(proc as any, "request").mockResolvedValue({});
+
+    proc.interrupt();
+    expect(request).not.toHaveBeenCalled();
+
+    (proc as any).handleNotification("turn/started", { turn: { id: "turn-1" } });
+    expect(request).toHaveBeenCalledWith("turn/interrupt", {
+      threadId: "thread",
+      turnId: "turn-1",
+    });
+  });
+
+  it("rewinds in place with thread/revert before the target turn", async () => {
+    const proc = new CodexProcess("linux");
+    (proc as any)._threadId = "source";
+    const turns = [1, 2, 3].map((n) => ({ id: `turn${n}`, status: "completed", items: [{ type: "userMessage", content: [{ type: "text", text: String(n) }] }] }));
+    vi.spyOn(proc, "readThread").mockResolvedValue({ turns });
+    const request = vi.spyOn(proc as any, "request").mockResolvedValue({ thread: { id: "source" } });
+    await proc.rewindBeforeUserTurn(2);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledWith("thread/revert", { threadId: "source", beforeTurnId: "turn2" });
+  });
+
+  it("falls back to thread/rollback when revert is unavailable", async () => {
+    const proc = new CodexProcess("linux");
+    (proc as any)._threadId = "source";
+    const turns = [1, 2, 3].map((n) => ({ id: `turn${n}`, status: "completed", items: [{ type: "userMessage", content: [{ type: "text", text: String(n) }] }] }));
+    vi.spyOn(proc, "readThread").mockResolvedValue({ turns });
+    const request = vi.spyOn(proc as any, "request")
+      .mockRejectedValueOnce(new CodexRpcError("thread/revert", { code: -32600, message: "not paginated" }))
+      .mockResolvedValueOnce({ thread: { id: "source" } });
+    await proc.rewindBeforeUserTurn(2);
+    expect(request).toHaveBeenLastCalledWith("thread/rollback", { threadId: "source", numTurns: 2 });
+  });
+
+  it("refuses to rewind inside a steered turn or while running", async () => {
+    const proc = new CodexProcess("linux");
+    (proc as any)._threadId = "source";
+    vi.spyOn(proc, "readThread").mockResolvedValue({ turns: [{ id: "turn1", items: ["first", "steer"].map((text) => ({ type: "userMessage", content: [{ type: "text", text }] })) }] });
+    const request = vi.spyOn(proc as any, "request");
+    await expect(proc.rewindBeforeUserTurn(2)).rejects.toThrow("multiple user messages");
+    (proc as any).pendingTurnId = "turn1";
+    await expect(proc.rewindBeforeUserTurn(1)).rejects.toThrow("running");
+    expect(request).not.toHaveBeenCalled();
   });
 
   it("rejects a fork when an older server ignores the boundary", async () => {
@@ -2555,6 +2935,7 @@ describe("CodexProcess (app-server)", () => {
         supportedReasoningEfforts: ["low", "medium", "max", "ultra"],
         defaultReasoningEffort: "medium",
         supportedServiceTiers: ["fast"],
+        serviceTierMetadata: [{ id: "fast", name: "Fast", description: "1.5x speed" }],
         defaultServiceTier: "fast",
       },
       {
@@ -2562,6 +2943,7 @@ describe("CodexProcess (app-server)", () => {
         supportedReasoningEfforts: ["low", "medium"],
         defaultReasoningEffort: "low",
         supportedServiceTiers: [],
+        serviceTierMetadata: [],
       },
     ]);
     proc.stop();
@@ -3263,6 +3645,64 @@ describe("CodexProcess (app-server)", () => {
         },
       },
     });
+    proc.stop();
+  });
+
+  it("declines MCP form elicitations when rejected", async () => {
+    const proc = new CodexProcess("linux");
+    proc.on("message", () => {});
+
+    proc.start("/tmp/project-elicitation-reject");
+    const child = fakeChildren[0];
+
+    await tick();
+    const initReq = nextOutgoingRequest(child);
+    child.stdout.emit(
+      "data",
+      `${JSON.stringify({ id: initReq.id, result: {} })}\n`,
+    );
+    await tick();
+    nextOutgoingNotification(child);
+    const threadReq = nextOutgoingRequest(child);
+    child.stdout.emit(
+      "data",
+      `${JSON.stringify({ id: threadReq.id, result: { thread: { id: "thr_elicit" } } })}\n`,
+    );
+
+    await tick();
+    child.stdout.emit(
+      "data",
+      `${JSON.stringify({
+        id: "req-elicit-reject",
+        method: "mcpServer/elicitation/request",
+        params: {
+          threadId: "thr_elicit",
+          turnId: "turn_elicit",
+          serverName: "codex_apps",
+          mode: "form",
+          message: "Enter a note",
+          requestedSchema: {
+            type: "object",
+            properties: {
+              note: { type: "string", title: "Note" },
+            },
+            required: ["note"],
+          },
+        },
+      })}\n`,
+    );
+    await tick();
+
+    expect(proc.getPendingPermission("req-elicit-reject")).toBeDefined();
+    expect(proc.reject("req-elicit-reject")).toBe(true);
+    await tick();
+
+    const response = nextOutgoingResponse(child);
+    expect(response).toEqual({
+      id: "req-elicit-reject",
+      result: { action: "decline", content: null, _meta: null },
+    });
+
     proc.stop();
   });
 

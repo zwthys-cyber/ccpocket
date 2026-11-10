@@ -73,24 +73,22 @@ function execQuiet(cmd: string): string {
 // Individual checks
 // ---------------------------------------------------------------------------
 
-export async function checkNodeVersion(): Promise<CheckResult> {
-  const version = process.version; // e.g. "v22.5.0"
-  const [major, minor, patch] = version
+export async function checkNodeVersion(
+  version: string = process.version, // e.g. "v22.19.0"
+): Promise<CheckResult> {
+  const [major, minor] = version
     .slice(1)
     .split(".")
     .map((part) => parseInt(part, 10));
-  const supported =
-    major > 20 ||
-    (major === 20 &&
-      (minor > 18 || (minor === 18 && patch >= 1)));
+  const supported = major > 22 || (major === 22 && minor >= 19);
   if (supported) {
     return { name: "Node.js", status: "pass", message: version };
   }
   return {
     name: "Node.js",
     status: "fail",
-    message: `${version} (requires >=20.18.1)`,
-    remediation: "Install Node.js >=20.18.1: https://nodejs.org/",
+    message: `${version} (requires >=22.19.0)`,
+    remediation: "Install Node.js >=22.19.0: https://nodejs.org/",
   };
 }
 
@@ -630,6 +628,107 @@ export async function checkScreenRecording(): Promise<CheckResult> {
   });
 }
 
+export interface PmsetSleepSettings {
+  /** Idle sleep timer in minutes for the current power source (0 = never). */
+  idleSleepMinutes: number | null;
+  /** True when `pmset disablesleep 1` is active (prevents all sleep, including lid close). */
+  sleepDisabled: boolean;
+}
+
+/**
+ * Parse `pmset -g` output.
+ *
+ * The `sleep` line may carry a suffix such as
+ * `sleep 0 (sleep prevented by coreaudiod)`; only the leading number matters.
+ * `SleepDisabled` is only printed when it has been set.
+ */
+export function parsePmsetSleep(output: string): PmsetSleepSettings {
+  let idleSleepMinutes: number | null = null;
+  let sleepDisabled = false;
+  for (const line of output.split("\n")) {
+    const sleep = line.match(/^\s*sleep\s+(\d+)/);
+    if (sleep) idleSleepMinutes = parseInt(sleep[1], 10);
+    const disabled = line.match(/^\s*SleepDisabled\s+(\d+)/);
+    if (disabled) sleepDisabled = disabled[1] !== "0";
+  }
+  return { idleSleepMinutes, sleepDisabled };
+}
+
+const LID_SLEEP_NOTE =
+  "closing the lid still sleeps the Mac outside closed-display mode";
+
+/** Pure evaluation of sleep settings, separated for testing. */
+export function evaluateSleepSettings(
+  settings: PmsetSleepSettings,
+  hasLid: boolean,
+): CheckResult {
+  const name = "Sleep";
+  if (settings.sleepDisabled) {
+    return {
+      name,
+      status: "pass",
+      message: "Sleep disabled system-wide (pmset disablesleep)",
+    };
+  }
+  if (settings.idleSleepMinutes === null) {
+    return { name, status: "skip", message: "Unable to read idle sleep setting" };
+  }
+  if (settings.idleSleepMinutes > 0) {
+    const lidSuffix = hasLid ? `; ${LID_SLEEP_NOTE}` : "";
+    return {
+      name,
+      status: "warn",
+      message: `Mac sleeps after ${settings.idleSleepMinutes} idle min on the current power source and the Bridge goes offline${lidSuffix}`,
+      remediation:
+        "System Settings > Battery > Options > enable \"Prevent automatic sleeping on power adapter when the display is off\" (or run: caffeinate -s)",
+    };
+  }
+  return {
+    name,
+    status: "pass",
+    message: hasLid ? `Idle sleep off; ${LID_SLEEP_NOTE}` : "Idle sleep off",
+  };
+}
+
+function execFileText(cmd: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { timeout: 5_000 }, (err, stdout) => {
+      if (err) reject(err);
+      else resolve(String(stdout));
+    });
+  });
+}
+
+/**
+ * Warn when the Mac will sleep (idle timer or lid close) and take the
+ * Bridge offline. Read-only; never requires sudo.
+ */
+export async function checkSleep(): Promise<CheckResult> {
+  if (process.platform !== "darwin") {
+    return { name: "Sleep", status: "skip", message: "macOS only" };
+  }
+  let pmset: string;
+  try {
+    pmset = await execFileText("pmset", ["-g"]);
+  } catch {
+    return { name: "Sleep", status: "skip", message: "Unable to run pmset" };
+  }
+  let hasLid = false;
+  try {
+    const ioreg = await execFileText("ioreg", [
+      "-r",
+      "-k",
+      "AppleClamshellState",
+      "-d",
+      "1",
+    ]);
+    hasLid = ioreg.includes("AppleClamshellState");
+  } catch {
+    // Treat as no lid information.
+  }
+  return evaluateSleepSettings(parsePmsetSleep(pmset), hasLid);
+}
+
 /**
  * Check if Claude Code credentials are available.
  *
@@ -706,7 +805,10 @@ function getAllChecks(): CheckDefinition[] {
     { name: "Data directory", category: "optional", run: checkDataDirectory },
     // Platform-specific service checks
     ...(process.platform === "darwin"
-      ? [{ name: "launchd service", category: "optional" as CheckCategory, run: checkLaunchdService }]
+      ? [
+          { name: "launchd service", category: "optional" as CheckCategory, run: checkLaunchdService },
+          { name: "Sleep", category: "optional" as CheckCategory, run: checkSleep },
+        ]
       : []),
     ...(process.platform === "linux"
       ? [{ name: "systemd service", category: "optional" as CheckCategory, run: checkSystemdService }]

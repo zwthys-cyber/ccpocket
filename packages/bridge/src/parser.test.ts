@@ -510,6 +510,56 @@ describe("parseClientMessage", () => {
     ).toBeNull();
   });
 
+  it("parses set_claude_settings messages", () => {
+    expect(
+      parseClientMessage(
+        '{"type":"set_claude_settings","sessionId":"s1","model":"opus","effort":"xhigh","fastMode":true}',
+      ),
+    ).toEqual({
+      type: "set_claude_settings",
+      sessionId: "s1",
+      model: "opus",
+      effort: "xhigh",
+      fastMode: true,
+    });
+    expect(
+      parseClientMessage('{"type":"set_claude_settings","sessionId":"s1"}'),
+    ).toBeNull();
+    expect(
+      parseClientMessage(
+        '{"type":"set_claude_settings","sessionId":"s1","effort":"ultra"}',
+      ),
+    ).toBeNull();
+    expect(
+      parseClientMessage(
+        '{"type":"set_claude_settings","sessionId":"s1","fastMode":"yes"}',
+      ),
+    ).toBeNull();
+    expect(
+      parseClientMessage(
+        '{"type":"set_claude_settings","sessionId":"s1","ultracode":true}',
+      ),
+    ).toEqual({ type: "set_claude_settings", sessionId: "s1", ultracode: true });
+    expect(
+      parseClientMessage(
+        '{"type":"set_claude_settings","sessionId":"s1","ultracode":"on"}',
+      ),
+    ).toBeNull();
+  });
+
+  it("parses input delivery and rejects unknown values", () => {
+    expect(
+      parseClientMessage(
+        '{"type":"input","text":"hi","sessionId":"s1","delivery":"steer"}',
+      ),
+    ).toMatchObject({ delivery: "steer" });
+    expect(
+      parseClientMessage(
+        '{"type":"input","text":"hi","sessionId":"s1","delivery":"now"}',
+      ),
+    ).toBeNull();
+  });
+
   it("parses Codex goal messages", () => {
     expect(parseClientMessage('{"type":"get_goal","sessionId":"s1","background":true}'))
       .toEqual({ type: "get_goal", sessionId: "s1", background: true });
@@ -750,6 +800,160 @@ describe("parseClientMessage", () => {
       namedOnly: true,
       searchQuery: "needle",
     });
+  });
+
+  it("parses list_recent_sessions with pinned sessions", () => {
+    const msg = parseClientMessage(
+      JSON.stringify({
+        type: "list_recent_sessions",
+        limit: 20,
+        offset: 0,
+        pinnedSessions: [
+          { provider: "claude", sessionId: "c1" },
+          { provider: "codex", sessionId: "x1" },
+        ],
+      }),
+    );
+    expect(msg).toEqual({
+      type: "list_recent_sessions",
+      limit: 20,
+      offset: 0,
+      pinnedSessions: [
+        { provider: "claude", sessionId: "c1" },
+        { provider: "codex", sessionId: "x1" },
+      ],
+    });
+  });
+
+  it("rejects malformed list_recent_sessions pinned sessions", () => {
+    for (const pinnedSessions of [
+      "c1",
+      [{ provider: "gemini", sessionId: "c1" }],
+      [{ provider: "claude", sessionId: "" }],
+      [{ provider: "claude" }],
+      [null],
+      Array.from({ length: 1001 }, (_, i) => ({
+        provider: "claude",
+        sessionId: `s${i}`,
+      })),
+    ]) {
+      expect(
+        parseClientMessage(
+          JSON.stringify({ type: "list_recent_sessions", pinnedSessions }),
+        ),
+      ).toBeNull();
+    }
+  });
+
+  it("parses list_recent_sessions filter fields", () => {
+    const fields = {
+      projectFilters: [
+        { projectPath: "/tmp/a" },
+        { projectId: "p1", workspaceKind: "project" },
+        { projectPath: "/tmp/b", workspaceKind: "unassigned" },
+      ],
+      modifiedAfter: "2026-11-01T00:00:00.000Z",
+      modifiedBefore: "2026-11-02T00:00:00+09:00",
+      dateField: "created",
+      pinnedOnly: true,
+      pinnedProjects: [{ projectPath: "/tmp/fav" }],
+      searchContent: false,
+    };
+    expect(
+      parseClientMessage(
+        JSON.stringify({ type: "list_recent_sessions", ...fields }),
+      ),
+    ).toEqual({ type: "list_recent_sessions", ...fields });
+  });
+
+  it("accepts both dateField values and 100 project filters", () => {
+    for (const dateField of ["modified", "created"]) {
+      expect(
+        parseClientMessage(
+          JSON.stringify({ type: "list_recent_sessions", dateField }),
+        ),
+      ).toMatchObject({ dateField });
+    }
+    const hundred = Array.from({ length: 100 }, (_, i) => ({
+      projectPath: `/tmp/p${i}`,
+    }));
+    expect(
+      parseClientMessage(
+        JSON.stringify({
+          type: "list_recent_sessions",
+          projectFilters: hundred,
+          pinnedProjects: hundred,
+        }),
+      ),
+    ).not.toBeNull();
+  });
+
+  it("rejects malformed list_recent_sessions project filters", () => {
+    const malformed: unknown[] = [
+      "/tmp/a",
+      { projectPath: "/tmp/a" },
+      [null],
+      ["/tmp/a"],
+      [[{ projectPath: "/tmp/a" }]],
+      [{}],
+      [{ workspaceKind: "project" }],
+      [{ projectPath: "" }],
+      [{ projectId: "" }],
+      [{ projectPath: "", projectId: "" }],
+      [{ projectPath: 1 }],
+      [{ projectPath: "/tmp/a", projectId: 2 }],
+      [{ projectPath: "/tmp/a", workspaceKind: "other" }],
+      Array.from({ length: 101 }, (_, i) => ({ projectPath: `/tmp/p${i}` })),
+    ];
+    for (const value of malformed) {
+      for (const field of ["projectFilters", "pinnedProjects"]) {
+        expect(
+          parseClientMessage(
+            JSON.stringify({ type: "list_recent_sessions", [field]: value }),
+          ),
+        ).toBeNull();
+      }
+    }
+  });
+
+  it("rejects malformed list_recent_sessions dates", () => {
+    for (const value of [123, "", "   ", "not a date", "2026-13-45", true, {}]) {
+      for (const field of ["modifiedAfter", "modifiedBefore"]) {
+        expect(
+          parseClientMessage(
+            JSON.stringify({ type: "list_recent_sessions", [field]: value }),
+          ),
+        ).toBeNull();
+      }
+    }
+  });
+
+  it("rejects malformed list_recent_sessions dateField and flags", () => {
+    for (const dateField of ["updated", "", 1, true]) {
+      expect(
+        parseClientMessage(
+          JSON.stringify({ type: "list_recent_sessions", dateField }),
+        ),
+      ).toBeNull();
+    }
+    for (const value of ["true", 1, null, {}]) {
+      for (const field of ["pinnedOnly", "searchContent"]) {
+        expect(
+          parseClientMessage(
+            JSON.stringify({ type: "list_recent_sessions", [field]: value }),
+          ),
+        ).toBeNull();
+      }
+    }
+  });
+
+  it("ignores unknown list_recent_sessions fields", () => {
+    // Older Bridges must not reject newer optional fields from the app.
+    expect(
+      parseClientMessage(
+        '{"type":"list_recent_sessions","futureField":[1,2,3]}',
+      ),
+    ).toMatchObject({ type: "list_recent_sessions" });
   });
 
   it("parses Project CRUD messages", () => {

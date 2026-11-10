@@ -2,6 +2,200 @@
 
 All notable changes to `@ccpocket/bridge` will be documented in this file.
 
+## [1.104.0] - 2026-11-09
+
+### Changed
+
+- **The Bridge now requires an API key by default.** If `BRIDGE_API_KEY` / `--api-key` is not set, the first start generates a key and stores it in `~/.ccpocket/bridge-api-key` (mode `0600`); later starts reuse it. Devices that connected without a key must pair again: scan the QR code shown when the Bridge starts in a terminal, or run `npx @ccpocket/bridge@1 qr` for a background service. CC Pocket 1.160.0 or later shows how to re-pair when the key is rejected. Pass `--insecure-no-auth` (or set `BRIDGE_INSECURE_NO_AUTH=1`) to keep running without authentication; `setup` persists it.
+- `/usage`, `/doctor`, gallery upload and gallery delete require `Authorization: Bearer <key>`. `/health` and `/version` stay public.
+- The connection block at startup and from `ccpocket-bridge qr` shows a QR code for each route (LAN, Tailscale, public URL) with a colored label and hint, side by side when the terminal is wide enough. Link-local `169.254.x.x` addresses are no longer listed.
+- Background services no longer write the token-bearing QR code to their log; they print how to run `ccpocket-bridge qr` instead. `setup` prints the same hint.
+- `ccpocket-bridge qr` also prints the API key, for the desktop apps that cannot scan QR codes.
+
+## [1.103.0] - 2026-11-07
+
+### Added
+
+- `ccpocket-bridge qr [--port <port>]` prints the pairing QR code of the Bridge running on this machine, so devices can be re-paired with a background (launchd/systemd) service. It reads a new local-only `/pairing` endpoint that requires a per-start secret in `~/.ccpocket/pairing-secret-<port>` (mode `0600`) and rejects non-loopback and browser requests.
+- `/health` reports `auth: "required"` or `"none"`, so clients can tell before connecting whether an API key is needed.
+- Starting without an API key prints a warning. A future 1.x release will require an API key by default; see `docs/bridge-auth-required.md`.
+
+### Changed
+
+- API key comparison is constant-time.
+- CORS allows the `Authorization` header, used by upcoming authenticated HTTP endpoints.
+
+## [1.102.0] - 2026-11-07
+
+### Added
+
+- Context compaction is reported as a `context_compaction` message for Claude (`compact_boundary`, with trigger, token counts and the compaction summary) and Codex (`contextCompaction` item), both live and in restored history. Clients opt in through `supportedServerMessages`; others receive neither the message nor the `compaction` history entries. Advertised as the `context_compaction_v1` protocol capability.
+- Codex sessions report a `compacting` status while the context is being compacted.
+- `get_session_transcript` returns the full provider transcript (Claude JSONL, Codex thread) in pages, so clients can show messages hidden by compaction or dropped from the live history window. `history` and `history_snapshot` carry `olderHistoryAvailable` when earlier messages exist outside the window.
+
+### Fixed
+
+- The compaction summary no longer includes Claude's resume instructions, and a finished Claude compaction no longer re-broadcasts a stale `compacting` status.
+
+## [1.101.0] - 2026-11-06
+
+### Changed
+
+- The completion push for a Claude session is held only while background agents (subagents, remote agents, workflows) are running, since their reports start a follow-up turn. Background shells and monitors, such as a dev server, no longer suppress the push.
+
+## [1.100.0] - 2026-11-06
+
+### Changed
+
+- Claude plan usage is read through a running Claude session when one exists (it works mid-turn), instead of starting a separate Claude Code process for every refresh. Without a session, or if the session does not answer within 5 seconds, Bridge falls back to the standalone query.
+- If a Claude usage refresh fails, Bridge keeps reporting the last successful windows with the error attached, for up to an hour and only while each window has not reset. Previously the usage card showed only the error.
+
+## [1.99.1] - 2026-11-05
+
+### Fixed
+
+- Claude's short notes between tool calls (narration) are delivered as assistant text, as in the Claude Code terminal. They were sent as thinking, so performance mode dropped them and restored history skipped them.
+
+## [1.99.0] - 2026-11-05
+
+### Added
+
+- Support Claude Code ultracode as a Claude session setting: turn it on at start, toggle it during a session with `set_claude_settings`, and restore it on resume. It stays on across effort and model changes, and Bridge reports it in `claude_settings`. Claude Code rejects it for models or accounts that cannot run dynamic workflows.
+
+## [1.98.0] - 2026-11-05
+
+### Changed
+
+- **Requires Node.js 22.19.0 or newer** (Node.js 20 is end-of-life). `npx @ccpocket/bridge@1` on an older Node.js keeps resolving to 1.97.0, the last release that supports it; upgrade Node.js to receive new releases. `ccpocket-bridge doctor` reports the new minimum.
+- Update undici to v8 and ws to 8.22.1.
+
+## [1.97.0] - 2026-11-03
+
+### Added
+
+- Filter recent sessions by project, date and pinned status, and search project names, branches and transcript content.
+- Defer queued Claude and Codex input until usage limits reset, preserving limit metadata when sessions reopen.
+
+### Changed
+
+- Speed up recent session filtering and content search with indexed lookups, cached Codex rollouts, a background thread snapshot and byte-based transcript scanning.
+
+### Fixed
+
+- List Codex threads split across rollout segments only once and exclude non-interactive Codex exec rollouts.
+- Search both indexed Claude transcript locations and allow content search to continue beyond the per-request file limit.
+- Keep the first recent session request responsive while the Codex thread snapshot loads.
+
+## [1.96.0] - 2026-11-02
+
+### Added
+
+- Edit a sent message and resend it with `edit_message` (Codex App style): the conversation is rewound in place before that message and the edited text is sent in the same session. Bridges advertise `message_edit_v1`.
+- Retract an unanswered prompt with `interrupt { retract: true }` (Claude Code's Esc-to-edit): when the agent has shown no output yet, the prompt is removed and returned as `input_retracted` so the app can put it back in the composer.
+- Notify clients with `conversation_rewound` when a conversation is rewound in place.
+
+### Changed
+
+- Rewind conversations in place, keeping the session and its id: Codex uses `thread/revert` (falling back to `thread/rollback`) and Claude restarts the same process with `resumeSessionAt`.
+
+### Fixed
+
+- Fork Codex conversations in a throwaway app-server so the fork no longer fails with "thread already has an active writer".
+- Interrupt a Codex turn that was stopped before its turn id arrived instead of letting it run.
+- Show only the current branch of rewound conversations: Codex rollout segments created by `thread/revert` are followed through `history_base`, and Claude history and UUID backfill skip turns abandoned by a rewind or edit.
+- Wait for a replaced Codex app-server to exit before resuming a rewound thread.
+
+## [1.95.0] - 2026-11-01
+
+### Added
+
+- Return pinned sessions with the first page of `list_recent_sessions` when the client sends `pinnedSessions`, so pinned sessions stay visible regardless of pagination.
+
+### Fixed
+
+- Report failures while handling a client message as an `error` instead of crashing the Bridge, including Git diffs for a deleted working directory and Codex resumes whose profile lookup fails.
+- Keep the Claude model, effort, fast mode and sandbox setting when approving with Clear & Accept, toggling sandbox mode, or rewinding a conversation.
+- List Git submodules (and nested repositories) as folders in file lists, so they can be opened from the file browser (#192).
+- Show Claude sessions renamed from ccpocket in the named-only session list.
+- Stop a missing Codex CLI from leaving app-server startup and pending requests waiting forever.
+- Decline a rejected Codex MCP form request instead of submitting it, and stop a finished Codex turn from being treated as still running.
+- Generate session names without blocking the Bridge, with a timeout.
+- Write the gallery index atomically so concurrent saves can no longer corrupt it.
+- Keep idle sessions with running background tasks from being evicted, and deny pending tool permission requests when a turn is interrupted or stopped.
+- Keep trailing whitespace when staging, unstaging or reverting individual hunks.
+- Create a real branch when a worktree name matches a tag or other non-branch ref.
+- Allow folders whose names start with `..` inside allowed directories, and include the `requestId` when a Project start is rejected for a disallowed root.
+
+## [1.94.0] - 2026-11-01
+
+### Added
+
+- Convert skill triggers in a new session's first prompt: `/name` for Codex and `$name` for Claude are rewritten to the provider's syntax, and Codex also receives the skills as structured inputs.
+- Warn in `doctor` when a Mac host will go to sleep while idle (and, on laptops, when the lid is closed), since the Bridge goes offline while the Mac sleeps.
+
+### Changed
+
+- Keep Claude sessions busy until background tasks settle, and send the completion push with the latest result once the session stays idle. Stopping a session between turns also stops its background tasks. Codex terminals and child agent threads that outlive their turn are tracked as background tasks.
+
+## [1.93.0] - 2026-10-31
+
+### Added
+
+- Report Claude background tasks (background shells, monitors and subagents) that keep running after a turn ends, as an opt-in `background_tasks` message and a `backgroundTaskCount` session summary field.
+- Support catalog-driven Codex service tiers with labels, descriptions and explicit extended-speed selection.
+
+### Changed
+
+- Update TypeScript to 7.0.2, Vitest to 5.0.5 and other minor and patch dependencies.
+
+## [1.92.0] - 2026-10-31
+
+### Added
+
+- Queue or steer Claude input sent mid-turn like Codex. Queued messages can be steered, edited or cancelled and are delivered once the turn becomes idle.
+- Change the Claude model, effort and fast mode during a session; the change applies from the next message and survives resume.
+- Fork a Claude session from an assistant message.
+
+### Fixed
+
+- Keep a Claude session idle after local command echoes, and drain queued input only after the idle state is published.
+- Keep fork and Claude settings state consistent.
+- Drop Claude content blocks clients cannot render, such as advisor and other server-side tool blocks.
+
+## [1.91.3] - 2026-10-31
+
+### Fixed
+
+- Republish the 1.91.2 fixes; the 1.91.2 release was not published because a test depended on a local environment variable.
+
+## [1.91.2] - 2026-10-31
+
+### Fixed
+
+- Report Claude result cost per turn. The SDK's `total_cost_usd` is a running total, so each turn re-counted earlier spend and the session total was inflated.
+- Keep a running Claude turn running when the CLI's per-turn `init` arrives, instead of briefly dropping to idle (input sent in that window could skip the queue).
+
+## [1.91.1] - 2026-10-31
+
+### Fixed
+
+- Stop showing Claude task notifications and `[Request interrupted by user]` markers as user messages in live and restored chat history.
+
+## [1.91.0] - 2026-10-31
+
+### Added
+
+- Fetch Claude plan usage through the Agent SDK usage API.
+- Send Claude model display options (name and description) matching the Claude Code CLI, with alias-based fallbacks.
+
+### Changed
+
+- Update `@anthropic-ai/claude-agent-sdk` to 0.3.316.
+
+### Fixed
+
+- Keep Claude subagent frames out of the main conversation. Background agents no longer mark an idle session as running, so new messages are delivered instead of interrupting the agents and getting stuck, and subagent prompts, narration and interrupt markers no longer appear as main messages.
+
 ## [1.90.0] - 2026-10-20
 
 ### Added

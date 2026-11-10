@@ -121,6 +121,11 @@ vi.mock("./sdk-process.js", () => ({
     public start = vi.fn((_: string, __?: unknown) => {});
     public stop = vi.fn(() => {});
     public rewindFiles = vi.fn(async () => ({ canRewind: false }));
+    public status = "idle";
+    public isTurnActive = false;
+    public dispatchInput = vi.fn();
+    public dispatchInputWithImages = vi.fn();
+    public steerInput = vi.fn(() => true);
 
     constructor() {
       super();
@@ -1021,7 +1026,7 @@ describe("SessionManager codex path", () => {
     it("retains active sessions and all pending user work beyond the TTL", () => {
       const ids = Array.from({ length: 5 }, (_, i) => manager.create(`/tmp/protected-${i}`, undefined, undefined, undefined, "codex"));
       codexInstances.slice(1).forEach((proc) => proc.emit("status", "idle"));
-      manager.get(ids[1])!.codexQueuedInput = { itemId: "queued", text: "next", createdAt: new Date().toISOString() };
+      manager.get(ids[1])!.queuedInput = { itemId: "queued", text: "next", createdAt: new Date().toISOString() };
       codexInstances[2].getRecoveryState.mockReturnValue({ phase: "waiting" });
       codexInstances[3].getPendingPermissions.mockReturnValue([{ toolUseId: "question", toolName: "AskUserQuestion", input: { isBlocking: false } }]);
       codexInstances[4].emit("status", "waiting_approval");
@@ -1191,6 +1196,150 @@ describe("SessionManager codex path", () => {
     expect(manager.releaseDeferredProcessMessages(sessionId)).toBe(false);
   });
 
+  describe("readClaudePlanUsage", () => {
+    it("reads from the first Claude session that answers", async () => {
+      const manager = new SessionManager(() => {});
+      manager.create("/tmp/codex-usage", undefined, undefined, undefined, "codex");
+      manager.create("/tmp/claude-a");
+      const first = sdkInstances.at(-1) as any;
+      first.readPlanUsage = vi.fn(async () => { throw new Error("closed"); });
+      manager.create("/tmp/claude-b");
+      const second = sdkInstances.at(-1) as any;
+      second.readPlanUsage = vi.fn(async () => ({ rate_limits_available: true }));
+
+      await expect(manager.readClaudePlanUsage()).resolves.toEqual({ rate_limits_available: true });
+      expect(first.readPlanUsage).toHaveBeenCalledOnce();
+    });
+
+    it("resolves undefined without a Claude session", async () => {
+      const manager = new SessionManager(() => {});
+      manager.create("/tmp/codex-only", undefined, undefined, undefined, "codex");
+      await expect(manager.readClaudePlanUsage()).resolves.toBeUndefined();
+    });
+  });
+
+  describe("usage-limit queue", () => {
+    beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-03T00:00:00Z")); });
+    afterEach(() => vi.useRealTimers());
+    function setup(provider: "claude" | "codex") {
+      const forwarded: ServerMessage[] = [];
+      const manager = new SessionManager((_, message) => forwarded.push(message));
+      const id = manager.create("/tmp/limited", undefined, undefined, undefined, provider);
+      const proc = (provider === "codex" ? codexInstances.at(-1) : sdkInstances.at(-1)) as any;
+      proc.isWaitingForInput = true;
+      proc.readUsageLimitResetAt = vi.fn(async () => undefined);
+      const send = provider === "codex" ? proc.sendInputStructured : proc.dispatchInput;
+      const input = { itemId: "queued-limit", text: "continue", clientMessageId: "cm-limit", createdAt: new Date().toISOString() };
+      return { manager, id, proc, send, input, forwarded };
+    }
+
+    it.each(["claude", "codex"] as const)("holds %s input until reset, then sends the edited input exactly once", async (provider) => {
+      const { manager, id, proc, send, input, forwarded } = setup(provider);
+      const reset = Date.now() + 3600000;
+      proc.emit("usage_limit", reset);
+      expect(manager.queueInput(id, input)).toBe(true);
+      proc.emit("input_ready");
+      expect(manager.summary(id)?.queuedInput?.retryAt).toBe(new Date(reset).toISOString());
+      expect(await manager.steerQueuedInput(id, input.itemId)).toMatchObject({ ok: false });
+      manager.updateQueuedInput(id, input.itemId, "edited");
+      await vi.advanceTimersByTimeAsync(3599999);
+      expect(send).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      proc.emit("input_ready");
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send.mock.calls[0][0]).toBe("edited");
+      expect(manager.get(id)?.queuedInput).toBeUndefined();
+      expect(forwarded.filter(m => m.type === "user_input")).toHaveLength(1);
+      manager.destroy(id);
+    });
+
+    it.each(["claude", "codex"] as const)("queues %s steer input and retains a pre-existing queue when the limit arrives", async (provider) => {
+      const { manager, id, proc, send, input } = setup(provider);
+      manager.queueInput(id, input);
+      proc.emit("usage_limit", Date.now() + 60000);
+      proc.emit("input_ready");
+      expect(send).not.toHaveBeenCalled();
+      expect(await manager.steerInput(id, { ...input, itemId: "second" })).toBe("rejected");
+      manager.cancelQueuedInput(id, input.itemId);
+      expect(await manager.steerInput(id, { ...input, itemId: "second" })).toBe("queued");
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(send).toHaveBeenCalledTimes(1);
+      manager.destroy(id);
+    });
+
+    it.each(["cancel", "destroy", "exit"])("does not send after %s", async (action) => {
+      const { manager, id, proc, send, input } = setup("codex");
+      proc.emit("usage_limit", Date.now() + 60000);
+      manager.queueInput(id, input);
+      if (action === "cancel") manager.cancelQueuedInput(id, input.itemId);
+      else if (action === "destroy") manager.destroy(id);
+      else proc.emit("exit");
+      await vi.advanceTimersByTimeAsync(120000);
+      expect(send).not.toHaveBeenCalled();
+      manager.destroy(id);
+    });
+
+    it("waits for input readiness if the reset happens during another turn", async () => {
+      const { manager, id, proc, send, input } = setup("codex");
+      proc.emit("usage_limit", Date.now() + 60000);
+      manager.queueInput(id, input);
+      proc.isWaitingForInput = false;
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(send).not.toHaveBeenCalled();
+      proc.isWaitingForInput = true;
+      proc.emit("input_ready");
+      expect(send).toHaveBeenCalledTimes(1);
+      manager.destroy(id);
+    });
+
+    it("keeps unknown limits queued when usage fails and sends only after confirmation", async () => {
+      const { manager, id, proc, send, input } = setup("claude");
+      proc.readUsageLimitResetAt.mockRejectedValueOnce(new Error("offline"));
+      proc.emit("usage_limit");
+      manager.queueInput(id, input);
+      expect(manager.summary(id)?.queuedInput).toMatchObject({ waitingForUsageLimit: true });
+      expect(manager.summary(id)?.queuedInput?.retryAt).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(send).not.toHaveBeenCalled();
+      expect(manager.get(id)?.queuedInput).toBeDefined();
+      proc.readUsageLimitResetAt.mockResolvedValueOnce(Date.now() + 3600000);
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(send).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(3540000);
+      expect(send).toHaveBeenCalledTimes(1);
+      manager.destroy(id);
+    });
+
+    it("keeps a newer rejection while a reset lookup is in flight", async () => {
+      const { manager, id, proc, send, input } = setup("codex");
+      let resolve!: (value: undefined) => void;
+      proc.readUsageLimitResetAt.mockReturnValueOnce(new Promise(r => { resolve = r; }));
+      proc.emit("usage_limit");
+      manager.queueInput(id, input);
+      await vi.advanceTimersByTimeAsync(60000);
+      proc.emit("usage_limit");
+      resolve(undefined);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(send).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(send).toHaveBeenCalledTimes(1);
+      manager.destroy(id);
+    });
+
+    it("re-arms longer limits without overflowing Node timers", async () => {
+      const { manager, id, proc, send, input } = setup("codex");
+      proc.emit("usage_limit");
+      manager.queueInput(id, input);
+      const day = 86400000;
+      proc.emit("usage_limit", Date.now() + 40 * day);
+      await vi.advanceTimersByTimeAsync(30 * day);
+      expect(send).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(10 * day);
+      expect(send).toHaveBeenCalledTimes(1);
+      manager.destroy(id);
+    });
+  });
+
   it("drains queued codex input when the process becomes ready", () => {
     const forwarded: Array<{ sessionId: string; msg: ServerMessage }> = [];
     const manager = new SessionManager((sessionId, msg) => {
@@ -1204,7 +1353,7 @@ describe("SessionManager codex path", () => {
       undefined,
       "codex",
     );
-    const queued = manager.queueCodexInput(sessionId, {
+    const queued = manager.queueInput(sessionId, {
       itemId: "queued-1",
       clientMessageId: "cm-follow-up",
       text: "Follow up",
@@ -1221,7 +1370,7 @@ describe("SessionManager codex path", () => {
     proc.isWaitingForInput = true;
     proc.emit("input_ready");
 
-    expect(manager.get(sessionId)?.codexQueuedInput).toBeUndefined();
+    expect(manager.get(sessionId)?.queuedInput).toBeUndefined();
     expect(
       manager.list().find((s) => s.id === sessionId)?.queuedInput,
     ).toBeUndefined();
@@ -1269,7 +1418,7 @@ describe("SessionManager codex path", () => {
       "codex",
     );
     expect(
-      manager.queueCodexInput(sessionId, {
+      manager.queueInput(sessionId, {
         itemId: "queued-1",
         text: "Steer this",
         createdAt: "2026-04-25T00:00:00.000Z",
@@ -1278,10 +1427,10 @@ describe("SessionManager codex path", () => {
       }),
     ).toBe(true);
 
-    const result = await manager.steerCodexQueuedInput(sessionId, "queued-1");
+    const result = await manager.steerQueuedInput(sessionId, "queued-1");
 
     expect(result).toEqual({ ok: true });
-    expect(manager.get(sessionId)?.codexQueuedInput).toBeUndefined();
+    expect(manager.get(sessionId)?.queuedInput).toBeUndefined();
     expect(codexInstances[0].steerInputStructured).toHaveBeenCalledWith(
       "Steer this",
       {
@@ -1318,7 +1467,7 @@ describe("SessionManager codex path", () => {
       "codex",
     );
     expect(
-      manager.queueCodexInput(sessionId, {
+      manager.queueInput(sessionId, {
         itemId: "queued-1",
         text: "Steer this",
         createdAt: "2026-04-25T00:00:00.000Z",
@@ -1328,13 +1477,13 @@ describe("SessionManager codex path", () => {
       new Error("No active Codex turn to steer"),
     );
 
-    const result = await manager.steerCodexQueuedInput(sessionId, "queued-1");
+    const result = await manager.steerQueuedInput(sessionId, "queued-1");
 
     expect(result).toEqual({
       ok: false,
       error: "No active Codex turn to steer",
     });
-    expect(manager.get(sessionId)?.codexQueuedInput?.text).toBe("Steer this");
+    expect(manager.get(sessionId)?.queuedInput?.text).toBe("Steer this");
   });
 
   it("extracts Codex MCP base64 images into images for history and forwarding", async () => {
@@ -1465,6 +1614,356 @@ describe("SessionManager codex path", () => {
   });
 });
 
+describe("SessionManager rewindConversation", () => {
+  const rewindable = (manager: SessionManager, id: string) => {
+    const session = manager.get(id)!;
+    session.claudeSessionId = "claude-session-1";
+    session.history.push(
+      { type: "user_input", text: "first", userMessageUuid: "user-1" } as ServerMessage,
+      {
+        type: "assistant",
+        message: { role: "assistant", content: [] },
+        messageUuid: "assistant-1",
+      } as unknown as ServerMessage,
+      { type: "user_input", text: "second", userMessageUuid: "user-2" } as ServerMessage,
+    );
+    (sdkInstances.at(-1) as unknown as { settings: unknown }).settings = {
+      model: "opus",
+      effort: "high",
+      fastMode: true,
+    };
+  };
+
+  it.each([
+    ["resuming at the previous assistant", "user-2", { sessionId: "claude-session-1", resumeSessionAt: "assistant-1" }],
+    ["starting fresh from the first turn", "user-1", {}],
+  ])("keeps sandbox and model settings when %s", (_label, target, expected) => {
+    const manager = new SessionManager(() => {});
+    const id = manager.create("/tmp/rewind", { sandboxEnabled: true });
+    rewindable(manager, id);
+
+    const onReady = vi.fn();
+    manager.rewindConversation(id, target, onReady);
+
+    const newId = onReady.mock.calls[0][0] as string;
+    expect(manager.get(newId)?.sandboxEnabled).toBe(true);
+    expect(sdkInstances.at(-1)!.start).toHaveBeenCalledWith(
+      "/tmp/rewind",
+      expect.objectContaining({
+        ...expected,
+        permissionMode: "default",
+        sandboxEnabled: true,
+        model: "opus",
+        effort: "high",
+        fastMode: true,
+      }),
+    );
+    manager.destroyAll();
+  });
+});
+
+describe("SessionManager prompt retraction", () => {
+  const setup = () => {
+    const manager = new SessionManager(() => {});
+    const id = manager.create("/tmp/retract");
+    const proc = sdkInstances.at(-1)!;
+    (proc as unknown as { settings: unknown }).settings = {};
+    const session = manager.get(id)!;
+    session.claudeSessionId = "claude-session-1";
+    return { manager, id, proc, session };
+  };
+  const assistant = (uuid: string, content: unknown[]) =>
+    ({
+      type: "assistant",
+      message: { id: uuid, role: "assistant", content, model: "m" },
+      messageUuid: uuid,
+    }) as unknown as ServerMessage;
+
+  it("offers the latest prompt until visible output arrives", () => {
+    const { manager, id, proc } = setup();
+    manager.appendHistory(id, { type: "user_input", text: "typo" } as ServerMessage);
+    expect(manager.retractableUserInput(id)?.text).toBe("typo");
+
+    proc.emit("message", { type: "thinking_delta", text: "hmm" });
+    proc.emit("message", { type: "stream_delta", text: "  " });
+    expect(manager.retractableUserInput(id)?.text).toBe("typo");
+
+    proc.emit("message", { type: "stream_delta", text: "Sure" });
+    expect(manager.retractableUserInput(id)).toBeNull();
+    manager.destroyAll();
+  });
+
+  it("treats tool use as output", () => {
+    const { manager, id, proc } = setup();
+    manager.appendHistory(id, { type: "user_input", text: "go" } as ServerMessage);
+    proc.emit("message", assistant("a1", [{ type: "tool_use", id: "t", name: "Bash", input: {} }]));
+    expect(manager.retractableUserInput(id)).toBeNull();
+    manager.destroyAll();
+  });
+
+  it("does not retract prompts with images or synthetic input", () => {
+    const { manager, id } = setup();
+    manager.appendHistory(id, { type: "user_input", text: "pic", imageCount: 1 } as ServerMessage);
+    expect(manager.retractableUserInput(id)).toBeNull();
+    manager.appendHistory(id, { type: "user_input", text: "x", isSynthetic: true } as ServerMessage);
+    expect(manager.retractableUserInput(id)).toBeNull();
+    manager.destroyAll();
+  });
+
+  const idle = (proc: { emit: (e: string, ...a: unknown[]) => boolean }) =>
+    proc.emit("status", "idle");
+
+  it("restarts the same process at the assistant before the latest prompt", async () => {
+    const { manager, id, proc, session } = setup();
+    idle(proc);
+    manager.appendHistory(id, { type: "user_input", text: "first", userMessageUuid: "u1" } as ServerMessage);
+    manager.appendHistory(id, assistant("a1", [{ type: "text", text: "hi" }]));
+    manager.appendHistory(id, { type: "user_input", text: "typo" } as ServerMessage);
+    proc.start.mockClear();
+    const forwarded = vi.spyOn(manager as unknown as { onMessage: (...a: unknown[]) => void }, "onMessage");
+
+    const result = await manager.rewindInPlace(id, null);
+
+    expect(result.text).toBe("typo");
+    expect(manager.get(id)).toBe(session);
+    expect(proc.start).toHaveBeenCalledWith(
+      "/tmp/retract",
+      expect.objectContaining({ sessionId: "claude-session-1", resumeSessionAt: "a1" }),
+    );
+    expect(session.history.map((m) => m.type)).toEqual(["user_input", "assistant"]);
+    expect(manager.getHistorySince(id, session.historyRevision - 1)?.kind).toBe("snapshot");
+    expect(forwarded).toHaveBeenCalledWith(id, { type: "conversation_rewound" });
+    manager.destroyAll();
+  });
+
+  it("rewinds an earlier prompt by uuid, dropping later turns", async () => {
+    const { manager, id, proc, session } = setup();
+    idle(proc);
+    manager.appendHistory(id, { type: "user_input", text: "first", userMessageUuid: "u1" } as ServerMessage);
+    manager.appendHistory(id, assistant("a1", [{ type: "text", text: "hi" }]));
+    manager.appendHistory(id, { type: "user_input", text: "second", userMessageUuid: "u2" } as ServerMessage);
+    manager.appendHistory(id, assistant("a2", [{ type: "text", text: "yo" }]));
+    manager.appendHistory(id, { type: "user_input", text: "third", userMessageUuid: "u3" } as ServerMessage);
+
+    const result = await manager.rewindInPlace(id, "u2");
+
+    expect(result.text).toBe("second");
+    expect(proc.start).toHaveBeenLastCalledWith(
+      "/tmp/retract",
+      expect.objectContaining({ resumeSessionAt: "a1" }),
+    );
+    expect(session.history.filter((m) => m.type === "user_input")).toHaveLength(1);
+    manager.destroyAll();
+  });
+
+  it("rewinds into resumed past history", async () => {
+    const { manager, id, proc, session } = setup();
+    idle(proc);
+    session.pastMessages = [
+      { role: "user", uuid: "p1", content: [{ type: "text", text: "old" }] },
+      { role: "assistant", uuid: "pa1", content: [] },
+      { role: "user", uuid: "p2", content: "older typo" },
+    ];
+    manager.appendHistory(id, { type: "user_input", text: "live", userMessageUuid: "u9" } as ServerMessage);
+
+    const result = await manager.rewindInPlace(id, "p2");
+
+    expect(result.text).toBe("older typo");
+    expect(proc.start).toHaveBeenLastCalledWith(
+      "/tmp/retract",
+      expect.objectContaining({ resumeSessionAt: "pa1" }),
+    );
+    expect(session.pastMessages).toHaveLength(2);
+    expect(session.history).toHaveLength(0);
+    manager.destroyAll();
+  });
+
+  it("starts empty when the rewound prompt was the first turn", async () => {
+    const { manager, id, proc } = setup();
+    idle(proc);
+    manager.get(id)!.claudeSessionId = undefined;
+    manager.appendHistory(id, { type: "user_input", text: "typo" } as ServerMessage);
+    proc.start.mockClear();
+
+    await manager.rewindInPlace(id, null);
+
+    const options = proc.start.mock.calls[0][1];
+    expect(options.resumeSessionAt).toBeUndefined();
+    expect(options.sessionId).toBeUndefined();
+    manager.destroyAll();
+  });
+
+  it("refuses to drop earlier turns when no rewind point is known", async () => {
+    const { manager, id, proc } = setup();
+    idle(proc);
+    manager.appendHistory(id, { type: "user_input", text: "first" } as ServerMessage);
+    manager.appendHistory(id, { type: "user_input", text: "typo" } as ServerMessage);
+    proc.start.mockClear();
+
+    await expect(manager.rewindInPlace(id, null)).rejects.toThrow(
+      "Cannot locate the turn before the rewound prompt",
+    );
+    expect(proc.start).not.toHaveBeenCalled();
+    manager.destroyAll();
+  });
+
+  it("refuses while the agent is running", async () => {
+    const { manager, id, proc } = setup();
+    proc.emit("status", "running");
+    manager.appendHistory(id, { type: "user_input", text: "typo" } as ServerMessage);
+    await expect(manager.rewindInPlace(id, null)).rejects.toThrow("running");
+    manager.destroyAll();
+  });
+});
+
+describe("SessionManager idle eviction with background tasks", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubEnv("BRIDGE_IDLE_SESSION_TTL_MINUTES", "15");
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
+  it("retains idle sessions whose background tasks are still running", () => {
+    const manager = new SessionManager(() => {});
+    const busy = manager.create("/tmp/bg-busy");
+    const idle = manager.create("/tmp/bg-idle");
+    sdkInstances.forEach((proc) => proc.emit("status", "idle"));
+    manager.get(busy)!.backgroundTasks = [
+      { taskId: "t1", taskType: "local_agent", description: "Explore" },
+    ];
+    manager.get(idle)!.backgroundTasks = [];
+
+    vi.advanceTimersByTime(16 * 60_000);
+
+    expect(manager.get(busy)).toBeDefined();
+    expect(manager.get(idle)).toBeUndefined();
+    manager.destroyAll();
+  });
+});
+
+describe("SessionManager claude input queue", () => {
+  beforeEach(() => {
+    codexInstances.length = 0;
+    sdkInstances.length = 0;
+  });
+
+  function createClaude() {
+    const forwarded: ServerMessage[] = [];
+    const manager = new SessionManager((_sessionId, msg) => {
+      forwarded.push(msg);
+    });
+    const sessionId = manager.create("/tmp/project-claude");
+    const proc = sdkInstances.at(-1)!;
+    proc.status = "running";
+    proc.isTurnActive = true;
+    return { manager, sessionId, proc, forwarded };
+  }
+
+  it("holds queued claude input until the turn becomes idle", () => {
+    const { manager, sessionId, proc, forwarded } = createClaude();
+    expect(
+      manager.queueInput(sessionId, {
+        itemId: "queued-1",
+        clientMessageId: "cm-1",
+        text: "after this turn",
+        createdAt: "2026-10-31T00:00:00.000Z",
+      }),
+    ).toBe(true);
+    expect(manager.list().find((s) => s.id === sessionId)?.queuedInput)
+      .toMatchObject({ itemId: "queued-1", text: "after this turn" });
+
+    proc.emit("status", "waiting_approval");
+    expect(proc.dispatchInput).not.toHaveBeenCalled();
+
+    proc.status = "idle";
+    proc.isTurnActive = false;
+    // A bare idle (e.g. from stop) must not send the queued prompt.
+    proc.emit("status", "idle");
+    expect(proc.dispatchInput).not.toHaveBeenCalled();
+
+    proc.emit("input_ready");
+
+    expect(proc.dispatchInput).toHaveBeenCalledWith("after this turn");
+    expect(manager.get(sessionId)?.queuedInput).toBeUndefined();
+    expect(forwarded.find((m) => m.type === "user_input")).toMatchObject({
+      type: "user_input",
+      text: "after this turn",
+      clientMessageId: "cm-1",
+    });
+    expect(
+      forwarded.find((m) => m.type === "user_input" && "userMessageUuid" in m),
+    ).toBeUndefined();
+  });
+
+  it("steers claude queued input without waiting for the turn", async () => {
+    const { manager, sessionId, proc, forwarded } = createClaude();
+    manager.queueInput(sessionId, {
+      itemId: "queued-1",
+      text: "add this now",
+      createdAt: "2026-10-31T00:00:00.000Z",
+      imageCount: 1,
+      images: [{ base64: "aGVsbG8=", mimeType: "image/png" }],
+    });
+
+    const result = await manager.steerQueuedInput(sessionId, "queued-1");
+
+    expect(result).toEqual({ ok: true });
+    expect(proc.steerInput).toHaveBeenCalledWith("add this now", [
+      { base64: "aGVsbG8=", mimeType: "image/png" },
+    ]);
+    expect(manager.get(sessionId)?.queuedInput).toBeUndefined();
+    const queueEvents = forwarded.filter((m) => m.type === "conversation_queue");
+    expect(queueEvents.at(-1)).toMatchObject({ items: [] });
+  });
+
+  it("queues new steer input when the steer is rejected", async () => {
+    const { manager, sessionId, proc } = createClaude();
+    proc.steerInput.mockImplementationOnce(() => {
+      throw new Error("not ready");
+    });
+
+    const outcome = await manager.steerInput(sessionId, {
+      itemId: "queued-2",
+      text: "retry later",
+      createdAt: "2026-10-31T00:00:00.000Z",
+    });
+
+    expect(outcome).toBe("queued");
+    expect(manager.get(sessionId)?.queuedInput?.text).toBe("retry later");
+  });
+
+  it("sends a failed codex steer right away when the turn already ended", async () => {
+    const manager = new SessionManager(() => {});
+    const sessionId = manager.create(
+      "/tmp/project-codex",
+      undefined,
+      undefined,
+      undefined,
+      "codex",
+    );
+    const proc = codexInstances.at(-1)!;
+    proc.steerInputStructured.mockRejectedValueOnce(new Error("no turn"));
+    proc.isWaitingForInput = true;
+
+    const outcome = await manager.steerInput(sessionId, {
+      itemId: "late-steer",
+      text: "late",
+      createdAt: "2026-10-31T00:00:00.000Z",
+    });
+
+    expect(outcome).toBe("steered");
+    expect(manager.get(sessionId)?.queuedInput).toBeUndefined();
+    expect(proc.sendInputStructured).toHaveBeenCalledWith("late", {
+      images: undefined,
+      skills: undefined,
+      mentions: undefined,
+    });
+  });
+});
+
 describe("SessionManager claude UUID backfill", () => {
   const registerHistoryJsonl = (
     projectLikePath: string,
@@ -1483,6 +1982,41 @@ describe("SessionManager claude UUID backfill", () => {
     sdkInstances.length = 0;
     fakeDirs.clear();
     fakeFiles.clear();
+  });
+
+  it("skips uuids of turns abandoned by a rewind when backfilling", () => {
+    const testId = randomUUID();
+    const projectPath = `/tmp/ccpocket-backfill-${testId}`;
+    const threadId = `thread-${testId}`;
+    const line = (type: string, uuid: string, parentUuid: string | null, text: string) =>
+      JSON.stringify({ type, uuid, parentUuid, message: { role: type, content: [{ type: "text", text }] } });
+    // "again" was sent, rewound, then resent unchanged on a new branch.
+    registerHistoryJsonl(projectPath, threadId, [
+      line("user", "u1", null, "first"),
+      line("assistant", "a1", "u1", "ok"),
+      line("user", "old-again", "a1", "again"),
+      line("assistant", "a2", "old-again", "ok"),
+      line("user", "new-again", "a1", "again"),
+      line("assistant", "a3", "new-again", "ok"),
+    ]);
+
+    const manager = new SessionManager(() => {});
+    const sessionId = manager.create(projectPath);
+    const session = manager.get(sessionId)!;
+    session.claudeSessionId = threadId;
+    manager.appendHistory(sessionId, { type: "user_input", text: "again" } as ServerMessage);
+
+    sdkInstances[0].emit("message", {
+      type: "result",
+      subtype: "success",
+      sessionId: threadId,
+    } satisfies ServerMessage);
+
+    const userInput = session.history.find((msg) => msg.type === "user_input") as
+      | { userMessageUuid?: string }
+      | undefined;
+    expect(userInput?.userMessageUuid).toBe("new-again");
+    manager.destroyAll();
   });
 
   it("backfills user UUIDs from worktree history jsonl", () => {
@@ -1847,7 +2381,7 @@ describe("SessionManager claude UUID backfill", () => {
       userMessageUuid: "codex:user-turn:1",
     } as ServerMessage);
     expect(
-      manager.queueCodexInput(sessionId, {
+      manager.queueInput(sessionId, {
         itemId: "queued-1",
         text: "queued local",
         createdAt: "2026-05-12T10:00:00.000Z",

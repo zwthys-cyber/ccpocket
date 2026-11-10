@@ -1,3 +1,8 @@
+import {
+  cleanClaudeCompactSummary,
+  normalizeClaudeCompactMetadata,
+  type SessionHistoryCompaction,
+} from "./context-compaction.js";
 import { readdir, readFile, writeFile, appendFile, stat, open } from "node:fs/promises";
 import { createReadStream, type Dirent } from "node:fs";
 import { createInterface } from "node:readline";
@@ -7,6 +12,12 @@ import { renameSession as renameClaudeSdkSession } from "@anthropic-ai/claude-ag
 import { isAutoRenamePromptText } from "./auto-rename.js";
 import { normalizeCodexServiceTierForClient } from "./codex-service-tier.js";
 import { createRepositoryRootResolver } from "./repository-root.js";
+import { isNarrationSignature } from "./claude-narration.js";
+import {
+  recentSessionMetadataSearchField,
+  searchRecentSessionContent,
+  type RecentSessionSearchMatch,
+} from "./recent-session-search.js";
 
 export interface SessionIndexEntry {
   sessionId: string;
@@ -39,6 +50,11 @@ export interface SessionIndexEntry {
     webSearchMode?: string;
     additionalWritableRoots?: string[];
   };
+  /**
+   * Why the entry matched `searchQuery` (only set when a query was given).
+   * See docs/recent-sessions-filters.md.
+   */
+  searchMatch?: RecentSessionSearchMatch;
 }
 
 interface RawSessionIndexFile {
@@ -73,19 +89,107 @@ export interface GetRecentSessionsOptions {
   provider?: "claude" | "codex";
   /** Show only sessions with a non-empty name. */
   namedOnly?: boolean;
-  /** Free-text search across name, firstPrompt, lastPrompt and summary. */
+  /**
+   * Free-text search across name, firstPrompt, lastPrompt, summary, project
+   * folder name and git branch. Matching entries carry `searchMatch`.
+   */
   searchQuery?: string;
+  /**
+   * Also search transcript text (user / assistant messages) of sessions whose
+   * metadata does not match. Bounded walk, newest first.
+   */
+  searchContent?: boolean;
+  /** Test hook for the content-search bounds. */
+  contentSearchLimits?: { maxFiles?: number; budgetMs?: number };
   /**
    * Bridge-owned filter applied before pagination. This keeps workspace
    * filtering to a single filesystem scan even when matching sessions are
    * sparse in a large history.
    */
   sessionFilter?: (session: SessionIndexEntry) => boolean;
+  /**
+   * Pinned provider sessions (keys from [recentSessionIdentityKey]) to return
+   * in [GetRecentSessionsResult.pinnedSessions] regardless of pagination.
+   * They still have to pass every other filter above.
+   */
+  pinnedSessionKeys?: ReadonlySet<string>;
 }
 
 export interface GetRecentSessionsResult {
   sessions: SessionIndexEntry[];
   hasMore: boolean;
+  /** Present only when [GetRecentSessionsOptions.pinnedSessionKeys] is set. */
+  pinnedSessions?: SessionIndexEntry[];
+  /**
+   * Content search stopped at a file/time bound before enough matches were
+   * found; more matches may exist beyond `sessions`.
+   */
+  contentSearchIncomplete?: boolean;
+  /** Transcript files read by the content search walk (page only). */
+  contentSearchFilesRead?: number;
+}
+
+/**
+ * Copy of [entry] with `searchMatch` when it matches [searchQuery] on
+ * metadata (name → firstPrompt → lastPrompt → summary → project → branch),
+ * otherwise null.
+ */
+export function matchRecentSessionSearch(
+  entry: SessionIndexEntry,
+  searchQuery: string,
+): SessionIndexEntry | null {
+  const field = recentSessionMetadataSearchField(entry, searchQuery);
+  return field ? { ...entry, searchMatch: { field } } : null;
+}
+
+/**
+ * Transcript files backing an index entry (Claude JSONL, Codex rollout
+ * segments). Tracked out of band so they never leak into responses.
+ */
+const sessionTranscriptPaths = new WeakMap<SessionIndexEntry, string[]>();
+
+function addSessionTranscriptPaths(
+  entry: SessionIndexEntry,
+  paths: readonly string[],
+): void {
+  const existing = sessionTranscriptPaths.get(entry) ?? [];
+  const merged = [...existing];
+  for (const path of paths) {
+    if (!merged.includes(path)) merged.push(path);
+  }
+  sessionTranscriptPaths.set(entry, merged);
+}
+
+function transcriptPathsForEntry(entry: SessionIndexEntry): string[] {
+  const tracked = sessionTranscriptPaths.get(entry);
+  if (tracked && tracked.length > 0) return tracked;
+  if (entry.provider !== "claude") return [];
+  const cwd = entry.resumeCwd ?? entry.projectPath;
+  if (!cwd) return [];
+  return [
+    join(homedir(), ".claude", "projects", pathToSlug(cwd), `${entry.sessionId}.jsonl`),
+  ];
+}
+
+/** Provider-qualified session identity used for pinned session lookups. */
+export function recentSessionIdentityKey(
+  provider: string,
+  sessionId: string,
+): string {
+  return `${provider}:${sessionId}`;
+}
+
+/**
+ * Select pinned entries from an already filtered (but not yet paginated)
+ * session list, preserving its order.
+ */
+export function selectPinnedRecentSessions<
+  T extends { provider: string; sessionId: string },
+>(filtered: readonly T[], pinnedSessionKeys: ReadonlySet<string>): T[] {
+  if (pinnedSessionKeys.size === 0) return [];
+  return filtered.filter((entry) =>
+    pinnedSessionKeys.has(recentSessionIdentityKey(entry.provider, entry.sessionId)),
+  );
 }
 
 interface JsonlScanStats {
@@ -193,6 +297,11 @@ function logRecentSessionsPerf(
 interface ScanJsonlDirOptions {
   excludeSessionIds?: ReadonlySet<string>;
   stats?: JsonlScanStats;
+  /**
+   * Only return sessions with a non-empty custom title. Titles are checked
+   * with a head/tail read before the transcript is parsed.
+   */
+  namedOnly?: boolean;
 }
 
 /** Convert a filesystem path to Claude's project directory slug (e.g. /foo/bar → -foo-bar). */
@@ -347,8 +456,39 @@ const RE_CODEX_PARTIAL_OUTPUT_TEXT =
 const RE_SYSTEM_INJECTED =
   /^<(?:local-command-caveat|local-command-std(?:err|out)|task-notification|teammate-message|bash-(?:input|stdout))>/;
 
+/** Marker the CLI records as a user message after an interrupt. */
+const RE_INTERRUPT_MARKER = /^\[Request interrupted by user(?: for tool use)?\]$/;
+
 function isSystemInjectedText(text: string): boolean {
-  return RE_SYSTEM_INJECTED.test(text) || text.startsWith("Base directory for this skill:");
+  const normalized = text.trim();
+  return (
+    RE_SYSTEM_INJECTED.test(normalized) ||
+    RE_INTERRUPT_MARKER.test(normalized) ||
+    normalized.startsWith("Base directory for this skill:")
+  );
+}
+
+/**
+ * User entries the CLI wrote itself (task notifications, interrupt markers,
+ * command captures) are shown to the model but are not user prompts.
+ */
+function isClaudeNonPromptUserEntry(
+  entry: Record<string, unknown>,
+  content: unknown[] | string,
+): boolean {
+  if (entry.isMeta === true || entry.promptSource === "system") return true;
+  const texts =
+    typeof content === "string"
+      ? [content]
+      : content.flatMap((item) => {
+          if (typeof item !== "object" || item === null) return [];
+          const block = item as Record<string, unknown>;
+          if (block.type === "text" && typeof block.text === "string") {
+            return [block.text];
+          }
+          return block.type === "image" ? [""] : [];
+        });
+  return texts.length > 0 && texts.every((text) => isSystemInjectedText(text));
 }
 
 function isCodexAutoRenameSession(firstPrompt: string): boolean {
@@ -962,8 +1102,13 @@ export async function scanJsonlDir(
     targets,
     PARALLEL_FILE_READ_LIMIT,
     async ({ sessionId, filePath }) => {
+      if (options.namedOnly && !(await getClaudeJsonlCustomTitle(filePath))) {
+        scanStats && (scanStats.filesRead += 1);
+        return null;
+      }
       const entry = await parseClaudeJsonlFileFast(sessionId, filePath);
       if (entry) {
+        addSessionTranscriptPaths(entry, [filePath]);
         scanStats && (scanStats.filesRead += 1);
         scanStats && (scanStats.entriesReturned += 1);
       } else {
@@ -1065,36 +1210,54 @@ export async function getAllRecentSessions(
 
           const indexedIds = new Set<string>();
           for (const entry of index.entries) {
-            const name = entry.customTitle || undefined;
-            if (includeOnlyNamedClaude && (!name || name === "")) {
-              continue;
+            // Mark as indexed even when filtered out so the JSONL scan below
+            // does not read the same transcript again.
+            indexedIds.add(entry.sessionId);
+
+            let name: string | undefined;
+            if (includeOnlyNamedClaude) {
+              // ccpocket/SDK renames only append a JSONL custom-title line, so
+              // the index customTitle alone misses renamed sessions.
+              name =
+                (await getClaudeJsonlCustomTitle(
+                  entry.fullPath || join(dirPath, `${entry.sessionId}.jsonl`),
+                )) ?? entry.customTitle;
+              if (!name) continue;
             }
 
-            indexedIds.add(entry.sessionId);
             const hydrated = await hydrateClaudeIndexedEntry(dirPath, entry);
             if (hydrated) {
+              // fullPath can be stale (moved projects); keep the directory
+              // copy too. Missing files are a no-match for content search.
+              addSessionTranscriptPaths(hydrated, [
+                join(dirPath, `${entry.sessionId}.jsonl`),
+                ...(entry.fullPath ? [entry.fullPath] : []),
+              ]);
+              if (name && !hydrated.name) hydrated.name = name;
               result.entries.push(hydrated);
               result.indexEntries += 1;
             }
           }
 
-          if (!includeOnlyNamedClaude) {
-            const scanned = await scanJsonlDir(dirPath, {
-              excludeSessionIds: indexedIds,
-              stats: result.jsonlStats,
-            });
-            result.entries.push(...scanned);
-          } else {
+          if (includeOnlyNamedClaude) {
             perfStats.claudeNamedOnlyFastPathUsed = true;
           }
+          const scanned = await scanJsonlDir(dirPath, {
+            excludeSessionIds: indexedIds,
+            stats: result.jsonlStats,
+            namedOnly: includeOnlyNamedClaude,
+          });
+          result.entries.push(...scanned);
         } else {
           if (includeOnlyNamedClaude) {
             perfStats.claudeNamedOnlyFastPathUsed = true;
-            return result;
           }
 
           result.jsonlOnlyDirs = 1;
-          const scanned = await scanJsonlDir(dirPath, { stats: result.jsonlStats });
+          const scanned = await scanJsonlDir(dirPath, {
+            stats: result.jsonlStats,
+            namedOnly: includeOnlyNamedClaude,
+          });
           result.entries.push(...scanned);
         }
 
@@ -1155,6 +1318,14 @@ export async function getAllRecentSessions(
     if (!existing) {
       seen.set(entry.sessionId, entry);
     } else {
+      // Keep every transcript (worktree copies, Codex rollout segments) so
+      // content search sees the whole session whichever entry wins.
+      const paths = [
+        ...(sessionTranscriptPaths.get(existing) ?? []),
+        ...(sessionTranscriptPaths.get(entry) ?? []),
+      ];
+      addSessionTranscriptPaths(existing, paths);
+      addSessionTranscriptPaths(entry, paths);
       // Pick the entry with more populated fields
       const score = (e: SessionIndexEntry): number =>
         (e.firstPrompt ? 1 : 0) +
@@ -1164,9 +1335,23 @@ export async function getAllRecentSessions(
         (e.name ? 1 : 0) +
         (e.summary ? 1 : 0) +
         (e.lastPrompt ? 1 : 0);
-      if (score(entry) > score(existing)) {
-        seen.set(entry.sessionId, entry);
+      const winner = score(entry) > score(existing) ? entry : existing;
+      // Activity time and latest prompt come from the newest copy: a Codex
+      // continuation segment keeps the same thread ID but holds the recent
+      // turns, while the richer base segment stops at the split.
+      const newer =
+        recentModifiedTime(entry.modified) > recentModifiedTime(existing.modified)
+          ? entry
+          : existing;
+      if (newer !== winner) {
+        winner.modified = newer.modified;
+        // A segment with a single prompt reports it as firstPrompt only.
+        const latestPrompt = newer.lastPrompt || newer.firstPrompt;
+        if (latestPrompt && latestPrompt !== winner.firstPrompt) {
+          winner.lastPrompt = latestPrompt;
+        }
       }
+      seen.set(entry.sessionId, winner);
     }
   }
   entries.push(...seen.values());
@@ -1210,16 +1395,18 @@ export async function getAllRecentSessions(
   }
   perfStats.counts.afterNamedOnly = filtered.length;
 
-  // Filter by search query (name, firstPrompt, lastPrompt, summary)
-  if (options.searchQuery) {
-    const q = options.searchQuery.toLowerCase();
-    filtered = filtered.filter(
-      (e) =>
-        e.name?.toLowerCase().includes(q) ||
-        e.firstPrompt?.toLowerCase().includes(q) ||
-        e.lastPrompt?.toLowerCase().includes(q) ||
-        e.summary?.toLowerCase().includes(q),
-    );
+  const contentSearchQuery =
+    options.searchContent && options.searchQuery?.trim()
+      ? options.searchQuery
+      : undefined;
+
+  // Filter by search query (name, firstPrompt, lastPrompt, summary, project,
+  // branch). Content search matches after sorting (bounded walk below).
+  if (options.searchQuery && !contentSearchQuery) {
+    const q = options.searchQuery;
+    filtered = filtered
+      .map((e) => matchRecentSessionSearch(e, q))
+      .filter((e): e is SessionIndexEntry => e !== null);
   }
   perfStats.counts.afterSearch = filtered.length;
 
@@ -1230,23 +1417,67 @@ export async function getAllRecentSessions(
   // Sort by modified descending
   const sortStartedAt = process.hrtime.bigint();
   filtered.sort((a, b) => {
-    const ta = new Date(a.modified).getTime();
-    const tb = new Date(b.modified).getTime();
+    // Unparseable timestamps (e.g. an empty `modified`) sort last; a NaN
+    // comparator result would scramble the whole order.
+    const ta = recentModifiedTime(a.modified);
+    const tb = recentModifiedTime(b.modified);
     return tb - ta;
   });
   markDuration(durations, "sortSessions", sortStartedAt);
 
   const paginateStartedAt = process.hrtime.bigint();
-  const sliced = filtered.slice(offset, offset + limit);
-  const hasMore = offset + limit < filtered.length;
+  let sliced: SessionIndexEntry[];
+  let hasMore: boolean;
+  let pinnedSessions: SessionIndexEntry[] | undefined;
+  let contentSearchIncomplete = false;
+  let contentSearchFilesRead: number | undefined;
+  if (contentSearchQuery) {
+    const contentSearch = (candidates: readonly SessionIndexEntry[], needed: number) =>
+      searchRecentSessionContent(candidates, {
+        query: contentSearchQuery,
+        needed,
+        transcriptPaths: transcriptPathsForEntry,
+        maxFiles: options.contentSearchLimits?.maxFiles,
+        budgetMs: options.contentSearchLimits?.budgetMs,
+      });
+    const [page, pinned] = await Promise.all([
+      contentSearch(filtered, offset + limit + 1),
+      options.pinnedSessionKeys
+        ? contentSearch(
+            selectPinnedRecentSessions(filtered, options.pinnedSessionKeys),
+            Number.POSITIVE_INFINITY,
+          )
+        : undefined,
+    ]);
+    const matched = page.matches.map(({ session, searchMatch }) => ({
+      ...session,
+      searchMatch,
+    }));
+    sliced = matched.slice(offset, offset + limit);
+    contentSearchIncomplete = page.incomplete;
+    contentSearchFilesRead = page.filesRead;
+    hasMore = matched.length > offset + limit || page.incomplete;
+    pinnedSessions = pinned?.matches.map(({ session, searchMatch }) => ({
+      ...session,
+      searchMatch,
+    }));
+  } else {
+    sliced = filtered.slice(offset, offset + limit);
+    hasMore = offset + limit < filtered.length;
+    pinnedSessions = options.pinnedSessionKeys
+      ? selectPinnedRecentSessions(filtered, options.pinnedSessionKeys)
+      : undefined;
+  }
   perfStats.counts.returned = sliced.length;
   markDuration(durations, "paginate", paginateStartedAt);
 
   // Supplement missing lastPrompt for Claude sessions (sessions-index.json
-  // doesn't include lastPrompt).  Only the paginated page is processed so at
-  // most `limit` tail reads are needed — lightweight enough to keep inline.
+  // doesn't include lastPrompt).  Only the paginated page (plus requested
+  // pinned sessions) is processed so the number of tail reads stays bounded.
   const supplementStartedAt = process.hrtime.bigint();
-  const needLastPrompt = sliced.filter(
+  const needLastPrompt = [
+    ...new Set([...sliced, ...(pinnedSessions ?? [])]),
+  ].filter(
     (e) => e.provider === "claude" && !e.lastPrompt && e.projectPath,
   );
   if (needLastPrompt.length > 0) {
@@ -1267,7 +1498,13 @@ export async function getAllRecentSessions(
   markDuration(durations, "total", totalStartedAt);
   logRecentSessionsPerf(options, durations, perfStats);
 
-  return { sessions: sliced, hasMore };
+  return {
+    sessions: sliced,
+    hasMore,
+    ...(pinnedSessions ? { pinnedSessions } : {}),
+    ...(contentSearchIncomplete ? { contentSearchIncomplete } : {}),
+    ...(contentSearchFilesRead !== undefined ? { contentSearchFilesRead } : {}),
+  };
 }
 
 interface CodexRecentOptions {
@@ -1606,7 +1843,79 @@ function hasCodexUserMessage(raw: string): boolean {
  * The first chunk contains session_meta / first prompt; the tail chunk contains
  * the latest prompt, latest assistant summary, and modified timestamp.
  */
+/**
+ * Parsed rollout metadata keyed by file path and invalidated by mtime / size.
+ * Every recent-sessions listing walks all rollouts, and rereading the head and
+ * tail of each (large) file dominated listing time. Callers mutate entries
+ * (repository grouping, thread names), so cached results are cloned.
+ */
+const codexParseCache = new Map<
+  string,
+  {
+    mtimeMs: number;
+    size: number;
+    fallbackSessionId: string;
+    result: CodexSessionParseResult | null;
+  }
+>();
+const CODEX_PARSE_CACHE_LIMIT = 20_000;
+
+function cloneCodexParseResult(
+  result: CodexSessionParseResult | null,
+): CodexSessionParseResult | null {
+  if (!result) return null;
+  const entry = structuredClone(result.entry);
+  // Side-channel metadata is keyed by the entry object; carry it over.
+  const repositoryUrl = codexRepositoryUrls.get(result.entry);
+  if (repositoryUrl) codexRepositoryUrls.set(entry, repositoryUrl);
+  return { entry, threadId: result.threadId };
+}
+
+/** Test hook. */
+export function clearCodexParseCache(): void {
+  codexParseCache.clear();
+}
+
 async function parseCodexSessionJsonlFast(
+  filePath: string,
+  fallbackSessionId: string,
+): Promise<CodexSessionParseResult | null> {
+  let fileStat;
+  try {
+    fileStat = await stat(filePath);
+  } catch {
+    codexParseCache.delete(filePath);
+    return null;
+  }
+  const cached = codexParseCache.get(filePath);
+  if (
+    cached &&
+    cached.mtimeMs === fileStat.mtimeMs &&
+    cached.size === fileStat.size &&
+    cached.fallbackSessionId === fallbackSessionId
+  ) {
+    return cloneCodexParseResult(cached.result);
+  }
+  const result = await parseCodexSessionJsonlFastUncached(
+    filePath,
+    fallbackSessionId,
+  );
+  codexParseCache.delete(filePath);
+  codexParseCache.set(filePath, {
+    mtimeMs: fileStat.mtimeMs,
+    size: fileStat.size,
+    fallbackSessionId,
+    result: cloneCodexParseResult(result),
+  });
+  while (codexParseCache.size > CODEX_PARSE_CACHE_LIMIT) {
+    const oldest = codexParseCache.keys().next().value;
+    if (oldest === undefined) break;
+    codexParseCache.delete(oldest);
+  }
+  return result;
+}
+
+async function parseCodexSessionJsonlFastUncached(
   filePath: string,
   fallbackSessionId: string,
 ): Promise<CodexSessionParseResult | null> {
@@ -1654,18 +1963,26 @@ async function parseCodexSessionJsonlFast(
 }
 
 function isCodexInternalSessionSource(source: unknown): boolean {
+  // Non-interactive `codex exec` runs (e.g. image generation helpers in temp
+  // dirs) are excluded like app-server thread/list does with its source kinds
+  // (cli / vscode / appServer), so index-backed listings match.
+  if (source === "exec") return true;
   const sourceObj = asObject(source);
   return sourceObj?.subagent !== undefined;
 }
 
+/**
+ * Return the last custom-title value in [text]. An empty string means the
+ * title was explicitly cleared; undefined means no custom-title line exists.
+ */
 function extractClaudeCustomTitleFromText(text: string): string | undefined {
-  let customTitle = "";
+  let customTitle: string | undefined;
   for (const line of text.split("\n")) {
     if (!RE_TYPE_CUSTOM_TITLE.test(line)) continue;
     const match = line.match(RE_CUSTOM_TITLE);
     if (match) customTitle = match[1];
   }
-  return customTitle || undefined;
+  return customTitle;
 }
 
 async function getClaudeJsonlCustomTitle(filePath: string): Promise<string | undefined> {
@@ -1683,7 +2000,7 @@ async function getClaudeJsonlCustomTitle(filePath: string): Promise<string | und
     if (fileSize <= HEAD_BYTES + TAIL_BYTES) {
       const buf = Buffer.alloc(fileSize);
       await fh.read(buf, 0, fileSize, 0);
-      return extractClaudeCustomTitleFromText(buf.toString("utf-8"));
+      return extractClaudeCustomTitleFromText(buf.toString("utf-8")) || undefined;
     }
 
     const headBuf = Buffer.alloc(HEAD_BYTES);
@@ -1695,7 +2012,9 @@ async function getClaudeJsonlCustomTitle(filePath: string): Promise<string | und
     const tailRaw = tailBuf.toString("utf-8");
     const firstNewline = tailRaw.indexOf("\n");
     const cleanTail = firstNewline >= 0 ? tailRaw.slice(firstNewline + 1) : "";
-    return extractClaudeCustomTitleFromText(cleanTail) ?? headTitle;
+    // Custom titles are last-wins: a cleared title in the tail overrides a
+    // title written near the start of the transcript.
+    return (extractClaudeCustomTitleFromText(cleanTail) ?? headTitle) || undefined;
   } finally {
     await fh.close();
   }
@@ -1993,35 +2312,165 @@ async function getAllRecentCodexSessions(options: CodexRecentOptions = {}): Prom
     },
   );
 
-  for (const parsed of parsedResults) {
+  for (const [index, parsed] of parsedResults.entries()) {
     options.perfStats && (options.perfStats.filesRead += 1);
     if (!parsed) continue;
-    // Attach thread name if available
-    const threadName = threadNames.get(parsed.threadId);
-    if (threadName) {
-      parsed.entry.name = threadName;
-    }
-    const threadProfile = threadProfiles.get(parsed.threadId);
-    if (threadProfile) {
-      parsed.entry.codexSettings = {
-        ...(parsed.entry.codexSettings ?? {}),
-        profile: threadProfile,
-      };
-    }
-    const additionalWritableRoots = threadAdditionalWritableRoots.get(
-      parsed.threadId,
-    );
-    if (additionalWritableRoots) {
-      parsed.entry.codexSettings = {
-        ...(parsed.entry.codexSettings ?? {}),
-        additionalWritableRoots,
-      };
-    }
+    addSessionTranscriptPaths(parsed.entry, [files[index]]);
+    attachCodexThreadMetadata(parsed, {
+      threadNames,
+      threadProfiles,
+      threadAdditionalWritableRoots,
+    });
     entries.push(parsed.entry);
     options.perfStats && (options.perfStats.entriesReturned += 1);
   }
 
   return entries;
+}
+
+function attachCodexThreadMetadata(
+  parsed: CodexSessionParseResult,
+  metadata: {
+    threadNames: ReadonlyMap<string, string>;
+    threadProfiles: ReadonlyMap<string, string>;
+    threadAdditionalWritableRoots: ReadonlyMap<string, string[]>;
+  },
+): void {
+  // Attach thread name if available
+  const threadName = metadata.threadNames.get(parsed.threadId);
+  if (threadName) {
+    parsed.entry.name = threadName;
+  }
+  const threadProfile = metadata.threadProfiles.get(parsed.threadId);
+  if (threadProfile) {
+    parsed.entry.codexSettings = {
+      ...(parsed.entry.codexSettings ?? {}),
+      profile: threadProfile,
+    };
+  }
+  const additionalWritableRoots = metadata.threadAdditionalWritableRoots.get(
+    parsed.threadId,
+  );
+  if (additionalWritableRoots) {
+    parsed.entry.codexSettings = {
+      ...(parsed.entry.codexSettings ?? {}),
+      additionalWritableRoots,
+    };
+  }
+}
+
+/**
+ * Convert a rollout-scan Codex entry to the shape produced from app-server
+ * `thread/list` (projectPath is the raw thread cwd, not the repository root),
+ * so pinned keys built from either source stay identical.
+ */
+export function codexEntryAsThreadListShape(
+  entry: SessionIndexEntry,
+): SessionIndexEntry {
+  const cwd = entry.resumeCwd ?? entry.projectPath;
+  const { resumeCwd: _resumeCwd, ...rest } = entry;
+  // Mirrors codexThreadToRecentSession: resumeCwd is only reported for
+  // worktree cwds (where the rollout parser normalizes the project path).
+  return {
+    ...rest,
+    projectPath: cwd,
+    ...(cwd !== normalizeWorktreePath(cwd) ? { resumeCwd: cwd } : {}),
+  };
+}
+
+export interface GetPinnedCodexSessionsOptions {
+  threadIds: readonly string[];
+  /** Exact thread cwd filter, matching app-server `thread/list` `cwd`. */
+  projectPath?: string;
+  namedOnly?: boolean;
+  searchQuery?: string;
+  archivedSessionIds?: ReadonlySet<string>;
+  sessionFilter?: (session: SessionIndexEntry) => boolean;
+}
+
+/**
+ * Targeted lookup for pinned Codex threads when the page itself came from
+ * app-server `thread/list`. Only rollout files whose names match the requested
+ * thread IDs are parsed (one directory walk, no full history parse). Entries
+ * use the `thread/list` shape (projectPath = cwd) and are filtered with the
+ * local equivalents of the listing filters. Search uses the same local
+ * name/firstPrompt/lastPrompt/summary match as the rollout listing.
+ */
+export async function getPinnedCodexSessions(
+  options: GetPinnedCodexSessionsOptions,
+): Promise<SessionIndexEntry[]> {
+  const archived = options.archivedSessionIds;
+  const wantedThreadIds = new Set(
+    options.threadIds.filter((id) => id.length > 0 && !archived?.has(id)),
+  );
+  if (wantedThreadIds.size === 0) return [];
+
+  const files = await listCodexSessionFiles();
+  const targets = files.filter((filePath) =>
+    matchingCodexThreadIdFromFilePath(filePath, wantedThreadIds) !== null,
+  );
+  if (targets.length === 0) return [];
+
+  const [
+    parsedResults,
+    threadNames,
+    threadProfiles,
+    threadAdditionalWritableRoots,
+  ] = await Promise.all([
+    parallelMap(targets, PARALLEL_FILE_READ_LIMIT, async (filePath) => {
+      const parsed = await parseCodexSessionJsonlFast(
+        filePath,
+        basename(filePath, ".jsonl"),
+      );
+      if (!parsed || !wantedThreadIds.has(parsed.threadId)) return null;
+      try {
+        return { parsed, modified: (await stat(filePath)).mtimeMs };
+      } catch {
+        return null;
+      }
+    }),
+    loadCodexSessionNames(),
+    loadCodexSessionProfiles(),
+    loadCodexSessionAdditionalWritableRoots(),
+  ]);
+
+  const newestByThread = new Map<
+    string,
+    { parsed: CodexSessionParseResult; modified: number }
+  >();
+  for (const candidate of parsedResults) {
+    if (!candidate) continue;
+    const existing = newestByThread.get(candidate.parsed.threadId);
+    if (!existing || candidate.modified > existing.modified) {
+      newestByThread.set(candidate.parsed.threadId, candidate);
+    }
+  }
+
+  const entries: SessionIndexEntry[] = [];
+  for (const { parsed } of newestByThread.values()) {
+    attachCodexThreadMetadata(parsed, {
+      threadNames,
+      threadProfiles,
+      threadAdditionalWritableRoots,
+    });
+    const entry = codexEntryAsThreadListShape(parsed.entry);
+    if (
+      options.projectPath !== undefined &&
+      entry.projectPath !== options.projectPath
+    ) {
+      continue;
+    }
+    if (options.namedOnly && !entry.name) continue;
+    const searched = options.searchQuery
+      ? matchRecentSessionSearch(entry, options.searchQuery)
+      : entry;
+    if (!searched) continue;
+    if (options.sessionFilter && !options.sessionFilter(searched)) continue;
+    entries.push(searched);
+  }
+  return entries.sort(
+    (a, b) => recentModifiedTime(b.modified) - recentModifiedTime(a.modified),
+  );
 }
 
 function matchingCodexThreadIdFromFilePath(
@@ -2041,6 +2490,120 @@ function matchingCodexThreadIdFromFilePath(
   return null;
 }
 
+/** Id a rollout file is addressed by in a later segment's `history_base`. */
+function recentModifiedTime(modified: string | undefined): number {
+  const time = modified ? Date.parse(modified) : Number.NaN;
+  return Number.isFinite(time) ? time : 0;
+}
+
+const CODEX_ROLLOUT_THREAD_ID_RE =
+  /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+/**
+ * Thread IDs that have a plain `.jsonl` rollout, i.e. are covered by the
+ * recent session index. Threads Codex only kept as compressed `.jsonl.zst`
+ * rollouts are missing here and have to come from app-server `thread/list`.
+ * Based on file names (`rollout-<time>-<threadId>[_<segment>].jsonl`), so it
+ * costs one directory walk.
+ */
+export async function listIndexedCodexThreadIds(): Promise<Set<string>> {
+  const ids = new Set<string>();
+  for (const filePath of await listCodexSessionFiles()) {
+    const match = basename(filePath, ".jsonl").match(CODEX_ROLLOUT_THREAD_ID_RE);
+    if (match) ids.add(match[0].toLowerCase());
+  }
+  return ids;
+}
+
+function codexRolloutSegmentId(filePath: string): string {
+  const name = basename(filePath, ".jsonl");
+  const underscore = name.lastIndexOf("_");
+  if (underscore >= 0) return name.slice(underscore + 1);
+  const match = name.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+  return match ? match[1] : name;
+}
+
+/**
+ * Codex App edits and `thread/revert` on paginated threads start a new
+ * rollout segment whose `session_meta.history_base` keeps the base segment
+ * only up to `end_byte_offset`. Resolve that chain into the effective rollout
+ * so summaries and history skip the reverted turns.
+ */
+export async function readCodexRolloutChain(
+  filePath: string,
+  files: readonly string[],
+  endByteOffset?: number,
+  depth = 0,
+): Promise<string> {
+  const buffer = await readFile(filePath);
+  const own = endByteOffset === undefined
+    ? buffer
+    : buffer.subarray(0, Math.min(endByteOffset, buffer.length));
+  const firstNewline = own.indexOf(0x0a);
+  const headerText = own
+    .subarray(0, firstNewline < 0 ? own.length : firstNewline)
+    .toString("utf-8");
+  let base: { thread_id?: unknown; end_byte_offset?: unknown } | undefined;
+  try {
+    const header = JSON.parse(headerText) as {
+      type?: unknown;
+      payload?: { history_base?: typeof base };
+    };
+    if (header.type === "session_meta") base = header.payload?.history_base;
+  } catch {
+    base = undefined;
+  }
+  if (
+    !base ||
+    typeof base.thread_id !== "string" ||
+    typeof base.end_byte_offset !== "number" ||
+    depth > 64
+  ) {
+    return own.toString("utf-8");
+  }
+  const baseId = base.thread_id;
+  const basePath = files.find((file) => codexRolloutSegmentId(file) === baseId);
+  if (!basePath) return own.toString("utf-8");
+  const prefix = await readCodexRolloutChain(
+    basePath,
+    files,
+    base.end_byte_offset,
+    depth + 1,
+  );
+  const rest = firstNewline < 0 ? "" : own.subarray(firstNewline + 1).toString("utf-8");
+  return `${prefix}${prefix.endsWith("\n") || !prefix ? "" : "\n"}${rest}`;
+}
+
+async function readCodexHead(filePath: string): Promise<string> {
+  const handle = await open(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(CODEX_HEAD_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const text = buffer.subarray(0, bytesRead).toString("utf-8");
+    const newline = text.indexOf("\n");
+    return newline < 0 ? text : text.slice(0, newline);
+  } finally {
+    await handle.close();
+  }
+}
+
+function codexRolloutBaseSegmentId(head: string): string | undefined {
+  if (!codexRolloutHasHistoryBase(head)) return undefined;
+  try {
+    const header = JSON.parse(head) as {
+      payload?: { history_base?: { thread_id?: unknown } };
+    };
+    const id = header.payload?.history_base?.thread_id;
+    return typeof id === "string" ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function codexRolloutHasHistoryBase(head: string): boolean {
+  return head.includes('"history_base"');
+}
+
 export async function getCodexSessionIndexMetadata(
   threadIds: readonly string[],
 ): Promise<Map<string, CodexSessionIndexMetadata>> {
@@ -2058,29 +2621,63 @@ export async function getCodexSessionIndexMetadata(
     PARALLEL_FILE_READ_LIMIT,
     async (filePath) => {
       const fallbackSessionId = basename(filePath, ".jsonl");
-      const parsed = await parseCodexSessionJsonlFast(filePath, fallbackSessionId);
-      if (!parsed || !wantedThreadIds.has(parsed.threadId)) return null;
       try {
-        return { parsed, modified: (await stat(filePath)).mtimeMs };
+        const head = await readCodexHead(filePath);
+        const baseSegmentId = codexRolloutBaseSegmentId(head);
+        // A fresh revert segment may hold only metadata, so it is resolved
+        // through its chain instead of parsed on its own.
+        const parsed = baseSegmentId
+          ? null
+          : await parseCodexSessionJsonlFast(filePath, fallbackSessionId);
+        if (!baseSegmentId && (!parsed || !wantedThreadIds.has(parsed.threadId))) {
+          return null;
+        }
+        return {
+          parsed,
+          threadId:
+            parsed?.threadId ??
+            matchingCodexThreadIdFromFilePath(filePath, wantedThreadIds)!,
+          filePath,
+          baseSegmentId,
+          modified: (await stat(filePath)).mtimeMs,
+        };
       } catch {
         return null;
       }
     },
   );
 
+  // A reverted segment is superseded by the segment based on it, even when
+  // turn activity touched it last.
+  const supersededSegments = new Set(
+    parsedResults.flatMap((candidate) =>
+      candidate?.baseSegmentId ? [candidate.baseSegmentId] : [],
+    ),
+  );
   const newestByThread = new Map<
     string,
-    { parsed: CodexSessionParseResult; modified: number }
+    NonNullable<(typeof parsedResults)[number]>
   >();
   for (const candidate of parsedResults) {
     if (!candidate) continue;
-    const existing = newestByThread.get(candidate.parsed.threadId);
+    if (supersededSegments.has(codexRolloutSegmentId(candidate.filePath))) continue;
+    const existing = newestByThread.get(candidate.threadId);
     if (!existing || candidate.modified > existing.modified) {
-      newestByThread.set(candidate.parsed.threadId, candidate);
+      newestByThread.set(candidate.threadId, candidate);
     }
   }
 
-  for (const [threadId, { parsed }] of newestByThread) {
+  for (const [threadId, candidate] of newestByThread) {
+    let parsed = candidate.parsed;
+    if (candidate.baseSegmentId) {
+      try {
+        const raw = await readCodexRolloutChain(candidate.filePath, files);
+        parsed = parseCodexSessionJsonl(raw, threadId);
+      } catch {
+        parsed = null;
+      }
+    }
+    if (!parsed) continue;
     result.set(threadId, {
       ...(parsed.entry.codexSettings
         ? { codexSettings: parsed.entry.codexSettings }
@@ -2107,7 +2704,12 @@ type SessionHistoryContentItem = {
 };
 
 export interface SessionHistoryMessage {
-  role: "user" | "assistant" | "tool_result";
+  /**
+   * `compaction` marks a context compaction boundary. Consumers that count or
+   * index user turns must keep checking `role` explicitly.
+   */
+  role: "user" | "assistant" | "tool_result" | "compaction";
+  compaction?: SessionHistoryCompaction;
   uuid?: string;
   /** Raw provider item id, when it differs from the display-safe UUID. */
   rawItemId?: string;
@@ -2460,6 +3062,17 @@ export function codexThreadToSessionHistory(
         }
 
         case "enteredReviewMode":
+        case "contextCompaction": {
+          messages.push({
+            role: "compaction",
+            content: [],
+            ...(rawItemId ? { uuid: rawItemId } : {}),
+            ...(itemTimestamp ? { timestamp: itemTimestamp } : {}),
+            compaction: {},
+          });
+          break;
+        }
+
         case "exitedReviewMode": {
           appendTextMessage(
             messages,
@@ -2905,9 +3518,26 @@ async function findCodexSessionJsonlPath(threadId: string): Promise<string | nul
       await file?.close();
     }
   });
-  const newest = matches
-    .filter((match): match is { filePath: string; modified: number } => match !== null)
-    .sort((a, b) => b.modified - a.modified)[0];
+  const found = matches.filter(
+    (match): match is { filePath: string; modified: number } => match !== null,
+  );
+  // Prefer the leaf segment: a reverted segment is superseded by the one
+  // based on it, even when it was written to last.
+  const superseded = new Set<string>();
+  if (found.length > 1) {
+    for (const match of found) {
+      try {
+        const baseId = codexRolloutBaseSegmentId(await readCodexHead(match.filePath));
+        if (baseId) superseded.add(baseId);
+      } catch {
+        // Unreadable headers just do not supersede anything.
+      }
+    }
+  }
+  const newest = found
+    .filter((match) => !superseded.has(codexRolloutSegmentId(match.filePath)))
+    .sort((a, b) => b.modified - a.modified)[0] ??
+    found.sort((a, b) => b.modified - a.modified)[0];
   if (newest) return newest.filePath;
 
   for (const filePath of files) {
@@ -2930,6 +3560,119 @@ async function findCodexSessionJsonlPath(threadId: string): Promise<string | nul
  * Read past conversation messages from a session's JSONL file.
  * Returns user and assistant messages suitable for display.
  */
+/**
+ * A rewind or edit (`resumeSessionAt`, Claude Code's /rewind) leaves the
+ * abandoned turns in the transcript and starts a sibling branch at a user
+ * prompt. Like `claude --resume`, the branch ending at the latest entry is
+ * the conversation. Returns the uuids of abandoned turns: every prompt off
+ * that branch together with its descendants. Parallel tool calls also branch
+ * the transcript, but never at a prompt, so they are kept. Returns null when
+ * nothing was abandoned or the chain cannot be followed.
+ */
+export function claudeAbandonedBranchUuids(lines: readonly string[]): Set<string> | null {
+  const parents = new Map<string, string | undefined>();
+  const children = new Map<string, string[]>();
+  const prompts: string[] = [];
+  let leaf: string | undefined;
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    let entry: Record<string, unknown>;
+    try {
+      entry = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const uuid = entry.uuid;
+    if (typeof uuid !== "string" || entry.isSidechain === true) continue;
+    // Transcripts without parent links cannot be branched.
+    if (
+      (entry.type === "user" || entry.type === "assistant") &&
+      !("parentUuid" in entry)
+    ) {
+      return null;
+    }
+    const parent =
+      typeof entry.parentUuid === "string"
+        ? entry.parentUuid
+        : typeof entry.logicalParentUuid === "string"
+          ? entry.logicalParentUuid
+          : undefined;
+    parents.set(uuid, parent);
+    if (parent) children.set(parent, [...(children.get(parent) ?? []), uuid]);
+    if (entry.type === "user" || entry.type === "assistant") leaf = uuid;
+    if (entry.type === "user" && isClaudePromptEntry(entry)) prompts.push(uuid);
+  }
+  if (!leaf) return null;
+  const active = new Set<string>();
+  let current: string | undefined = leaf;
+  while (current !== undefined && !active.has(current)) {
+    // A parent missing from the file means the chain cannot be trusted.
+    if (!parents.has(current)) return null;
+    active.add(current);
+    current = parents.get(current);
+  }
+  const abandoned = new Set<string>();
+  const stack = prompts.filter((uuid) => !active.has(uuid));
+  while (stack.length > 0) {
+    const uuid = stack.pop()!;
+    if (abandoned.has(uuid) || active.has(uuid)) continue;
+    abandoned.add(uuid);
+    stack.push(...(children.get(uuid) ?? []));
+  }
+  return abandoned.size > 0 ? abandoned : null;
+}
+
+function isClaudePromptEntry(entry: Record<string, unknown>): boolean {
+  if (entry.isMeta === true || entry.isCompactSummary === true) return false;
+  const message = entry.message as { content?: unknown } | undefined;
+  const content = message?.content;
+  if (typeof content === "string") {
+    return content.trim().length > 0 && !isClaudeNonPromptUserEntry(entry, content);
+  }
+  if (!Array.isArray(content)) return false;
+  const blocks = content as Array<{ type?: unknown }>;
+  if (blocks.some((block) => block?.type === "tool_result")) return false;
+  if (!blocks.some((block) => block?.type === "text")) return false;
+  return !isClaudeNonPromptUserEntry(entry, content);
+}
+
+function claudeCompactionHistoryMessage(
+  entry: Record<string, unknown>,
+): SessionHistoryMessage {
+  const uuid = typeof entry.uuid === "string" ? entry.uuid : undefined;
+  const ts = typeof entry.timestamp === "string" ? entry.timestamp : undefined;
+  return {
+    role: "compaction",
+    content: [],
+    ...(uuid ? { uuid } : {}),
+    ...(ts ? { timestamp: ts } : {}),
+    compaction: normalizeClaudeCompactMetadata(
+      entry.compactMetadata ?? entry.compact_metadata,
+    ),
+  };
+}
+
+function attachClaudeCompactionSummary(
+  messages: SessionHistoryMessage[],
+  entry: Record<string, unknown>,
+): void {
+  const last = messages[messages.length - 1];
+  if (last?.role !== "compaction" || last.compaction?.summary) return;
+  const message = asObject(entry.message);
+  const content = message?.content;
+  const raw =
+    typeof content === "string"
+      ? content
+      : arrayValue(content)
+          .map((block) => {
+            const value = asObject(block);
+            return value?.type === "text" ? stringValue(value.text) ?? "" : "";
+          })
+          .join("\n");
+  const summary = cleanClaudeCompactSummary(raw);
+  if (summary) last.compaction = { ...last.compaction, summary };
+}
+
 export async function getSessionHistory(
   sessionId: string,
 ): Promise<SessionHistoryMessage[]> {
@@ -2945,6 +3688,7 @@ export async function getSessionHistory(
 
   const messages: SessionHistoryMessage[] = [];
   const lines = raw.split("\n");
+  const abandonedBranch = claudeAbandonedBranchUuids(lines);
 
   for (const line of lines) {
     if (!line.trim()) continue;
@@ -2957,11 +3701,23 @@ export async function getSessionHistory(
     }
 
     const type = entry.type as string;
+    if (type === "system" && entry.subtype === "compact_boundary") {
+      if (entry.isSidechain === true) continue;
+      messages.push(claudeCompactionHistoryMessage(entry));
+      continue;
+    }
     if (type !== "user" && type !== "assistant") continue;
+    if (typeof entry.uuid === "string" && abandonedBranch?.has(entry.uuid)) {
+      continue;
+    }
 
     // Skip context compaction and transcript-only messages (not real user input)
     if (type === "user") {
-      if (entry.isCompactSummary === true || entry.isVisibleInTranscriptOnly === true) {
+      if (entry.isCompactSummary === true) {
+        attachClaudeCompactionSummary(messages, entry);
+        continue;
+      }
+      if (entry.isVisibleInTranscriptOnly === true) {
         continue;
       }
     }
@@ -2972,7 +3728,10 @@ export async function getSessionHistory(
     if (!message?.content) continue;
 
     const role = message.role as "user" | "assistant";
-    const isMeta = role === "user" && entry.isMeta === true ? true : undefined;
+    const isMeta =
+      role === "user" && isClaudeNonPromptUserEntry(entry, message.content)
+        ? true
+        : undefined;
 
     // Handle string content (e.g. user message after interrupt)
     if (typeof message.content === "string") {
@@ -3002,6 +3761,14 @@ export async function getSessionHistory(
 
       if (contentType === "text" && item.text) {
         content.push({ type: "text", text: item.text as string });
+      } else if (
+        contentType === "thinking" &&
+        typeof item.thinking === "string" &&
+        item.thinking.trim() &&
+        isNarrationSignature(item.signature)
+      ) {
+        // Narration is shown as assistant text in Claude Code's terminal.
+        content.push({ type: "text", text: item.thinking.trim() });
       } else if (contentType === "tool_use") {
         content.push({
           type: "tool_use",
@@ -3530,6 +4297,9 @@ export async function getCodexSessionHistory(
   let raw: string;
   try {
     raw = await readFile(jsonlPath, "utf-8");
+    if (codexRolloutHasHistoryBase(raw.slice(0, raw.indexOf("\n") >>> 0))) {
+      raw = await readCodexRolloutChain(jsonlPath, await listCodexSessionFiles());
+    }
   } catch {
     return [];
   }
@@ -3603,6 +4373,16 @@ export async function getCodexSessionHistory(
 
       if (payload.type === "agent_message" && typeof payload.message === "string") {
         appendTextMessage(messages, "assistant", payload.message, entryTimestamp);
+      }
+
+      if (payload.type === "context_compacted") {
+        messages.push({
+          role: "compaction",
+          content: [],
+          ...(entryTimestamp ? { timestamp: entryTimestamp } : {}),
+          compaction: {},
+        });
+        continue;
       }
 
       if (payload.type === "image_generation_end") {

@@ -90,7 +90,35 @@ export interface CodexGoal {
   updatedAt: number;
 }
 
+/**
+ * A live background task of a session. Claude reports shells, monitors and
+ * subagents; Codex reports terminals and child agent threads that outlive
+ * the turn that started them.
+ */
+export interface BackgroundTaskInfo {
+  taskId: string;
+  taskType: string;
+  description?: string;
+  subagentType?: string;
+}
+
+/** Task types that are agents rather than shells or monitors. */
+const AGENT_BACKGROUND_TASK_TYPES = new Set([
+  "local_agent",
+  "remote_agent",
+  "local_workflow",
+  "codex_agent",
+]);
+
+export function isAgentBackgroundTask(task: BackgroundTaskInfo): boolean {
+  return AGENT_BACKGROUND_TASK_TYPES.has(task.taskType);
+}
+
 export interface QueuedInputItem {
+  clientMessageId?: string;
+  waitingForUsageLimit?: boolean;
+  /** ISO reset time when this input is waiting for a usage limit. */
+  retryAt?: string;
   itemId: string;
   text: string;
   createdAt: string;
@@ -99,6 +127,16 @@ export interface QueuedInputItem {
   skills?: Array<{ name: string; path: string }>;
   mentions?: Array<{ name: string; path: string }>;
 }
+
+export type InputDelivery = "steer" | "queue";
+
+
+/** A project selector used by recent-session filters. */
+export type RecentProjectFilter = {
+  projectPath?: string;
+  projectId?: string;
+  workspaceKind?: "project" | "unassigned";
+};
 
 export type ClientMessage =
   | {
@@ -127,6 +165,10 @@ export type ClientMessage =
       sandboxMode?: string;
       model?: string;
       effort?: "low" | "medium" | "high" | "xhigh" | "max";
+      /** Claude Code fast mode (supported models only). */
+      claudeFastMode?: boolean;
+      /** Claude Code ultracode (standing workflow orchestration). */
+      claudeUltracode?: boolean;
       maxTurns?: number;
       maxBudgetUsd?: number;
       fallbackModel?: string;
@@ -160,6 +202,12 @@ export type ClientMessage =
       skill?: { name: string; path: string };
       skills?: Array<{ name: string; path: string }>;
       mentions?: Array<{ name: string; path: string }>;
+      /**
+       * How input sent during an active turn is delivered. `steer` injects it
+       * into the running turn; `queue` holds it for the next turn. Omitted by
+       * older clients: Codex queues and Claude interrupts the turn.
+       */
+      delivery?: InputDelivery;
     }
   | {
       type: "update_queued_input";
@@ -201,6 +249,14 @@ export type ClientMessage =
       serviceTier: string;
       sessionId?: string;
     }
+  | {
+      type: "set_claude_settings";
+      sessionId: string;
+      model?: string;
+      effort?: "low" | "medium" | "high" | "xhigh" | "max";
+      fastMode?: boolean;
+      ultracode?: boolean;
+    }
   | { type: "set_codex_recovery"; sessionId: string; enabled: boolean }
   | { type: "cancel_codex_recovery"; sessionId: string }
   | { type: "get_goal"; sessionId: string; background?: boolean }
@@ -234,6 +290,17 @@ export type ClientMessage =
     }
   | { type: "get_history"; sessionId: string }
   | { type: "get_history_delta"; sessionId: string; sinceSeq: number }
+  | {
+      /** Read-only full conversation transcript, paged from the end. */
+      type: "get_session_transcript";
+      sessionId: string;
+      requestId: string;
+      /** Exclusive end index of the requested page. */
+      beforeIndex?: number;
+      /** First page only: end the page at the latest compaction boundary. */
+      untilLatestCompaction?: boolean;
+      limit?: number;
+    }
   | { type: "get_session_context"; sessionId: string }
   | {
       type: "resolve_session_link";
@@ -253,6 +320,23 @@ export type ClientMessage =
       provider?: "claude" | "codex";
       namedOnly?: boolean;
       searchQuery?: string;
+      /**
+       * Pinned provider sessions to return in `recent_sessions.pinnedSessions`
+       * independent of pagination (first list page only). Additive: older
+       * Bridges ignore it.
+       */
+      pinnedSessions?: Array<{ provider: "claude" | "codex"; sessionId: string }>;
+      /**
+       * Recent-session filters (capability `recent_sessions_filters_v1`).
+       * See docs/recent-sessions-filters.md.
+       */
+      projectFilters?: RecentProjectFilter[];
+      modifiedAfter?: string;
+      modifiedBefore?: string;
+      dateField?: "modified" | "created";
+      pinnedOnly?: boolean;
+      pinnedProjects?: RecentProjectFilter[];
+      searchContent?: boolean;
     }
   | {
       type: "resume_session";
@@ -268,6 +352,10 @@ export type ClientMessage =
       sandboxMode?: string;
       model?: string;
       effort?: "low" | "medium" | "high" | "xhigh" | "max";
+      /** Claude Code fast mode (supported models only). */
+      claudeFastMode?: boolean;
+      /** Claude Code ultracode (standing workflow orchestration). */
+      claudeUltracode?: boolean;
       maxTurns?: number;
       maxBudgetUsd?: number;
       fallbackModel?: string;
@@ -370,7 +458,24 @@ export type ClientMessage =
       version: "old" | "new" | "both";
       requestId?: string;
     }
-  | { type: "interrupt"; sessionId?: string }
+  | {
+      type: "interrupt";
+      sessionId?: string;
+      /**
+       * Also retract the interrupted prompt when the agent has produced no
+       * visible output for it yet (Claude Code's Esc-to-edit behavior). Old
+       * Bridges ignore the field and perform a plain interrupt.
+       */
+      retract?: boolean;
+    }
+  | {
+      /** Rewind to just before a user message and resend it edited. */
+      type: "edit_message";
+      sessionId: string;
+      targetUuid: string;
+      text: string;
+      clientMessageId?: string;
+    }
   | { type: "list_project_history" }
   | { type: "remove_project_history"; projectPath: string }
   | { type: "bootstrap_project"; parentPath: string; name: string; initializeGit: boolean; sourcePath?: string; requestId: string }
@@ -575,6 +680,24 @@ export interface CodexCliJoinTarget {
   command: string;
 }
 
+/**
+ * A context compaction boundary. Messages before it are summarized in the
+ * model context. Opt-in: only sent to clients that list it in
+ * `supportedServerMessages`.
+ */
+export type ContextCompactionMessage = {
+  type: "context_compaction";
+  /** Provider boundary id (Claude boundary uuid / Codex item id). */
+  id?: string;
+  provider: "claude" | "codex";
+  trigger?: "manual" | "auto";
+  preTokens?: number;
+  postTokens?: number;
+  /** Claude only. Codex summaries are not readable. */
+  summary?: string;
+  timestamp?: string;
+};
+
 export type ServerMessage =
   | {
       type: "system";
@@ -726,7 +849,26 @@ export type ServerMessage =
   | { type: "session_activity"; sessionId?: string; at: string; historySeq?: number }
   | { type: "performance_mode_state"; deliveryRevision: number }
   | { type: "status"; status: ProcessStatus }
-  | { type: "history"; messages: ServerMessage[] }
+  | {
+      type: "history";
+      messages: ServerMessage[];
+      /** Older messages were dropped from the in-memory history window. */
+      olderHistoryAvailable?: boolean;
+    }
+  | ContextCompactionMessage
+  | {
+      type: "session_transcript";
+      sessionId: string;
+      requestId: string;
+      provider: "claude" | "codex";
+      /** Index of messages[0] within the full transcript. */
+      startIndex: number;
+      /** Exclusive end index of this page. */
+      endIndex: number;
+      total: number;
+      /** Past-history format, including `role: "compaction"` markers. */
+      messages: unknown[];
+    }
   | {
       type: "history_delta";
       filtered?: boolean;
@@ -745,12 +887,19 @@ export type ServerMessage =
       messages: Array<{ seq: number; message: ServerMessage }>;
       status?: ProcessStatus;
       reason: "compacted" | "reset";
+      olderHistoryAvailable?: boolean;
     }
   | {
       type: "conversation_queue";
       sessionId?: string;
       limit: number;
       items: QueuedInputItem[];
+    }
+  | {
+      /** Full set of live background tasks; replaces the previous set. */
+      type: "background_tasks";
+      sessionId?: string;
+      tasks: BackgroundTaskInfo[];
     }
   | { type: "codex_recovery_state"; sessionId?: string; recovery: CodexRecoveryState }
   | {
@@ -892,6 +1041,24 @@ export type ServerMessage =
       error?: string;
     }
   | { type: "tool_use_summary"; summary: string; precedingToolUseIds: string[] }
+  | {
+      /**
+       * The session's conversation was rewound in place (edit or retract).
+       * Clients drop their cached history and fetch it again.
+       */
+      type: "conversation_rewound";
+      sessionId?: string;
+    }
+  | {
+      /**
+       * The interrupted prompt was removed from the conversation. Sent before
+       * the replacement session's `session_created` so the client can put the
+       * text back into the composer of the source session.
+       */
+      type: "input_retracted";
+      sessionId?: string;
+      text: string;
+    }
   | {
       type: "rewind_preview";
       sessionId?: string;
@@ -1250,6 +1417,8 @@ function hasValidSessionOptions(msg: Record<string, unknown>): boolean {
     isOptionalString(msg.sandboxMode) &&
     isOptionalString(msg.model) &&
     isOptionalEnum(msg.effort, CLAUDE_EFFORTS) &&
+    isOptionalBoolean(msg.claudeFastMode) &&
+    isOptionalBoolean(msg.claudeUltracode) &&
     (msg.maxTurns === undefined ||
       (Number.isInteger(msg.maxTurns) && Number(msg.maxTurns) >= 1)) &&
     (msg.maxBudgetUsd === undefined ||
@@ -1294,6 +1463,52 @@ function hasValidStartOptions(msg: Record<string, unknown>): boolean {
 const RECENT_SESSIONS_MAX_LIMIT = 500;
 const RECENT_SESSIONS_MAX_OFFSET = 100_000;
 const RECENT_SESSIONS_MAX_REQUEST_ID_LENGTH = 128;
+const RECENT_SESSIONS_MAX_PINNED_SESSIONS = 1000;
+const RECENT_SESSIONS_MAX_PROJECT_FILTERS = 100;
+
+function isValidRecentProjectFilters(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  if (value.length > RECENT_SESSIONS_MAX_PROJECT_FILTERS) return false;
+  return value.every((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry))
+      return false;
+    const { projectPath, projectId, workspaceKind } = entry as Record<
+      string,
+      unknown
+    >;
+    if (projectPath !== undefined && typeof projectPath !== "string")
+      return false;
+    if (projectId !== undefined && typeof projectId !== "string") return false;
+    if (
+      workspaceKind !== undefined &&
+      workspaceKind !== "project" &&
+      workspaceKind !== "unassigned"
+    )
+      return false;
+    return isNonEmptyString(projectPath) || isNonEmptyString(projectId);
+  });
+}
+
+function isValidRecentDate(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0 &&
+    Number.isFinite(Date.parse(value))
+  );
+}
+
+function isValidRecentPinnedSessions(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  if (value.length > RECENT_SESSIONS_MAX_PINNED_SESSIONS) return false;
+  return value.every((pin) => {
+    if (!pin || typeof pin !== "object") return false;
+    const { provider, sessionId } = pin as Record<string, unknown>;
+    return (
+      (provider === "claude" || provider === "codex") &&
+      isNonEmptyString(sessionId)
+    );
+  });
+}
 const GALLERY_MAX_PROJECT_PATH_LENGTH = 4096;
 const GALLERY_MAX_SESSION_ID_LENGTH = 512;
 const GALLERY_MAX_REQUEST_ID_LENGTH = 128;
@@ -1407,6 +1622,12 @@ export function parseClientMessage(data: string): ClientMessage | null {
         break;
       case "input":
         if (typeof msg.text !== "string") return null;
+        if (
+          msg.delivery !== undefined &&
+          msg.delivery !== "steer" &&
+          msg.delivery !== "queue"
+        )
+          return null;
         if (
           msg.clientMessageId !== undefined &&
           typeof msg.clientMessageId !== "string"
@@ -1539,6 +1760,20 @@ export function parseClientMessage(data: string): ClientMessage | null {
         )
           return null;
         if (msg.sessionId !== undefined && typeof msg.sessionId !== "string")
+          return null;
+        break;
+      case "set_claude_settings":
+        if (typeof msg.sessionId !== "string" || !msg.sessionId) return null;
+        if (!isOptionalNonEmptyString(msg.model)) return null;
+        if (!isOptionalEnum(msg.effort, CLAUDE_EFFORTS)) return null;
+        if (!isOptionalBoolean(msg.fastMode)) return null;
+        if (!isOptionalBoolean(msg.ultracode)) return null;
+        if (
+          msg.model === undefined &&
+          msg.effort === undefined &&
+          msg.fastMode === undefined &&
+          msg.ultracode === undefined
+        )
           return null;
         break;
       case "set_codex_recovery":
@@ -1700,6 +1935,47 @@ export function parseClientMessage(data: string): ClientMessage | null {
         if (
           msg.searchQuery !== undefined &&
           typeof msg.searchQuery !== "string"
+        )
+          return null;
+        if (
+          msg.pinnedSessions !== undefined &&
+          !isValidRecentPinnedSessions(msg.pinnedSessions)
+        )
+          return null;
+        if (
+          msg.projectFilters !== undefined &&
+          !isValidRecentProjectFilters(msg.projectFilters)
+        )
+          return null;
+        if (
+          msg.pinnedProjects !== undefined &&
+          !isValidRecentProjectFilters(msg.pinnedProjects)
+        )
+          return null;
+        if (
+          msg.modifiedAfter !== undefined &&
+          !isValidRecentDate(msg.modifiedAfter)
+        )
+          return null;
+        if (
+          msg.modifiedBefore !== undefined &&
+          !isValidRecentDate(msg.modifiedBefore)
+        )
+          return null;
+        if (
+          msg.dateField !== undefined &&
+          msg.dateField !== "modified" &&
+          msg.dateField !== "created"
+        )
+          return null;
+        if (
+          msg.pinnedOnly !== undefined &&
+          typeof msg.pinnedOnly !== "boolean"
+        )
+          return null;
+        if (
+          msg.searchContent !== undefined &&
+          typeof msg.searchContent !== "boolean"
         )
           return null;
         break;
@@ -1893,6 +2169,15 @@ export function parseClientMessage(data: string): ClientMessage | null {
           return null;
         break;
       case "interrupt":
+        if (msg.retract !== undefined && typeof msg.retract !== "boolean")
+          return null;
+        break;
+      case "edit_message":
+        if (typeof msg.sessionId !== "string") return null;
+        if (typeof msg.targetUuid !== "string" || !msg.targetUuid) return null;
+        if (typeof msg.text !== "string" || !msg.text.trim()) return null;
+        if (msg.clientMessageId !== undefined && typeof msg.clientMessageId !== "string")
+          return null;
         break;
       case "list_project_history":
         break;
@@ -2011,6 +2296,29 @@ export function parseClientMessage(data: string): ClientMessage | null {
         break;
       case "get_recording":
         if (typeof msg.sessionId !== "string") return null;
+        break;
+      case "get_session_transcript":
+        if (typeof msg.sessionId !== "string") return null;
+        if (typeof msg.requestId !== "string") return null;
+        if (
+          msg.beforeIndex !== undefined &&
+          (typeof msg.beforeIndex !== "number" ||
+            !Number.isInteger(msg.beforeIndex) ||
+            msg.beforeIndex < 0)
+        )
+          return null;
+        if (
+          msg.limit !== undefined &&
+          (typeof msg.limit !== "number" ||
+            !Number.isInteger(msg.limit) ||
+            msg.limit <= 0)
+        )
+          return null;
+        if (
+          msg.untilLatestCompaction !== undefined &&
+          typeof msg.untilLatestCompaction !== "boolean"
+        )
+          return null;
         break;
       case "get_message_images":
         if (

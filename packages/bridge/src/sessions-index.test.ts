@@ -17,11 +17,16 @@ import {
   normalizeWorktreePath,
   scanJsonlDir,
   getAllRecentSessions,
+  getPinnedCodexSessions,
+  selectPinnedRecentSessions,
   getCodexSessionIndexMetadata,
+  claudeAbandonedBranchUuids,
   getCodexSessionHistory,
   loadCodexSessionNames,
   extractMessageImages,
   codexThreadToSessionHistory,
+  getSessionHistory,
+  getClaudeSessionName,
 } from "./sessions-index.js";
 import { buildAutoRenamePrompt } from "./auto-rename.js";
 
@@ -52,6 +57,33 @@ describe("pathToSlug", () => {
 });
 
 describe("codexThreadToSessionHistory", () => {
+  it("keeps context compaction items as markers", () => {
+    const history = codexThreadToSessionHistory({
+      turns: [
+        {
+          startedAt: 1700000000,
+          completedAt: 1700000001,
+          items: [
+            { type: "userMessage", id: "u1", content: [{ type: "text", text: "hello" }] },
+            { type: "contextCompaction", id: "c1" },
+            { type: "agentMessage", id: "a1", text: "hi" },
+          ],
+        },
+      ],
+    });
+    expect(history.map((message) => message.role)).toEqual([
+      "user",
+      "compaction",
+      "assistant",
+    ]);
+    expect(history[1]).toMatchObject({
+      role: "compaction",
+      uuid: "c1",
+      content: [],
+      compaction: {},
+    });
+  });
+
   it("converts official thread turns into display history", () => {
     const history = codexThreadToSessionHistory({
       turns: [
@@ -1536,6 +1568,73 @@ describe("codex sessions integration", () => {
     });
   });
 
+  it("follows reverted Codex rollout segments (thread/revert, Codex App edit)", async () => {
+    const threadId = "019c56c0-d4d8-7b22-9e3c-200664d680aa";
+    const segmentId = "019c56c0-d4d8-7b22-9e3c-200664d680bb";
+    const codexDir = join(tempHome, ".codex", "sessions", "2026", "02", "13");
+    mkdirSync(codexDir, { recursive: true });
+    const line = (type: string, payload: unknown) =>
+      `${JSON.stringify({ timestamp: "2026-02-13T10:00:00.000Z", type, payload })}\n`;
+    const user = (text: string) => line("event_msg", { type: "user_message", message: text });
+    const answer = (text: string) =>
+      line("response_item", {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text }],
+      });
+    const meta = line("session_meta", { id: threadId, cwd: "/tmp/p" });
+    const keep = meta + user("ONE") + answer("one");
+    const basePath = join(codexDir, `rollout-2026-02-13T10-00-00-${threadId}.jsonl`);
+    writeFileSync(basePath, keep + user("TWO") + answer("two"));
+    const segmentPath = join(
+      codexDir,
+      `rollout-2026-02-13T10-01-00-${threadId}_${segmentId}.jsonl`,
+    );
+    const segmentKeep =
+      line("session_meta", {
+        id: threadId,
+        cwd: "/tmp/p",
+        history_base: {
+          thread_id: threadId,
+          end_byte_offset: Buffer.byteLength(keep),
+        },
+      }) + user("EDITED") + answer("edited");
+    writeFileSync(segmentPath, segmentKeep + user("RETRACTED"));
+    // A retract right after: the newest segment holds only metadata.
+    const leafPath = join(
+      codexDir,
+      `rollout-2026-02-13T10-02-00-${threadId}_019c56c0-d4d8-7b22-9e3c-200664d680cc.jsonl`,
+    );
+    writeFileSync(
+      leafPath,
+      line("session_meta", {
+        id: threadId,
+        cwd: "/tmp/p",
+        history_base: {
+          thread_id: segmentId,
+          end_byte_offset: Buffer.byteLength(segmentKeep),
+        },
+      }),
+    );
+    // Reverted segments can be written after the segment replacing them.
+    utimesSync(leafPath, new Date(1_700_000_000_000), new Date(1_700_000_000_000));
+    utimesSync(segmentPath, new Date(1_700_000_050_000), new Date(1_700_000_050_000));
+    utimesSync(basePath, new Date(1_700_000_100_000), new Date(1_700_000_100_000));
+
+    const metadata = await getCodexSessionIndexMetadata([threadId]);
+    expect(metadata.get(threadId)).toMatchObject({
+      firstPrompt: "ONE",
+      lastPrompt: "EDITED",
+    });
+
+    const history = await getCodexSessionHistory(threadId);
+    expect(
+      history.filter((m) => m.role === "user").map((m) =>
+        (m.content as Array<{ text?: string }>).map((b) => b.text).join(""),
+      ),
+    ).toEqual(["ONE", "EDITED"]);
+  });
+
   it("reads codex history from jsonl", async () => {
     const threadId = "019c56c0-d4d8-7b22-9e3c-200664d68010";
     const codexDir = join(tempHome, ".codex", "sessions", "2026", "02", "13");
@@ -2590,7 +2689,174 @@ describe("claude namedOnly optimization", () => {
     expect(result.sessions.map((s) => s.sessionId)).toEqual(["real-s1"]);
   });
 
-  it("skips jsonl-only Claude directories when namedOnly=true", async () => {
+  function claudeUserLine(text: string, timestamp: string): string {
+    return JSON.stringify({
+      type: "user",
+      message: { role: "user", content: text },
+      cwd: "/tmp/project-a",
+      timestamp,
+    });
+  }
+
+  function claudeTitleLine(sessionId: string, customTitle: string): string {
+    return JSON.stringify({ type: "custom-title", customTitle, sessionId });
+  }
+
+  it("includes jsonl-only Claude sessions renamed via a custom-title line", async () => {
+    const projectDir = join(tempHome, ".claude", "projects", "-tmp-project-a");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, "renamed.jsonl"),
+      [
+        claudeUserLine("renamed session", "2026-02-13T12:00:00.000Z"),
+        claudeTitleLine("renamed", "Renamed in ccpocket"),
+      ].join("\n") + "\n",
+    );
+    writeFileSync(
+      join(projectDir, "unnamed.jsonl"),
+      claudeUserLine("unnamed session", "2026-02-13T12:30:00.000Z") + "\n",
+    );
+
+    const result = await getAllRecentSessions({
+      provider: "claude",
+      namedOnly: true,
+      limit: 200,
+    });
+
+    expect(result.sessions.map((s) => [s.sessionId, s.name])).toEqual([
+      ["renamed", "Renamed in ccpocket"],
+    ]);
+  });
+
+  it("uses the tail custom title of large jsonl-only Claude sessions", async () => {
+    const projectDir = join(tempHome, ".claude", "projects", "-tmp-project-a");
+    mkdirSync(projectDir, { recursive: true });
+    const filler = Array.from({ length: 40 }, (_, i) =>
+      JSON.stringify({
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "x".repeat(1024) }] },
+        timestamp: `2026-02-13T12:${String(i).padStart(2, "0")}:00.000Z`,
+      }),
+    );
+    writeFileSync(
+      join(projectDir, "large.jsonl"),
+      [
+        claudeUserLine("large session", "2026-02-13T11:59:00.000Z"),
+        ...filler,
+        claudeTitleLine("large", "Named at the end"),
+      ].join("\n") + "\n",
+    );
+
+    const result = await getAllRecentSessions({
+      provider: "claude",
+      namedOnly: true,
+      limit: 200,
+    });
+
+    expect(result.sessions.map((s) => [s.sessionId, s.name])).toEqual([
+      ["large", "Named at the end"],
+    ]);
+  });
+
+  it("excludes jsonl-only Claude sessions whose custom title was cleared", async () => {
+    const projectDir = join(tempHome, ".claude", "projects", "-tmp-project-a");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, "cleared.jsonl"),
+      [
+        claudeUserLine("cleared session", "2026-02-13T12:00:00.000Z"),
+        claudeTitleLine("cleared", "Old name"),
+        claudeTitleLine("cleared", ""),
+      ].join("\n") + "\n",
+    );
+
+    const result = await getAllRecentSessions({
+      provider: "claude",
+      namedOnly: true,
+      limit: 200,
+    });
+
+    expect(result.sessions).toEqual([]);
+  });
+
+  it("includes indexed Claude sessions named only in their JSONL", async () => {
+    const projectDir = join(tempHome, ".claude", "projects", "-tmp-project-a");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, "indexed.jsonl"),
+      [
+        claudeUserLine("indexed session", "2026-02-13T12:00:00.000Z"),
+        claudeTitleLine("indexed", "JSONL name"),
+      ].join("\n") + "\n",
+    );
+    writeFileSync(
+      join(projectDir, "not-indexed.jsonl"),
+      [
+        claudeUserLine("not indexed session", "2026-02-13T13:00:00.000Z"),
+        claudeTitleLine("not-indexed", "Unindexed name"),
+      ].join("\n") + "\n",
+    );
+    writeFileSync(
+      join(projectDir, "sessions-index.json"),
+      JSON.stringify({
+        version: 1,
+        entries: [
+          {
+            sessionId: "indexed",
+            fullPath: join(projectDir, "indexed.jsonl"),
+            fileMtime: Date.now(),
+            firstPrompt: "indexed session",
+            messageCount: 1,
+            created: "2026-02-13T12:00:00.000Z",
+            modified: "2026-02-13T12:00:00.000Z",
+            gitBranch: "main",
+            projectPath: "/tmp/project-a",
+            isSidechain: false,
+          },
+        ],
+      }),
+    );
+
+    const result = await getAllRecentSessions({
+      provider: "claude",
+      namedOnly: true,
+      limit: 200,
+    });
+
+    expect(
+      result.sessions.map((s) => [s.sessionId, s.name]).sort(),
+    ).toEqual([
+      ["indexed", "JSONL name"],
+      ["not-indexed", "Unindexed name"],
+    ]);
+  });
+
+  it("treats a cleared tail title as overriding an earlier head title", async () => {
+    const projectDir = join(tempHome, ".claude", "projects", pathToSlug("/tmp/project-a"));
+    mkdirSync(projectDir, { recursive: true });
+    const filler = Array.from({ length: 40 }, (_, i) =>
+      JSON.stringify({
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "x".repeat(1024) }] },
+        timestamp: `2026-02-13T12:${String(i).padStart(2, "0")}:00.000Z`,
+      }),
+    );
+    writeFileSync(
+      join(projectDir, "cleared-large.jsonl"),
+      [
+        claudeUserLine("large session", "2026-02-13T11:59:00.000Z"),
+        claudeTitleLine("cleared-large", "Old name"),
+        ...filler,
+        claudeTitleLine("cleared-large", ""),
+      ].join("\n") + "\n",
+    );
+
+    await expect(
+      getClaudeSessionName("/tmp/project-a", "cleared-large"),
+    ).resolves.toBeUndefined();
+  });
+
+  it("excludes unnamed jsonl-only Claude sessions when namedOnly=true", async () => {
     const projectDir = join(tempHome, ".claude", "projects", "-tmp-project-a");
     mkdirSync(projectDir, { recursive: true });
     writeFileSync(
@@ -2883,6 +3149,135 @@ describe("recent sessions grouped by git repository", () => {
     );
   });
 
+  it("reuses parsed Codex rollouts until the file changes", async () => {
+    const threadId = "019c56c0-d4d8-7b22-9e3c-2006640000d1";
+    writeCodexSession(threadId, repo);
+    const find = async () =>
+      (await getAllRecentSessions({ limit: 50 })).sessions.find(
+        (s) => s.sessionId === threadId,
+      );
+
+    const first = await find();
+    expect(first?.firstPrompt).toBe(`prompt in ${repo}`);
+    // Cached results are clones: mutating one listing must not leak.
+    first!.firstPrompt = "mutated";
+    first!.projectPath = "/elsewhere";
+    const second = await find();
+    expect(second?.firstPrompt).toBe(`prompt in ${repo}`);
+    expect(second?.projectPath).toBe(repo);
+
+    // Rewriting the rollout (new size) is picked up.
+    const other = join(work, "other-cwd");
+    mkdirSync(other);
+    writeCodexSession(threadId, other);
+    const third = await find();
+    expect(third?.firstPrompt).toBe(`prompt in ${other}`);
+  });
+
+  it("excludes non-interactive codex exec rollouts like thread/list", async () => {
+    const execId = "019c56c0-d4d8-7b22-9e3c-2006640000e1";
+    const codexDir = join(tempHome, ".codex", "sessions", "2026", "02", "13");
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(
+      join(codexDir, `rollout-2026-02-13T12-00-00-${execId}.jsonl`),
+      [
+        JSON.stringify({
+          timestamp: "2026-02-13T12:00:00.000Z",
+          type: "session_meta",
+          payload: { id: execId, cwd: repo, source: "exec" },
+        }),
+        JSON.stringify({
+          timestamp: "2026-02-13T12:00:01.000Z",
+          type: "event_msg",
+          payload: { type: "user_message", message: "image helper" },
+        }),
+      ].join("\n"),
+    );
+    writeCodexSession("019c56c0-d4d8-7b22-9e3c-2006640000e2", repo);
+
+    const ids = (await getAllRecentSessions({ limit: 50 })).sessions.map(
+      (s) => s.sessionId,
+    );
+    expect(ids).toContain("019c56c0-d4d8-7b22-9e3c-2006640000e2");
+    expect(ids).not.toContain(execId);
+  });
+
+  it("sorts newest first even when an entry has no modified time", async () => {
+    const codexDir = join(tempHome, ".codex", "sessions", "2026", "02", "13");
+    mkdirSync(codexDir, { recursive: true });
+    const writeRollout = (threadId: string, time: string) =>
+      writeFileSync(
+        join(codexDir, `rollout-2026-02-13T12-00-00-${threadId}.jsonl`),
+        [
+          JSON.stringify({
+            timestamp: time,
+            type: "session_meta",
+            payload: { id: threadId, cwd: repo },
+          }),
+          JSON.stringify({
+            timestamp: time,
+            type: "event_msg",
+            payload: { type: "user_message", message: `prompt ${threadId}` },
+          }),
+        ].join("\n"),
+      );
+    const older = "019c56c0-d4d8-7b22-9e3c-2006640000f1";
+    const newer = "019c56c0-d4d8-7b22-9e3c-2006640000f2";
+    writeRollout(older, "2026-02-10T00:00:00.000Z");
+    writeRollout(newer, "2026-02-12T00:00:00.000Z");
+    // A Claude transcript without any timestamp has modified "".
+    const claudeDir = join(tempHome, ".claude", "projects", pathToSlug(repo));
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(
+      join(claudeDir, "aaaaaaaa-0000-0000-0000-000000000001.jsonl"),
+      JSON.stringify({
+        type: "user",
+        message: { role: "user", content: "no timestamp" },
+        cwd: repo,
+      }),
+    );
+
+    const ids = (await getAllRecentSessions({ limit: 50 })).sessions.map(
+      (s) => s.sessionId,
+    );
+    expect(ids.indexOf(newer)).toBeLessThan(ids.indexOf(older));
+    expect(ids.indexOf(older)).toBeLessThan(
+      ids.indexOf("aaaaaaaa-0000-0000-0000-000000000001"),
+    );
+  });
+
+  it("takes activity time and last prompt from the newest rollout segment", async () => {
+    const threadId = "019c56c0-d4d8-7b22-9e3c-2006640000a9";
+    const codexDir = join(tempHome, ".codex", "sessions", "2026", "02", "13");
+    mkdirSync(codexDir, { recursive: true });
+    const line = (time: string, type: string, payload: object) =>
+      JSON.stringify({ timestamp: time, type, payload });
+    writeFileSync(
+      join(codexDir, `rollout-2026-02-13T10-00-00-${threadId}.jsonl`),
+      [
+        line("2026-02-13T10:00:00.000Z", "session_meta", { id: threadId, cwd: repo, git: { branch: "main" } }),
+        line("2026-02-13T10:00:01.000Z", "event_msg", { type: "user_message", message: "first prompt" }),
+        line("2026-02-13T10:00:02.000Z", "event_msg", { type: "agent_message", message: "early summary" }),
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(
+        codexDir,
+        `rollout-2026-02-13T12-00-00-${threadId}_019c56c1-0000-7000-8000-0000000000a9.jsonl`,
+      ),
+      [
+        line("2026-02-13T12:00:00.000Z", "session_meta", { id: threadId, cwd: repo }),
+        line("2026-02-13T12:30:00.000Z", "event_msg", { type: "user_message", message: "latest prompt" }),
+      ].join("\n"),
+    );
+
+    const entry = (await getAllRecentSessions({ limit: 50 })).sessions.find(
+      (s) => s.sessionId === threadId,
+    );
+    expect(entry?.modified).toBe("2026-02-13T12:30:00.000Z");
+    expect(entry?.lastPrompt).toBe("latest prompt");
+  });
+
   it("keeps separate repositories that only share a name prefix", async () => {
     const other = join(work, "app-stats");
     mkdirSync(other);
@@ -2897,5 +3292,799 @@ describe("recent sessions grouped by git repository", () => {
     );
     expect(entry?.projectPath).toBe(other);
     expect(entry?.resumeCwd).toBeUndefined();
+  });
+});
+
+describe("getSessionHistory non-prompt user entries", () => {
+  const oldHome = process.env.HOME;
+  let tempHome: string;
+
+  beforeEach(() => {
+    tempHome = mkdtempSync(join(tmpdir(), "ccpocket-history-"));
+    process.env.HOME = tempHome;
+  });
+
+  afterEach(() => {
+    process.env.HOME = oldHome;
+    rmSync(tempHome, { recursive: true, force: true });
+  });
+
+  it("marks task notifications and interrupt markers as meta", async () => {
+    const projectDir = join(tempHome, ".claude", "projects", "-tmp-project");
+    mkdirSync(projectDir, { recursive: true });
+    const user = (content: unknown, extra: Record<string, unknown> = {}) =>
+      JSON.stringify({
+        type: "user",
+        uuid: `u-${Math.random()}`,
+        message: { role: "user", content },
+        ...extra,
+      });
+    writeFileSync(
+      join(projectDir, "session-1.jsonl"),
+      [
+        user([{ type: "text", text: "Investigate the bridge" }]),
+        user([{ type: "text", text: "[Request interrupted by user]" }]),
+        user("[Request interrupted by user for tool use]"),
+        user("<task-notification>\n<task-id>a1</task-id>\n</task-notification>", {
+          promptSource: "system",
+        }),
+        user([{ type: "text", text: "Follow up" }]),
+      ].join("\n"),
+    );
+
+    const history = await getSessionHistory("session-1");
+    const prompts = history
+      .filter((message) => message.role === "user" && !message.isMeta)
+      .map((message) => (message.content[0] as { text: string }).text);
+
+    expect(prompts).toEqual(["Investigate the bridge", "Follow up"]);
+    expect(history.filter((message) => message.isMeta)).toHaveLength(3);
+  });
+
+  it("keeps compaction boundaries with their summary", async () => {
+    const projectDir = join(tempHome, ".claude", "projects", "-tmp-project");
+    mkdirSync(projectDir, { recursive: true });
+    // Shape cut from a real `/compact` transcript.
+    writeFileSync(
+      join(projectDir, "session-compact.jsonl"),
+      [
+        { type: "user", uuid: "u1", parentUuid: null, message: { role: "user", content: "Reply with just: ok" } },
+        { type: "assistant", uuid: "a1", parentUuid: "u1", message: { role: "assistant", content: [{ type: "text", text: "ok" }] } },
+        {
+          type: "system",
+          subtype: "compact_boundary",
+          uuid: "b1",
+          parentUuid: null,
+          logicalParentUuid: "a1",
+          isMeta: false,
+          timestamp: "2026-11-07T02:36:23.000Z",
+          compactMetadata: { trigger: "manual", preTokens: 21935, postTokens: 7722, durationMs: 5995 },
+        },
+        {
+          type: "user",
+          uuid: "s1",
+          parentUuid: "b1",
+          isCompactSummary: true,
+          isVisibleInTranscriptOnly: true,
+          message: { role: "user", content: "This session is being continued.\n\nSummary:\n1. Reply with ok." },
+        },
+        { type: "user", uuid: "u2", parentUuid: "s1", message: { role: "user", content: "Next question" } },
+      ].map((entry) => JSON.stringify(entry)).join("\n"),
+    );
+
+    const history = await getSessionHistory("session-compact");
+    expect(history.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "compaction",
+      "user",
+    ]);
+    expect(history[2]).toEqual({
+      role: "compaction",
+      uuid: "b1",
+      timestamp: "2026-11-07T02:36:23.000Z",
+      content: [],
+      compaction: {
+        trigger: "manual",
+        preTokens: 21935,
+        postTokens: 7722,
+        summary: "1. Reply with ok.",
+      },
+    });
+  });
+
+  it("restores narration thinking as assistant text", async () => {
+    // Signature headers captured from a real Claude Code transcript.
+    const NARRATION_SIGNATURE = "CAQSmAgKEQgTGAI4AUIJbmFycmF0aW9uEgwuh3SmO2yKTiIVkQgaDANm";
+    const THINKING_SIGNATURE = "CAQSpwYKEAgTGAI4AUIIdGhpbmtpbmcSDKet1CC8vZtTRUUgdxoMm2MU";
+    const projectDir = join(tempHome, ".claude", "projects", "-tmp-project");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, "session-2.jsonl"),
+      JSON.stringify({
+        type: "assistant",
+        uuid: "a-1",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "hidden", signature: THINKING_SIGNATURE },
+            { type: "thinking", thinking: "Running checks now.\n", signature: NARRATION_SIGNATURE },
+          ],
+        },
+      }),
+    );
+
+    const history = await getSessionHistory("session-2");
+    expect(history).toHaveLength(1);
+    expect(history[0].content).toEqual([
+      { type: "text", text: "Running checks now." },
+    ]);
+  });
+});
+
+describe("selectPinnedRecentSessions", () => {
+  it("keeps provider-qualified matches in listing order", () => {
+    const entries = [
+      { provider: "claude", sessionId: "a" },
+      { provider: "codex", sessionId: "a" },
+      { provider: "claude", sessionId: "b" },
+    ];
+    expect(
+      selectPinnedRecentSessions(entries, new Set(["codex:a", "claude:b"])),
+    ).toEqual([entries[1], entries[2]]);
+  });
+});
+
+describe("pinned recent sessions", () => {
+  const oldHome = process.env.HOME;
+  const oldUserProfile = process.env.USERPROFILE;
+  let tempHome: string;
+
+  beforeEach(() => {
+    tempHome = mkdtempSync(join(tmpdir(), "ccpocket-test-pinned-home-"));
+    process.env.HOME = tempHome;
+    process.env.USERPROFILE = tempHome;
+  });
+
+  afterEach(() => {
+    process.env.HOME = oldHome;
+    process.env.USERPROFILE = oldUserProfile;
+    rmSync(tempHome, { recursive: true, force: true });
+  });
+
+  function writeCodexRollout(
+    id: string,
+    timestamp: string,
+    prompt: string,
+    cwd = "/tmp/pinned-project",
+  ): void {
+    const codexDir = join(tempHome, ".codex", "sessions", "2026", "02", "13");
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(
+      join(codexDir, `rollout-2026-02-13T00-00-00-${id}.jsonl`),
+      [
+        JSON.stringify({ timestamp, type: "session_meta", payload: { id, cwd } }),
+        JSON.stringify({
+          timestamp,
+          type: "event_msg",
+          payload: { type: "user_message", message: prompt },
+        }),
+      ].join("\n"),
+    );
+  }
+
+  function writeCodexNames(names: Record<string, string>): void {
+    mkdirSync(join(tempHome, ".codex"), { recursive: true });
+    writeFileSync(
+      join(tempHome, ".codex", "session_index.jsonl"),
+      Object.entries(names)
+        .map(([id, name]) => JSON.stringify({ id, thread_name: name }))
+        .join("\n"),
+    );
+  }
+
+  function writeClaudeIndex(
+    entries: Array<{ sessionId: string; modified: string; customTitle?: string }>,
+  ): void {
+    const projectDir = join(tempHome, ".claude", "projects", "-tmp-claude-project");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, "sessions-index.json"),
+      JSON.stringify({
+        version: 1,
+        entries: entries.map((entry) => ({
+          sessionId: entry.sessionId,
+          fullPath: join(projectDir, `${entry.sessionId}.jsonl`),
+          fileMtime: Date.now(),
+          firstPrompt: `${entry.sessionId} prompt`,
+          ...(entry.customTitle ? { customTitle: entry.customTitle } : {}),
+          messageCount: 2,
+          created: entry.modified,
+          modified: entry.modified,
+          gitBranch: "main",
+          projectPath: "/tmp/claude-project",
+          isSidechain: false,
+        })),
+      }),
+    );
+  }
+
+  it("returns a pinned Claude session beyond the first page", async () => {
+    writeClaudeIndex([
+      { sessionId: "newest", modified: "2026-02-13T12:00:00.000Z" },
+      { sessionId: "middle", modified: "2026-02-13T11:00:00.000Z" },
+      { sessionId: "oldest-pinned", modified: "2026-02-13T10:00:00.000Z" },
+    ]);
+
+    const result = await getAllRecentSessions({
+      provider: "claude",
+      limit: 1,
+      pinnedSessionKeys: new Set(["claude:oldest-pinned"]),
+    });
+
+    expect(result.sessions.map((s) => s.sessionId)).toEqual(["newest"]);
+    expect(result.hasMore).toBe(true);
+    expect(result.pinnedSessions?.map((s) => s.sessionId)).toEqual([
+      "oldest-pinned",
+    ]);
+  });
+
+  it("omits pinnedSessions when no pins were requested", async () => {
+    writeClaudeIndex([
+      { sessionId: "only", modified: "2026-02-13T12:00:00.000Z" },
+    ]);
+
+    const result = await getAllRecentSessions({ provider: "claude" });
+
+    expect(result.pinnedSessions).toBeUndefined();
+  });
+
+  it("applies provider, namedOnly and search filters to pinned sessions", async () => {
+    writeClaudeIndex([
+      {
+        sessionId: "claude-named",
+        modified: "2026-02-13T12:00:00.000Z",
+        customTitle: "Deploy fix",
+      },
+      { sessionId: "claude-unnamed", modified: "2026-02-13T11:00:00.000Z" },
+    ]);
+    writeCodexRollout("codex-pin", "2026-02-13T10:00:00.000Z", "deploy codex");
+    const pins = new Set([
+      "claude:claude-named",
+      "claude:claude-unnamed",
+      "codex:codex-pin",
+    ]);
+
+    const claudeOnly = await getAllRecentSessions({
+      provider: "claude",
+      limit: 1,
+      pinnedSessionKeys: pins,
+    });
+    expect(claudeOnly.pinnedSessions?.map((s) => s.sessionId)).toEqual([
+      "claude-named",
+      "claude-unnamed",
+    ]);
+
+    const namedOnly = await getAllRecentSessions({
+      namedOnly: true,
+      limit: 1,
+      pinnedSessionKeys: pins,
+    });
+    expect(namedOnly.pinnedSessions?.map((s) => s.sessionId)).toEqual([
+      "claude-named",
+    ]);
+
+    const searched = await getAllRecentSessions({
+      searchQuery: "codex",
+      limit: 1,
+      pinnedSessionKeys: pins,
+    });
+    expect(searched.pinnedSessions?.map((s) => s.sessionId)).toEqual([
+      "codex-pin",
+    ]);
+  });
+
+  it("excludes archived pinned sessions", async () => {
+    writeCodexRollout("newer", "2026-02-13T12:00:00.000Z", "newer");
+    writeCodexRollout("archived-pin", "2026-02-13T10:00:00.000Z", "old");
+
+    const result = await getAllRecentSessions({
+      provider: "codex",
+      limit: 1,
+      archivedSessionIds: new Set(["archived-pin"]),
+      pinnedSessionKeys: new Set(["codex:archived-pin"]),
+    });
+
+    expect(result.pinnedSessions).toEqual([]);
+  });
+
+  it("looks up pinned Codex threads in thread/list shape", async () => {
+    const worktreeCwd = "/tmp/pinned-project-worktrees/feature";
+    writeCodexRollout("wt-pin", "2026-02-13T10:00:00.000Z", "fix bug", worktreeCwd);
+    writeCodexRollout("unrelated", "2026-02-13T11:00:00.000Z", "other");
+    writeCodexNames({ "wt-pin": "Worktree fix" });
+
+    const result = await getPinnedCodexSessions({ threadIds: ["wt-pin"] });
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        sessionId: "wt-pin",
+        provider: "codex",
+        name: "Worktree fix",
+        projectPath: worktreeCwd,
+        resumeCwd: worktreeCwd,
+      }),
+    ]);
+  });
+
+  it("filters pinned Codex threads like the listing", async () => {
+    writeCodexRollout("named", "2026-02-13T12:00:00.000Z", "deploy it");
+    writeCodexRollout("unnamed", "2026-02-13T11:00:00.000Z", "deploy too");
+    writeCodexRollout("archived", "2026-02-13T10:00:00.000Z", "deploy");
+    writeCodexRollout(
+      "elsewhere",
+      "2026-02-13T09:00:00.000Z",
+      "deploy",
+      "/tmp/other-project",
+    );
+    writeCodexNames({ named: "Named thread", archived: "Archived thread" });
+    const threadIds = ["named", "unnamed", "archived", "elsewhere"];
+    const archivedSessionIds = new Set(["archived"]);
+
+    const all = await getPinnedCodexSessions({ threadIds, archivedSessionIds });
+    expect(all.map((s) => s.sessionId)).toEqual([
+      "named",
+      "unnamed",
+      "elsewhere",
+    ]);
+
+    const projectScoped = await getPinnedCodexSessions({
+      threadIds,
+      archivedSessionIds,
+      projectPath: "/tmp/pinned-project",
+      namedOnly: true,
+    });
+    expect(projectScoped.map((s) => s.sessionId)).toEqual(["named"]);
+
+    const searched = await getPinnedCodexSessions({
+      threadIds,
+      archivedSessionIds,
+      searchQuery: "TOO",
+    });
+    expect(searched.map((s) => s.sessionId)).toEqual(["unnamed"]);
+  });
+});
+
+describe("recent session search", () => {
+  const oldHome = process.env.HOME;
+  const oldUserProfile = process.env.USERPROFILE;
+  let tempHome: string;
+  const claudeProject = "/tmp/search-project-alpha";
+
+  beforeEach(() => {
+    tempHome = mkdtempSync(join(tmpdir(), "ccpocket-test-search-home-"));
+    process.env.HOME = tempHome;
+    process.env.USERPROFILE = tempHome;
+  });
+
+  afterEach(() => {
+    process.env.HOME = oldHome;
+    process.env.USERPROFILE = oldUserProfile;
+    rmSync(tempHome, { recursive: true, force: true });
+  });
+
+  interface ClaudeFixture {
+    sessionId: string;
+    modified: string;
+    created?: string;
+    firstPrompt?: string;
+    customTitle?: string;
+    summary?: string;
+    gitBranch?: string;
+    transcript?: unknown[];
+  }
+
+  function writeClaude(entries: ClaudeFixture[]): void {
+    const projectDir = join(tempHome, ".claude", "projects", pathToSlug(claudeProject));
+    mkdirSync(projectDir, { recursive: true });
+    for (const entry of entries) {
+      writeFileSync(
+        join(projectDir, `${entry.sessionId}.jsonl`),
+        (entry.transcript ?? []).map((line) => JSON.stringify(line)).join("\n"),
+      );
+    }
+    writeFileSync(
+      join(projectDir, "sessions-index.json"),
+      JSON.stringify({
+        version: 1,
+        entries: entries.map((entry) => ({
+          sessionId: entry.sessionId,
+          fullPath: join(projectDir, `${entry.sessionId}.jsonl`),
+          fileMtime: Date.now(),
+          firstPrompt: entry.firstPrompt ?? `${entry.sessionId} prompt`,
+          ...(entry.customTitle ? { customTitle: entry.customTitle } : {}),
+          ...(entry.summary ? { summary: entry.summary } : {}),
+          messageCount: 2,
+          created: entry.created ?? entry.modified,
+          modified: entry.modified,
+          gitBranch: entry.gitBranch ?? "main",
+          projectPath: claudeProject,
+          isSidechain: false,
+        })),
+      }),
+    );
+  }
+
+  function writeCodexRollout(
+    id: string,
+    timestamp: string,
+    lines: unknown[],
+    fileStamp = "2026-02-13T00-00-00",
+  ): void {
+    const codexDir = join(tempHome, ".codex", "sessions", "2026", "02", "13");
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(
+      join(codexDir, `rollout-${fileStamp}-${id}.jsonl`),
+      [
+        { timestamp, type: "session_meta", payload: { id, cwd: "/tmp/codex-proj" } },
+        {
+          timestamp,
+          type: "event_msg",
+          payload: { type: "user_message", message: `${id} prompt` },
+        },
+        ...lines.map((line) => ({ timestamp, ...(line as object) })),
+      ]
+        .map((line) => JSON.stringify(line))
+        .join("\n"),
+    );
+  }
+
+  const user = (text: string) => ({
+    type: "user",
+    message: { role: "user", content: text },
+  });
+  const assistant = (text: string) => ({
+    type: "assistant",
+    message: { role: "assistant", content: [{ type: "text", text }] },
+  });
+  const toolResult = (text: string) => ({
+    type: "user",
+    message: {
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: "t1", content: text }],
+    },
+  });
+
+  it("reports the first matching metadata field in priority order", async () => {
+    writeClaude([
+      {
+        sessionId: "by-name",
+        modified: "2026-02-13T12:00:00.000Z",
+        customTitle: "Kiwi title",
+        firstPrompt: "kiwi prompt",
+      },
+      {
+        sessionId: "by-prompt",
+        modified: "2026-02-13T11:00:00.000Z",
+        firstPrompt: "add kiwi support",
+        summary: "kiwi summary",
+      },
+      {
+        sessionId: "by-summary",
+        modified: "2026-02-13T10:00:00.000Z",
+        summary: "Kiwi refactor",
+      },
+      {
+        sessionId: "by-branch",
+        modified: "2026-02-13T09:00:00.000Z",
+        gitBranch: "feat/kiwi",
+      },
+      { sessionId: "no-match", modified: "2026-02-13T08:00:00.000Z" },
+    ]);
+
+    const result = await getAllRecentSessions({
+      provider: "claude",
+      searchQuery: "KIWI",
+    });
+
+    expect(
+      result.sessions.map((s) => [s.sessionId, s.searchMatch?.field]),
+    ).toEqual([
+      ["by-name", "name"],
+      ["by-prompt", "firstPrompt"],
+      ["by-summary", "summary"],
+      ["by-branch", "branch"],
+    ]);
+  });
+
+  it("matches the project folder name and leaves searchMatch off without a query", async () => {
+    writeClaude([{ sessionId: "s1", modified: "2026-02-13T12:00:00.000Z" }]);
+
+    const searched = await getAllRecentSessions({
+      provider: "claude",
+      searchQuery: "project-alp",
+    });
+    expect(searched.sessions).toEqual([
+      expect.objectContaining({
+        sessionId: "s1",
+        searchMatch: { field: "project" },
+      }),
+    ]);
+
+    const unsearched = await getAllRecentSessions({ provider: "claude" });
+    expect(unsearched.sessions[0]).not.toHaveProperty("searchMatch");
+  });
+
+  it("does not match parent directories of the project path", async () => {
+    writeClaude([{ sessionId: "s1", modified: "2026-02-13T12:00:00.000Z" }]);
+
+    const result = await getAllRecentSessions({
+      provider: "claude",
+      searchQuery: "tmp",
+    });
+    expect(result.sessions).toEqual([]);
+  });
+
+  it("attaches searchMatch to pinned sessions", async () => {
+    writeClaude([
+      { sessionId: "newest", modified: "2026-02-13T12:00:00.000Z", firstPrompt: "fig a" },
+      { sessionId: "pinned", modified: "2026-02-13T10:00:00.000Z", gitBranch: "fig" },
+    ]);
+
+    const result = await getAllRecentSessions({
+      provider: "claude",
+      searchQuery: "fig",
+      limit: 1,
+      pinnedSessionKeys: new Set(["claude:pinned"]),
+    });
+    expect(result.pinnedSessions).toEqual([
+      expect.objectContaining({ sessionId: "pinned", searchMatch: { field: "branch" } }),
+    ]);
+  });
+
+  it("searches transcript text only with searchContent", async () => {
+    writeClaude([
+      {
+        sessionId: "user-hit",
+        modified: "2026-02-13T12:00:00.000Z",
+        transcript: [user("please migrate the Mango schema")],
+      },
+      {
+        sessionId: "tool-only",
+        modified: "2026-02-13T11:00:00.000Z",
+        transcript: [user("run it"), toolResult("mango in tool output")],
+      },
+      {
+        sessionId: "assistant-hit",
+        modified: "2026-02-13T10:00:00.000Z",
+        transcript: [user("hi"), assistant("The mango column is gone")],
+      },
+      {
+        sessionId: "meta-hit",
+        modified: "2026-02-13T09:00:00.000Z",
+        firstPrompt: "mango title",
+      },
+    ]);
+
+    const metadataOnly = await getAllRecentSessions({
+      provider: "claude",
+      searchQuery: "mango",
+    });
+    expect(metadataOnly.sessions.map((s) => s.sessionId)).toEqual(["meta-hit"]);
+
+    const result = await getAllRecentSessions({
+      provider: "claude",
+      searchQuery: "mango",
+      searchContent: true,
+    });
+    expect(
+      result.sessions.map((s) => [s.sessionId, s.searchMatch]),
+    ).toEqual([
+      ["user-hit", { field: "content", snippet: "please migrate the Mango schema" }],
+      ["assistant-hit", { field: "content", snippet: "The mango column is gone" }],
+      ["meta-hit", { field: "firstPrompt" }],
+    ]);
+    expect(result.hasMore).toBe(false);
+    expect(result.contentSearchIncomplete).toBeUndefined();
+  });
+
+  it("paginates content matches newest first", async () => {
+    writeClaude(
+      Array.from({ length: 5 }, (_, i) => ({
+        sessionId: `s${i}`,
+        modified: `2026-02-13T1${5 - i}:00:00.000Z`,
+        transcript: [user(i === 2 ? "unrelated" : "needle here")],
+      })),
+    );
+
+    const page = await getAllRecentSessions({
+      provider: "claude",
+      searchQuery: "needle",
+      searchContent: true,
+      limit: 2,
+      offset: 1,
+    });
+    expect(page.sessions.map((s) => s.sessionId)).toEqual(["s1", "s3"]);
+    expect(page.hasMore).toBe(true);
+  });
+
+  it("returns hasMore when the content search file bound is hit", async () => {
+    writeClaude(
+      Array.from({ length: 4 }, (_, i) => ({
+        sessionId: `s${i}`,
+        modified: `2026-02-13T1${5 - i}:00:00.000Z`,
+        transcript: [user(i === 0 || i === 3 ? "needle" : "miss")],
+      })),
+    );
+
+    const result = await getAllRecentSessions({
+      provider: "claude",
+      searchQuery: "needle",
+      searchContent: true,
+      limit: 10,
+      contentSearchLimits: { maxFiles: 2 },
+    });
+    expect(result.sessions.map((s) => s.sessionId)).toEqual(["s0"]);
+    expect(result.hasMore).toBe(true);
+    expect(result.contentSearchIncomplete).toBe(true);
+  });
+
+  it("searches every Codex rollout segment of a thread", async () => {
+    const assistantLine = (text: string) => ({
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text }],
+      },
+    });
+    // Whichever segment the listing keeps for a thread, the other segment's
+    // transcript must still be searched: one thread has the hit in its first
+    // segment, the other in its continuation.
+    const first = "019c56c0-d4d8-7b22-9e3c-200664d68aaa";
+    const second = "019c56c0-d4d8-7b22-9e3c-200664d68ccc";
+    writeCodexRollout(first, "2026-02-13T10:00:00.000Z", [
+      assistantLine("papaya in the first segment"),
+      assistantLine("final words"),
+    ]);
+    writeCodexRollout(
+      first,
+      "2026-02-13T12:00:00.000Z",
+      [assistantLine("later")],
+      "2026-02-13T11-00-00",
+    );
+    writeCodexRollout(second, "2026-02-13T09:00:00.000Z", [
+      assistantLine("early"),
+    ]);
+    writeCodexRollout(
+      second,
+      "2026-02-13T09:30:00.000Z",
+      [assistantLine("papaya in the continuation"), assistantLine("bye")],
+      "2026-02-13T09-30-00",
+    );
+    writeCodexRollout("019c56c0-d4d8-7b22-9e3c-200664d68bbb", "2026-02-13T08:00:00.000Z", [
+      {
+        type: "response_item",
+        payload: { type: "function_call_output", output: "papaya from a tool" },
+      },
+    ]);
+
+    const result = await getAllRecentSessions({
+      provider: "codex",
+      searchQuery: "papaya",
+      searchContent: true,
+    });
+    expect(
+      result.sessions
+        .map((s) => [s.sessionId, s.searchMatch] as const)
+        .sort((a, b) => a[0].localeCompare(b[0])),
+    ).toEqual([
+      [first, { field: "content", snippet: "papaya in the first segment" }],
+      [second, { field: "content", snippet: "papaya in the continuation" }],
+    ]);
+  });
+
+  it("content-searches pinned sessions outside the page", async () => {
+    writeClaude([
+      {
+        sessionId: "newest",
+        modified: "2026-02-13T12:00:00.000Z",
+        transcript: [user("guava")],
+      },
+      {
+        sessionId: "pinned",
+        modified: "2026-02-13T10:00:00.000Z",
+        transcript: [assistant("guava again")],
+      },
+      {
+        sessionId: "pinned-miss",
+        modified: "2026-02-13T09:00:00.000Z",
+        transcript: [user("nothing")],
+      },
+    ]);
+
+    const result = await getAllRecentSessions({
+      provider: "claude",
+      searchQuery: "guava",
+      searchContent: true,
+      limit: 1,
+      pinnedSessionKeys: new Set(["claude:pinned", "claude:pinned-miss"]),
+    });
+    expect(result.sessions.map((s) => s.sessionId)).toEqual(["newest"]);
+    expect(result.pinnedSessions).toEqual([
+      expect.objectContaining({
+        sessionId: "pinned",
+        searchMatch: { field: "content", snippet: "guava again" },
+      }),
+    ]);
+  });
+
+  it("applies sessionFilter (e.g. a created date range) before content search", async () => {
+    writeClaude([
+      {
+        sessionId: "old-created",
+        created: "2026-01-01T00:00:00.000Z",
+        modified: "2026-02-13T12:00:00.000Z",
+        transcript: [user("lime")],
+      },
+      {
+        sessionId: "new-created",
+        created: "2026-02-13T00:00:00.000Z",
+        modified: "2026-02-13T11:00:00.000Z",
+        transcript: [user("lime")],
+      },
+    ]);
+
+    const result = await getAllRecentSessions({
+      provider: "claude",
+      searchQuery: "lime",
+      searchContent: true,
+      sessionFilter: (s) => s.created >= "2026-02-01",
+    });
+    expect(result.sessions.map((s) => s.sessionId)).toEqual(["new-created"]);
+  });
+});
+
+describe("claudeAbandonedBranchUuids", () => {
+  const entry = (
+    type: "user" | "assistant" | "attachment",
+    uuid: string,
+    parentUuid: string | null,
+    content: unknown = type === "user" ? "prompt" : [{ type: "text", text: "a" }],
+  ) => JSON.stringify({ type, uuid, parentUuid, message: { role: type, content } });
+
+  it("drops turns abandoned by an edit and keeps the new branch", () => {
+    const lines = [
+      entry("user", "u1", null, "ONE"),
+      entry("assistant", "a1", "u1"),
+      entry("attachment", "x1", "a1"),
+      entry("user", "u2", "x1", "TWO"),
+      entry("assistant", "a2", "u2"),
+      entry("user", "u3", "a2", "THREE"),
+      entry("user", "u2b", "a1", "EDITED"),
+      entry("assistant", "a2b", "u2b"),
+    ];
+    expect(claudeAbandonedBranchUuids(lines)).toEqual(new Set(["u2", "a2", "u3"]));
+  });
+
+  it("keeps parallel tool call siblings", () => {
+    const lines = [
+      entry("user", "u1", null, "go"),
+      entry("assistant", "t1", "u1", [{ type: "tool_use", id: "1", name: "Read", input: {} }]),
+      entry("assistant", "t2", "u1", [{ type: "tool_use", id: "2", name: "Read", input: {} }]),
+      entry("user", "r1", "t1", [{ type: "tool_result", tool_use_id: "1", content: "x" }]),
+      entry("user", "r2", "t2", [{ type: "tool_result", tool_use_id: "2", content: "y" }]),
+      entry("assistant", "a1", "r2"),
+    ];
+    expect(claudeAbandonedBranchUuids(lines)).toBeNull();
+  });
+
+  it("does not filter when the chain to the latest entry is broken", () => {
+    const lines = [
+      entry("user", "u1", null, "ONE"),
+      entry("assistant", "a1", "u1"),
+      entry("user", "u2", "missing", "TWO"),
+    ];
+    expect(claudeAbandonedBranchUuids(lines)).toBeNull();
   });
 });

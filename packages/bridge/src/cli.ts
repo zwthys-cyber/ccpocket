@@ -23,6 +23,7 @@ Commands:
   help                  Show this help
   version               Show the installed Bridge version
   doctor [--json]       Check the local Bridge environment
+  qr [--port <port>]    Show the pairing QR code of the Bridge running on this machine
   setup [options]       Register Bridge as a macOS launchd or Linux systemd service
 
 Options:
@@ -30,7 +31,10 @@ Options:
   -v, --version         Show the installed Bridge version
       --port <port>     WebSocket port (default: 8765)
       --host <host>     Bind address (default: 0.0.0.0)
-      --api-key <key>   Enable API key authentication
+      --api-key <key>   Use this API key (default: generated and stored in
+                         ~/.ccpocket/bridge-api-key)
+      --insecure-no-auth
+                         Disable API key authentication (not recommended)
       --public-ws-url <url>
                          Public ws:// or wss:// URL used in QR codes
       --no-mdns         Disable mDNS auto-discovery advertisement
@@ -42,7 +46,7 @@ Options:
 Setup options:
       --uninstall       Remove the registered service
       setup persists --port, --host, --api-key, --public-ws-url,
-      --no-mdns, Codex app-server options, BRIDGE_ALLOWED_DIRS, and
+      --no-mdns, --insecure-no-auth, Codex app-server options, BRIDGE_ALLOWED_DIRS, and
       BRIDGE_ALLOW_CLAUDE_OAUTH, BRIDGE_CODEX_ASSIST_MODEL, and
       BRIDGE_CODEX_ASSIST_REASONING_EFFORT
 
@@ -79,6 +83,19 @@ if (parsed.helpRequested) {
       console.error("Doctor failed:", err);
       process.exit(1);
     });
+} else if (parsed.command === "qr") {
+  // Pairing QR for a running (often headless launchd/systemd) Bridge.
+  // No proxy setup: this only talks to 127.0.0.1.
+  Promise.all([import("./qr-command.js"), import("./bridge-port.js")])
+    .then(([{ runQrCommand }, { parseBridgePort }]) => {
+      const port = parseBridgePort(parseFlag(parsed, "port"));
+      return runQrCommand(port);
+    })
+    .then((code) => process.exit(code))
+    .catch((err) => {
+      console.error(`ERROR: ${startupErrorMessage(err)}`);
+      process.exit(1);
+    });
 } else if (parsed.command === "setup") {
   // Service setup subcommand (platform-specific)
   const opts = {
@@ -87,6 +104,7 @@ if (parsed.helpRequested) {
     apiKey: parseFlag(parsed, "api-key"),
     publicWsUrl: parseFlag(parsed, "public-ws-url"),
     disableMdns: hasFlag(parsed, "no-mdns"),
+    insecureNoAuth: hasFlag(parsed, "insecure-no-auth"),
     codexAppServerMode: parseFlag(parsed, "codex-app-server-mode"),
     codexSharedAppServerUrl: parseFlag(parsed, "codex-shared-app-server-url"),
     codexAppServerPort: parseFlag(parsed, "codex-app-server-port"),
@@ -153,6 +171,9 @@ if (parsed.helpRequested) {
     process.env.BRIDGE_CODEX_APP_SERVER_URL = codexAppServerUrl;
   }
   if (hasFlag(parsed, "no-mdns")) process.env.BRIDGE_DISABLE_MDNS = "1";
+  if (hasFlag(parsed, "insecure-no-auth")) {
+    process.env.BRIDGE_INSECURE_NO_AUTH = "1";
+  }
 
   startServer().catch((err) => {
     console.error(`[bridge] Failed to start: ${startupErrorMessage(err)}`);
