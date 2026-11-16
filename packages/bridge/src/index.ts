@@ -30,7 +30,11 @@ import {
   promptHistoryStoreFileForPort,
   PromptHistoryStore,
 } from "./prompt-history-store.js";
-import { parseAllowedDirectories } from "./path-utils.js";
+import {
+  directoryListWarnings,
+  parseAllowedDirectories,
+  parseReadOnlyDirectories,
+} from "./path-utils.js";
 import { parseBridgePort } from "./bridge-port.js";
 import { listenForStartup } from "./server-listen.js";
 
@@ -57,6 +61,11 @@ export async function startServer() {
     process.env.BRIDGE_ALLOWED_DIRS,
     process.platform,
     [homedir()],
+  );
+  // Extra roots for file preview/download/reveal only (never projects).
+  const READONLY_DIRS = parseReadOnlyDirectories(
+    process.env.BRIDGE_READONLY_DIRS,
+    process.platform,
   );
 
   console.log("[bridge] Starting ccpocket bridge server...");
@@ -99,6 +108,21 @@ export async function startServer() {
       ALLOWED_DIRS.length > 0 ? ALLOWED_DIRS.join(", ") : "(unrestricted)"
     }`,
   );
+  if (READONLY_DIRS.length > 0) {
+    console.log(`[bridge] Read-only dirs: ${READONLY_DIRS.join(", ")}`);
+  }
+  for (const warning of [
+    ...directoryListWarnings(
+      "BRIDGE_ALLOWED_DIRS",
+      process.env.BRIDGE_ALLOWED_DIRS,
+    ),
+    ...directoryListWarnings(
+      "BRIDGE_READONLY_DIRS",
+      process.env.BRIDGE_READONLY_DIRS,
+    ),
+  ]) {
+    console.warn(`[bridge] WARNING: ${warning}`);
+  }
 
   // Initialize Firebase Anonymous Auth for push notifications
   let firebaseAuth: FirebaseAuthClient | undefined;
@@ -357,6 +381,7 @@ export async function startServer() {
     server: httpServer,
     apiKey: API_KEY,
     allowedDirs: ALLOWED_DIRS,
+    readOnlyDirs: READONLY_DIRS,
     fileDownloadAllowAllPaths: process.env.BRIDGE_FILE_DOWNLOAD_ALLOW_ALL_PATHS === "1",
     imageStore,
     mediaStore,

@@ -2,6 +2,52 @@
 
 All notable changes to `@ccpocket/bridge` will be documented in this file.
 
+## [1.107.0] - 2026-11-16
+
+### Added
+
+- `github_list` and `github_item` requests list a project's open Issues and pull requests and fetch one item's body and latest comments, for the app's new Issues / PRs screen. The Bridge runs the GitHub CLI (`gh`) on its host, read-only, for the project's `github.com` `origin` remote. Errors are reported as `gh_missing`, `gh_unauthenticated`, `not_github`, or `failed`.
+- `ccpocket-bridge doctor` checks whether the GitHub CLI is installed and signed in. This check is optional and only needed for the Issues / PRs screen.
+
+## [1.106.4] - 2026-11-15
+
+### Fixed
+
+- On Windows, automatic session naming for Codex failed with `spawn codex ENOENT` when Codex was installed globally with npm (only the `codex.cmd` shim is on PATH), leaving sessions unnamed. Auto-rename now uses a native `codex.exe` found on PATH, or runs the npm package's `bin/codex.js` with the current Node runtime. Arguments are passed without a shell. ([#332](https://github.com/K9i-0/ccpocket/pull/332) by @hustneverland)
+
+## [1.106.3] - 2026-11-15
+
+### Changed
+
+- Updated `undici` to 8.12.4, which fixes six security issues in its redirect, cache, and `fetch()` integrity handling (one rated high: CVE-2026-116592).
+- Updated `@anthropic-ai/claude-agent-sdk` to 0.3.319 (parity with Claude Code v2.1.319).
+
+## [1.106.2] - 2026-11-13
+
+### Fixed
+
+- On Windows, the project path of Claude sessions in `recent_sessions` kept its JSON escapes (`C:\\Users\\dev\\demo` instead of `C:\Users\dev\demo`). Resuming such a session left a "Restoring" card that never cleared and replayed the resume after every reconnect, creating duplicate sessions. The path is now decoded, which also makes `.claude\worktrees\<name>` sessions group under their repository on Windows. ([#326](https://github.com/K9i-0/ccpocket/issues/326), [#327](https://github.com/K9i-0/ccpocket/pull/327) by @hustneverland)
+
+## [1.106.1] - 2026-11-12
+
+### Fixed
+
+- When `resume_session` is rejected because the project (or an extra directory) is outside `BRIDGE_ALLOWED_DIRS`, or because the same session is already being restored with different settings, the `error` message now carries `sessionId` and `requestId` like the other resume failures, so the app can show it for the tap that caused it. ([#324](https://github.com/K9i-0/ccpocket/issues/324))
+- A `BRIDGE_ALLOWED_DIRS` or `BRIDGE_READONLY_DIRS` entry that contains `;` logs a warning at startup. Paths are separated by commas; a semicolon-separated list was silently treated as one path that matched nothing.
+
+## [1.106.0] - 2026-11-11
+
+### Added
+
+- Local images that the assistant shows with Markdown image syntax (`![label](path)`) in its reply are attached to the `assistant` message as an optional `images` list, both live and when history is restored, for Claude and Codex. Only files inside `BRIDGE_ALLOWED_DIRS` or `BRIDGE_READONLY_DIRS` are attached (up to 12 per message). Older apps ignore the field.
+- `BRIDGE_READONLY_DIRS`: a comma-separated list of extra directories whose files can be previewed, downloaded, and revealed in Finder from the app (for example `/tmp,/private/tmp` for agent screenshots). They cannot be used as projects, upload destinations, or Git targets. `setup` persists the setting.
+
+## [1.105.0] - 2026-11-11
+
+### Added
+
+- `/usage` includes model-scoped weekly limits (for example Fable on Max plans) as an optional `modelWindows` list on the Claude entry. Labels come from the server, and the field is omitted when the account has no such limit, so older apps ignore it.
+
 ## [1.104.0] - 2026-11-09
 
 ### Changed

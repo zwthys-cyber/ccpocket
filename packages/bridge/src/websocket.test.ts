@@ -16,6 +16,7 @@ import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolvePlatformPath } from "./path-utils.js";
 import { MediaStore } from "./media-store.js";
+import { ImageStore } from "./image-store.js";
 import { UploadStore } from "./upload-store.js";
 
 const {
@@ -31,6 +32,8 @@ const {
   listIndexedCodexThreadIdsMock,
   generateCommitMessageMock,
   gitCommitMock,
+  listGitHubItemsMock,
+  getGitHubItemMock,
   consumeFinderProofMock,
   verifyFinderSocketProofMock,
   revealInFinderMock,
@@ -47,6 +50,8 @@ const {
   listIndexedCodexThreadIdsMock: vi.fn(),
   generateCommitMessageMock: vi.fn(),
   gitCommitMock: vi.fn(),
+  listGitHubItemsMock: vi.fn(),
+  getGitHubItemMock: vi.fn(),
   consumeFinderProofMock: vi.fn(),
   verifyFinderSocketProofMock: vi.fn(),
   revealInFinderMock: vi.fn(),
@@ -108,6 +113,17 @@ vi.mock("./git-assist.js", () => ({
   generateCommitMessage: generateCommitMessageMock,
 }));
 
+vi.mock("./github-cli.js", async () => {
+  const actual = await vi.importActual<typeof import("./github-cli.js")>(
+    "./github-cli.js",
+  );
+  return {
+    ...actual,
+    listGitHubItems: listGitHubItemsMock,
+    getGitHubItem: getGitHubItemMock,
+  };
+});
+
 vi.mock("./git-operations.js", async () => {
   const actual = await vi.importActual<typeof import("./git-operations.js")>(
     "./git-operations.js",
@@ -128,6 +144,8 @@ vi.mock("./session.js", () => ({
     constructor(onMessage?: (sessionId: string, msg: any) => void) {
       this.onMessage = onMessage ?? (() => {});
     }
+
+    setAssistantImageResolver(): void {}
 
     create(
       projectPath: string,
@@ -3091,6 +3109,265 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     bridge.close();
   });
 
+  describe("GitHub triage requests", () => {
+    const sentMessages = (ws: { send: ReturnType<typeof vi.fn> }) =>
+      ws.send.mock.calls.map((call: unknown[]) =>
+        JSON.parse(call[0] as string),
+      );
+    const waitForSend = async (
+      ws: { send: ReturnType<typeof vi.fn> },
+      count = 1,
+    ) => {
+      for (let i = 0; i < 50 && ws.send.mock.calls.length < count; i++) {
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 5));
+      }
+    };
+
+    beforeEach(() => {
+      listGitHubItemsMock.mockReset();
+      getGitHubItemMock.mockReset();
+    });
+
+    it("answers github_list with the correlated repository and items", async () => {
+      const items = [
+        {
+          number: 330,
+          title: "chore(deps): bump ws",
+          url: "https://github.com/K9i-0/ccpocket/pull/330",
+          author: { login: "dependabot", isBot: true },
+          labels: ["dependencies"],
+          createdAt: "2026-11-10T01:00:00Z",
+          updatedAt: "2026-11-10T01:05:00Z",
+          isDraft: false,
+          checks: "success",
+        },
+      ];
+      listGitHubItemsMock.mockResolvedValue({
+        repository: "K9i-0/ccpocket",
+        items,
+      });
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+
+      await (bridge as any).handleClientMessage(
+        { type: "github_list", projectPath: "/p", kind: "pr", requestId: "gh-1" },
+        ws,
+      );
+      await waitForSend(ws);
+
+      expect(listGitHubItemsMock).toHaveBeenCalledWith("/p", "pr");
+      expect(sentMessages(ws)).toEqual([
+        {
+          type: "github_list_result",
+          requestId: "gh-1",
+          projectPath: "/p",
+          kind: "pr",
+          repository: "K9i-0/ccpocket",
+          items,
+        },
+      ]);
+      bridge.close();
+    });
+
+    it("answers github_list failures with the typed error", async () => {
+      const { GitHubCliError } = await import("./github-cli.js");
+      listGitHubItemsMock.mockRejectedValue(
+        new GitHubCliError("gh_unauthenticated", "Run: gh auth login"),
+      );
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+
+      await (bridge as any).handleClientMessage(
+        {
+          type: "github_list",
+          projectPath: "/p",
+          kind: "issue",
+          requestId: "gh-2",
+        },
+        ws,
+      );
+      await waitForSend(ws);
+
+      expect(sentMessages(ws)).toEqual([
+        {
+          type: "github_list_result",
+          requestId: "gh-2",
+          projectPath: "/p",
+          kind: "issue",
+          error: { code: "gh_unauthenticated", message: "Run: gh auth login" },
+        },
+      ]);
+      bridge.close();
+    });
+
+    it("answers github_item with the correlated detail", async () => {
+      const item = {
+        number: 327,
+        title: "Issue",
+        url: "https://github.com/K9i-0/ccpocket/issues/327",
+        author: { login: "alex", isBot: false },
+        labels: [],
+        createdAt: "2026-11-10T01:00:00Z",
+        updatedAt: "2026-11-10T01:05:00Z",
+        body: "body",
+        comments: [],
+      };
+      getGitHubItemMock.mockResolvedValue({
+        repository: "K9i-0/ccpocket",
+        item,
+      });
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+
+      await (bridge as any).handleClientMessage(
+        {
+          type: "github_item",
+          projectPath: "/p",
+          kind: "issue",
+          number: 327,
+          requestId: "gh-3",
+        },
+        ws,
+      );
+      await waitForSend(ws);
+
+      expect(getGitHubItemMock).toHaveBeenCalledWith("/p", "issue", 327);
+      expect(sentMessages(ws)).toEqual([
+        {
+          type: "github_item_result",
+          requestId: "gh-3",
+          projectPath: "/p",
+          kind: "issue",
+          number: 327,
+          item,
+        },
+      ]);
+      bridge.close();
+    });
+
+    it("answers github_item failures with the request number", async () => {
+      getGitHubItemMock.mockRejectedValue(new Error("boom"));
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+
+      await (bridge as any).handleClientMessage(
+        {
+          type: "github_item",
+          projectPath: "/p",
+          kind: "pr",
+          number: 175,
+          requestId: "gh-4",
+        },
+        ws,
+      );
+      await waitForSend(ws);
+
+      expect(sentMessages(ws)).toEqual([
+        {
+          type: "github_item_result",
+          requestId: "gh-4",
+          projectPath: "/p",
+          kind: "pr",
+          number: 175,
+          error: { code: "failed", message: "boom" },
+        },
+      ]);
+      bridge.close();
+    });
+
+    it("keeps concurrent requests for two projects correlated", async () => {
+      let releaseFirst: (value: unknown) => void = () => {};
+      listGitHubItemsMock.mockImplementation((projectPath: string) =>
+        projectPath === "/a"
+          ? new Promise((resolvePromise) => {
+              releaseFirst = resolvePromise;
+            })
+          : Promise.resolve({ repository: "o/b", items: [] }),
+      );
+      const bridge = new BridgeWebSocketServer({ server: httpServer });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+
+      await (bridge as any).handleClientMessage(
+        { type: "github_list", projectPath: "/a", kind: "pr", requestId: "a-1" },
+        ws,
+      );
+      await (bridge as any).handleClientMessage(
+        { type: "github_list", projectPath: "/b", kind: "pr", requestId: "b-1" },
+        ws,
+      );
+      await waitForSend(ws);
+      releaseFirst({ repository: "o/a", items: [] });
+      await waitForSend(ws, 2);
+
+      expect(
+        sentMessages(ws).map((message: Record<string, unknown>) => [
+          message.requestId,
+          message.projectPath,
+          message.repository,
+        ]),
+      ).toEqual([
+        ["b-1", "/b", "o/b"],
+        ["a-1", "/a", "o/a"],
+      ]);
+      bridge.close();
+    });
+
+    it("rejects a disallowed project path without calling gh", async () => {
+      const bridge = new BridgeWebSocketServer({
+        server: httpServer,
+        allowedDirs: ["/allowed"],
+      });
+      const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+
+      await (bridge as any).handleClientMessage(
+        {
+          type: "github_list",
+          projectPath: "/denied",
+          kind: "pr",
+          requestId: "gh-5",
+        },
+        ws,
+      );
+      await (bridge as any).handleClientMessage(
+        {
+          type: "github_item",
+          projectPath: "/denied",
+          kind: "pr",
+          number: 1,
+          requestId: "gh-6",
+        },
+        ws,
+      );
+
+      expect(listGitHubItemsMock).not.toHaveBeenCalled();
+      expect(getGitHubItemMock).not.toHaveBeenCalled();
+      expect(sentMessages(ws)).toEqual([
+        {
+          type: "github_list_result",
+          requestId: "gh-5",
+          projectPath: "/denied",
+          kind: "pr",
+          error: {
+            code: "failed",
+            message: expect.stringContaining("Project path not allowed"),
+          },
+        },
+        {
+          type: "github_item_result",
+          requestId: "gh-6",
+          projectPath: "/denied",
+          kind: "pr",
+          number: 1,
+          error: {
+            code: "failed",
+            message: expect.stringContaining("Project path not allowed"),
+          },
+        },
+      ]);
+      bridge.close();
+    });
+  });
+
   it("lists only visible allowed directories", async () => {
     const root = mkdtempSync(resolve(tmpdir(), "ccpocket-directory-request-"));
     const bridge = new BridgeWebSocketServer({
@@ -3630,6 +3907,51 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       }),
     );
     expect((bridge as any).sessionManager.get("s-1")).toBeUndefined();
+
+    bridge.close();
+  });
+
+  it("correlates path_not_allowed with the rejected resume request", async () => {
+    const bridge = new BridgeWebSocketServer({
+      server: httpServer,
+      allowedDirs: ["/tmp/allowed"],
+    });
+    const ws = {
+      readyState: OPEN_STATE,
+      send: vi.fn(),
+    } as any;
+
+    await (bridge as any).handleClientMessage(
+      {
+        type: "resume_session",
+        sessionId: "thr_outside",
+        projectPath: "/tmp/outside/project",
+        provider: "codex",
+        resumeRequestId: "resume-outside",
+      },
+      ws,
+    );
+
+    const messages = ws.send.mock.calls.map((call: unknown[]) =>
+      JSON.parse(call[0] as string),
+    );
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        type: "system",
+        subtype: "session_resume_failed",
+        sourceSessionId: "thr_outside",
+        resumeRequestId: "resume-outside",
+      }),
+    );
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        errorCode: "path_not_allowed",
+        path: "/tmp/outside/project",
+        sessionId: "thr_outside",
+        requestId: "resume-outside",
+      }),
+    );
 
     bridge.close();
   });
@@ -7201,6 +7523,102 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     } finally {
       bridge.close();
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("lets read-only dirs be previewed, downloaded, and revealed but not used as projects", async () => {
+    const projectPath = mkdtempSync(resolve(tmpdir(), "ccpocket-bridge-"));
+    const readOnly = mkdtempSync(resolve(tmpdir(), "ccpocket-readonly-"));
+    const outside = mkdtempSync(resolve(tmpdir(), "ccpocket-outside-"));
+    const shot = resolve(readOnly, "shot.txt");
+    writeFileSync(shot, "shot");
+    writeFileSync(resolve(outside, "secret.txt"), "secret");
+    symlinkSync(resolve(outside, "secret.txt"), resolve(readOnly, "link.txt"));
+    const bridge = new BridgeWebSocketServer({
+      server: httpServer, allowedDirs: [projectPath], readOnlyDirs: [readOnly],
+      mediaStore: new MediaStore(), platform: "darwin",
+    });
+    const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+    const send = async (message: Record<string, unknown>) => {
+      ws.send.mockClear();
+      await (bridge as any).handleClientMessage(message, ws);
+      await expect.poll(() => ws.send.mock.calls.length).toBeGreaterThan(0);
+      return JSON.parse(ws.send.mock.calls[0][0]);
+    };
+    const proof = { proofPath: "/proof", proofToken: "a".repeat(64) };
+    try {
+      expect(await send({ type: "read_file", projectPath, filePath: shot }))
+        .toMatchObject({ type: "file_content", kind: "text", content: "shot" });
+      expect(await send({ type: "read_file", projectPath, filePath: resolve(readOnly, "link.txt") }))
+        .toMatchObject({ type: "file_content", error: "Path not allowed" });
+      expect(await send({ type: "read_file", projectPath, filePath: resolve(outside, "secret.txt") }))
+        .toMatchObject({ type: "file_content", error: "Path not allowed" });
+
+      expect(await send({ type: "prepare_file_download", projectPath, filePath: shot, requestId: "ro-1" }))
+        .toMatchObject({ type: "file_download_ready", requestId: "ro-1" });
+      expect(await send({ type: "prepare_file_download", projectPath, filePath: resolve(readOnly, "link.txt"), requestId: "ro-2" }))
+        .toMatchObject({ errorCode: "file_download_not_allowed" });
+      expect(await send({ type: "prepare_file_download", projectPath: readOnly, filePath: "shot.txt", requestId: "ro-3" }))
+        .toMatchObject({ errorCode: "file_download_not_allowed" });
+
+      const revealsBefore = revealInFinderMock.mock.calls.length;
+      expect(await send({ type: "reveal_file", projectPath, filePath: shot, requestId: "ro-4", ...proof }))
+        .toEqual({ type: "reveal_file_result", requestId: "ro-4" });
+      expect(revealInFinderMock).toHaveBeenCalledTimes(revealsBefore + 1);
+      expect(await send({ type: "reveal_file", projectPath, filePath: resolve(readOnly, "link.txt"), requestId: "ro-5", ...proof }))
+        .toMatchObject({ errorCode: "path_not_allowed" });
+
+      const listed = await send({ type: "list_files", projectPath: readOnly });
+      expect(listed).toMatchObject({ type: "file_list", files: [] });
+      expect(listed.error).toContain("not in the allowed directories");
+    } finally {
+      bridge.close();
+      for (const dir of [projectPath, readOnly, outside]) {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("re-attaches markdown-embedded images when past history is restored", async () => {
+    const projectPath = mkdtempSync(resolve(tmpdir(), "ccpocket-bridge-"));
+    const readOnly = mkdtempSync(resolve(tmpdir(), "ccpocket-readonly-"));
+    const outside = mkdtempSync(resolve(tmpdir(), "ccpocket-outside-"));
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    writeFileSync(resolve(projectPath, "a.png"), png);
+    writeFileSync(resolve(readOnly, "shot.png"), png);
+    writeFileSync(resolve(outside, "secret.png"), png);
+    const bridge = new BridgeWebSocketServer({
+      server: httpServer, allowedDirs: [projectPath], readOnlyDirs: [readOnly],
+      imageStore: new ImageStore(),
+    });
+    const text = [
+      "![案A](a.png)",
+      `![検証](${resolve(readOnly, "shot.png")})`,
+      `![外](${resolve(outside, "secret.png")})`,
+      "[a.png](a.png)",
+    ].join("\n");
+    const plain = { role: "assistant", content: [{ type: "text", text: "[a.png](a.png)" }] };
+    try {
+      const { pastMessages } = await (bridge as any).preparePastHistoryMessages(
+        { projectPath },
+        [{ role: "assistant", uuid: "u1", content: [{ type: "text", text }] }, plain],
+      );
+      expect(pastMessages[0].images).toHaveLength(2);
+      expect(pastMessages[0].images[0]).toMatchObject({
+        path: resolve(projectPath, "a.png"), alt: "案A", mimeType: "image/png",
+      });
+      expect(pastMessages[0].images[1]).toMatchObject({
+        path: resolve(readOnly, "shot.png"), alt: "検証",
+      });
+      expect(pastMessages[1]).toBe(plain);
+    } finally {
+      bridge.close();
+      for (const dir of [projectPath, readOnly, outside]) {
+        rmSync(dir, { recursive: true, force: true });
+      }
     }
   });
 

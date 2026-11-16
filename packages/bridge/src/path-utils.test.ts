@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  directoryListWarnings,
   isPathWithinAllowedDirectory,
   normalizePlatformPath,
   parseAllowedDirectories,
+  parseReadOnlyDirectories,
   resolvePlatformPath,
   resolvePlatformPathFrom,
   stripWindowsExtendedPathPrefix,
@@ -87,6 +89,33 @@ describe("path-utils", () => {
       .toEqual(["/home/alice", "/opt/project"]);
     expect(parseAllowedDirectories("C:\\Users\\alice", "win32"))
       .toEqual(["C:\\Users\\alice"]);
+  });
+
+  it("warns when a directory list uses semicolons instead of commas", () => {
+    expect(
+      directoryListWarnings(
+        "BRIDGE_ALLOWED_DIRS",
+        "C:\\Users\\alice;D:\\",
+      ),
+    ).toEqual([
+      expect.stringContaining('"C:\\Users\\alice;D:\\" contains \';\''),
+    ]);
+    expect(
+      directoryListWarnings("BRIDGE_ALLOWED_DIRS", "C:\\Users\\alice,D:\\"),
+    ).toEqual([]);
+    expect(directoryListWarnings("BRIDGE_ALLOWED_DIRS", undefined)).toEqual([]);
+    expect(directoryListWarnings("BRIDGE_ALLOWED_DIRS", "*")).toEqual([]);
+  });
+
+  it("parses read-only directories and rejects a star", () => {
+    expect(parseReadOnlyDirectories(undefined, "linux")).toEqual([]);
+    expect(parseReadOnlyDirectories("  ", "linux")).toEqual([]);
+    expect(parseReadOnlyDirectories("/tmp, /private/tmp", "linux"))
+      .toEqual(["/tmp", "/private/tmp"]);
+    expect(() => parseReadOnlyDirectories("*", "linux"))
+      .toThrow("'*' is not supported");
+    expect(() => parseReadOnlyDirectories(",", "linux"))
+      .toThrow("at least one path");
   });
 
   it("accepts children whose names start with two dots", () => {

@@ -91,6 +91,13 @@ import {
   saveCodexSessionProfile,
 } from "./sessions-index.js";
 import type { ImageRef, ImageStore } from "./image-store.js";
+import {
+  assistantTextBlocks,
+  createAssistantImageResolver,
+  hasMarkdownImages,
+  type AssistantImageRef,
+  type AssistantImageResolver,
+} from "./markdown-images.js";
 import type { MediaStore } from "./media-store.js";
 import {
   isSafeUploadFileName,
@@ -135,6 +142,7 @@ import {
   gitStatus,
 } from "./git-operations.js";
 import { generateCommitMessage } from "./git-assist.js";
+import { getGitHubItem, listGitHubItems, toGitHubError } from "./github-cli.js";
 import { listWindows, takeScreenshot } from "./screenshot.js";
 import { DebugTraceStore } from "./debug-trace-store.js";
 import { RecordingStore } from "./recording-store.js";
@@ -1064,6 +1072,8 @@ export interface BridgeServerOptions {
   server: HttpServer;
   apiKey?: string;
   allowedDirs?: string[];
+  /** Extra roots that file preview, download, and reveal may read. */
+  readOnlyDirs?: string[];
   fileDownloadAllowAllPaths?: boolean;
   imageStore?: ImageStore;
   mediaStore?: MediaStore;
@@ -1116,6 +1126,8 @@ export class BridgeWebSocketServer {
   private sessionManager: SessionManager;
   private apiKey: string | null;
   private allowedDirs: string[];
+  private readOnlyDirs: string[];
+  private assistantImageResolver: AssistantImageResolver | null = null;
   private fileDownloadAllowAllPaths: boolean;
   private imageStore: ImageStore | null;
   private mediaStore: MediaStore | null;
@@ -1248,6 +1260,7 @@ export class BridgeWebSocketServer {
     } = options;
     this.apiKey = apiKey ?? null;
     this.allowedDirs = allowedDirs ?? [];
+    this.readOnlyDirs = options.readOnlyDirs ?? [];
     this.fileDownloadAllowAllPaths = options.fileDownloadAllowAllPaths ?? false;
     this.imageStore = imageStore ?? null;
     this.mediaStore = mediaStore ?? null;
@@ -1346,6 +1359,14 @@ export class BridgeWebSocketServer {
       },
     });
 
+    this.assistantImageResolver = imageStore
+      ? createAssistantImageResolver({
+          imageStore,
+          isPathReadable: (path) => this.isPathReadable(path),
+          isCanonicalPathReadable: (path) => this.isCanonicalPathReadable(path),
+        })
+      : null;
+
     this.sessionManager = new SessionManager(
       (sessionId, msg) => {
         this.broadcastSessionMessage(sessionId, msg);
@@ -1365,6 +1386,7 @@ export class BridgeWebSocketServer {
         this.broadcastSessionList();
       },
     );
+    this.sessionManager.setAssistantImageResolver(this.assistantImageResolver);
 
     this.wss.on("connection", (ws, req) => {
       // API key authentication
@@ -1416,6 +1438,42 @@ export class BridgeWebSocketServer {
     return false;
   }
 
+  private isPathInReadOnlyDir(path: string): boolean {
+    return this.readOnlyDirs.some(
+      (dir) => isPathWithinAllowedDirectory(path, dir, this.platform),
+    );
+  }
+
+  private async isCanonicalPathInReadOnlyDir(path: string): Promise<boolean> {
+    for (const dir of this.readOnlyDirs) {
+      let canonicalDir = dir;
+      try {
+        canonicalDir = await realpath(dir);
+      } catch {
+        // Keep the configured path when the read-only root cannot be resolved.
+      }
+      if (isPathWithinAllowedDirectory(path, canonicalDir, this.platform)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Read access: allowed directories plus BRIDGE_READONLY_DIRS. Use only for
+   * file preview, download, and reveal — never for projects or writes.
+   */
+  private isPathReadable(path: string): boolean {
+    return this.isPathAllowed(path) || this.isPathInReadOnlyDir(path);
+  }
+
+  private async isCanonicalPathReadable(path: string): Promise<boolean> {
+    return (
+      (await this.isCanonicalPathAllowed(path)) ||
+      (await this.isCanonicalPathInReadOnlyDir(path))
+    );
+  }
+
   private sendFileDownloadError(
     ws: WebSocket,
     request: Extract<ClientMessage, { type: "prepare_file_download" }>,
@@ -1447,7 +1505,8 @@ export class BridgeWebSocketServer {
     if (
       !this.isPathAllowed(projectPath) ||
       (!this.fileDownloadAllowAllPaths &&
-        !isPathWithinAllowedDirectory(requestedPath, projectPath, this.platform))
+        !isPathWithinAllowedDirectory(requestedPath, projectPath, this.platform) &&
+        !this.isPathInReadOnlyDir(requestedPath))
     ) {
       this.sendFileDownloadError(
         ws,
@@ -1491,13 +1550,16 @@ export class BridgeWebSocketServer {
       return;
     }
 
-    if (
-      !this.fileDownloadAllowAllPaths &&
-      (!isPathWithinAllowedDirectory(
+    const canonicalFileInProject =
+      isPathWithinAllowedDirectory(
         canonicalFilePath,
         canonicalProjectPath,
         this.platform,
-      ) || !(await this.isCanonicalPathAllowed(canonicalFilePath)))
+      ) && (await this.isCanonicalPathAllowed(canonicalFilePath));
+    if (
+      !this.fileDownloadAllowAllPaths &&
+      !canonicalFileInProject &&
+      !(await this.isCanonicalPathInReadOnlyDir(canonicalFilePath))
     ) {
       this.sendFileDownloadError(
         ws,
@@ -2522,6 +2584,12 @@ export class BridgeWebSocketServer {
         continue;
       }
 
+      if (msg.role === "assistant") {
+        const images = await this.resolveAssistantImages(session, msg.content);
+        pastMessages.push(images.length > 0 ? { ...msg, images } : raw);
+        continue;
+      }
+
       if (msg.role !== "tool_result") {
         pastMessages.push(raw);
         continue;
@@ -3065,6 +3133,10 @@ export class BridgeWebSocketServer {
     if (item.role === "assistant") {
       const content = this.sessionHistoryAssistantContent(item.content);
       if (content.length === 0) return null;
+      const assistantImages = await this.resolveAssistantImages(
+        session,
+        content,
+      );
       const messageId =
         item.uuid ??
         this.sessionHistorySingleToolUseId(item.content) ??
@@ -3078,6 +3150,7 @@ export class BridgeWebSocketServer {
           model: session.codexSettings?.model ?? "",
         },
         ...(item.uuid ? { messageUuid: item.uuid } : {}),
+        ...(assistantImages.length > 0 ? { images: assistantImages } : {}),
       };
     }
 
@@ -3226,6 +3299,17 @@ export class BridgeWebSocketServer {
     }
 
     return refs;
+  }
+
+  /** Re-registers markdown-embedded images when history is restored. */
+  private async resolveAssistantImages(
+    session: SessionInfo,
+    content: unknown,
+  ): Promise<AssistantImageRef[]> {
+    if (!this.assistantImageResolver) return [];
+    const texts = assistantTextBlocks(content);
+    if (!hasMarkdownImages(texts)) return [];
+    return this.assistantImageResolver(texts, session.projectPath);
   }
 
   private async registerPastToolResultImages(
@@ -6388,7 +6472,13 @@ export class BridgeWebSocketServer {
             projectPath: resumeProjectPath,
             resumeRequestId: msg.resumeRequestId,
           });
-          this.send(ws, this.buildPathNotAllowedError(msg.projectPath));
+          this.send(ws, {
+            ...this.buildPathNotAllowedError(
+              msg.projectPath,
+              msg.resumeRequestId,
+            ),
+            sessionId: msg.sessionId,
+          });
           break;
         }
         if (
@@ -6503,10 +6593,13 @@ export class BridgeWebSocketServer {
               projectPath: effectiveProjectPath,
               resumeRequestId: msg.resumeRequestId,
             });
-            this.send(
-              ws,
-              this.buildPathNotAllowedError(additionalWritableRoots.deniedRoot),
-            );
+            this.send(ws, {
+              ...this.buildPathNotAllowedError(
+                additionalWritableRoots.deniedRoot,
+                msg.resumeRequestId,
+              ),
+              sessionId: sessionRefId,
+            });
             break;
           }
           let worktreeOpts:
@@ -6746,10 +6839,13 @@ export class BridgeWebSocketServer {
             projectPath: resumeProjectPath,
             resumeRequestId: msg.resumeRequestId,
           });
-          this.send(
-            ws,
-            this.buildPathNotAllowedError(additionalDirectories.deniedRoot),
-          );
+          this.send(ws, {
+            ...this.buildPathNotAllowedError(
+              additionalDirectories.deniedRoot,
+              msg.resumeRequestId,
+            ),
+            sessionId: sessionRefId,
+          });
           break;
         }
         // Look up worktree mapping for this Claude session
@@ -7267,12 +7363,12 @@ export class BridgeWebSocketServer {
           }
           try {
             const path = resolve(msg.projectPath, msg.filePath);
-            if (!this.isPathAllowed(path)) {
+            if (!this.isPathReadable(path)) {
               reply("path_not_allowed");
               return;
             }
             const canonicalPath = await realpath(path);
-            if (!(await this.isCanonicalPathAllowed(canonicalPath))) {
+            if (!(await this.isCanonicalPathReadable(canonicalPath))) {
               reply("path_not_allowed");
               return;
             }
@@ -7293,7 +7389,7 @@ export class BridgeWebSocketServer {
           filePath: msg.filePath,
         };
         const absPath = resolve(msg.projectPath, msg.filePath);
-        if (!this.isPathAllowed(absPath)) {
+        if (!this.isPathReadable(absPath)) {
           this.send(ws, {
             type: "file_content",
             ...responseMetadata,
@@ -7361,7 +7457,7 @@ export class BridgeWebSocketServer {
               ? await stat(absPath)
               : fileStat;
             const canonicalPath = await realpath(absPath);
-            if (!(await this.isCanonicalPathAllowed(canonicalPath))) {
+            if (!(await this.isCanonicalPathReadable(canonicalPath))) {
               this.send(ws, {
                 type: "file_content",
                 ...responseMetadata,
@@ -8365,6 +8461,66 @@ export class BridgeWebSocketServer {
         break;
       }
 
+      case "github_list":
+      case "github_item": {
+        // The gh CLI runs asynchronously; every outcome answers with the
+        // operation-specific result so the client's pending request clears.
+        const request = msg;
+        const correlation =
+          request.type === "github_list"
+            ? {
+                type: "github_list_result" as const,
+                requestId: request.requestId,
+                projectPath: request.projectPath,
+                kind: request.kind,
+              }
+            : {
+                type: "github_item_result" as const,
+                requestId: request.requestId,
+                projectPath: request.projectPath,
+                kind: request.kind,
+                number: request.number,
+              };
+        if (!this.isPathAllowed(request.projectPath)) {
+          this.send(ws, {
+            ...correlation,
+            error: {
+              code: "failed",
+              message: this.buildPathNotAllowedError(
+                request.projectPath,
+                request.requestId,
+              ).message,
+            },
+          });
+          break;
+        }
+        void (async () => {
+          try {
+            if (request.type === "github_list") {
+              const result = await listGitHubItems(
+                request.projectPath,
+                request.kind,
+              );
+              this.send(ws, {
+                ...correlation,
+                repository: result.repository,
+                items: result.items,
+              });
+            } else {
+              const result = await getGitHubItem(
+                request.projectPath,
+                request.kind,
+                request.number,
+              );
+              this.send(ws, { ...correlation, item: result.item });
+            }
+          } catch (err) {
+            this.send(ws, { ...correlation, error: toGitHubError(err) });
+          }
+        })();
+        break;
+      }
+
       case "rewind_dry_run": {
         const session = this.sessionManager.get(msg.sessionId);
         if (!session) {
@@ -9015,6 +9171,10 @@ export class BridgeWebSocketServer {
         type: "error",
         message:
           "This session is already being restored with different settings. Wait for it to finish, then try again.",
+        sessionId: sourceSessionId,
+        ...(request.resumeRequestId
+          ? { requestId: request.resumeRequestId }
+          : {}),
       });
       return { key, operationId: operation.id, isOwner: false };
     }

@@ -72,6 +72,53 @@ export function parseAllowedDirectories(
   return entries.map((dir) => resolvePlatformPath(dir, platform));
 }
 
+/**
+ * Returns startup warnings for a directory-list env value that parses but is
+ * probably not what the user meant. The list separator is a comma; a
+ * semicolon (the Windows PATH separator) stays inside one entry and silently
+ * yields a path that matches nothing.
+ */
+export function directoryListWarnings(
+  envName: string,
+  input: string | undefined,
+): string[] {
+  const raw = input?.trim();
+  if (!raw || raw === "*") return [];
+  return raw
+    .split(",")
+    .map((dir) => dir.trim())
+    .filter((dir) => dir.includes(";"))
+    .map(
+      (dir) =>
+        `${envName} entry "${dir}" contains ';'. Entries are separated by commas, so this is treated as one path. Use ',' between paths.`,
+    );
+}
+
+/**
+ * Parses BRIDGE_READONLY_DIRS: extra roots whose files may be previewed,
+ * downloaded, and revealed, but never used as a project or write target.
+ * Unset means no extra roots. "*" is rejected so a typo cannot expose the
+ * whole filesystem.
+ */
+export function parseReadOnlyDirectories(
+  input: string | undefined,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  const raw = input?.trim();
+  if (!raw) return [];
+
+  const entries = raw.split(",").map((dir) => dir.trim()).filter(Boolean);
+  if (entries.length === 0) {
+    throw new Error("BRIDGE_READONLY_DIRS must contain at least one path");
+  }
+  if (entries.includes("*")) {
+    throw new Error(
+      "BRIDGE_READONLY_DIRS must be a comma-separated path list ('*' is not supported)",
+    );
+  }
+  return entries.map((dir) => resolvePlatformPath(dir, platform));
+}
+
 export function isPathWithinAllowedDirectory(
   targetPath: string,
   allowedDir: string,
