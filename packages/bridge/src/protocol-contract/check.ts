@@ -5,10 +5,26 @@
 import type { ClientMessage, ServerMessage } from "../parser.js";
 import type { OPT_IN_SERVER_MESSAGE_TYPES } from "../websocket/shared.js";
 import type {
-  AppRead,
-  AppSent,
+  AppRead as UpstreamAppRead,
+  AppSent as UpstreamAppSent,
   AppSupportedServerMessage,
 } from "./app-surface.generated.js";
+
+// The generated snapshot describes the upstream app. This fork additionally
+// sends/parses usage-reset messages in apps/mobile/lib/models/messages.dart.
+// Keep the extension explicit so it receives the same contract checks without
+// changing or weakening the generated upstream snapshot.
+type AppRead = UpstreamAppRead | {
+  type: "usage_reset_result";
+  required: "requestId";
+  optional: "outcome" | "error";
+};
+type AppSent = UpstreamAppSent | {
+  type: "consume_usage_reset";
+  from: "ClientMessage.consumeUsageReset";
+  always: "type" | "requestId" | "idempotencyKey";
+  sometimes: "creditId";
+};
 
 /** Every key of every variant of a union. */
 type KeysOfUnion<T> = T extends unknown ? keyof T : never;
