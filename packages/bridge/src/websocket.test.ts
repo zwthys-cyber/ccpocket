@@ -11301,6 +11301,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
   });
 
   it("holds Antigravity completion pushes while the agent is expected to carry on", async () => {
+    vi.stubEnv("BRIDGE_PUSH_RELAY_URL", "https://relay.example.com/push");
     vi.useFakeTimers();
     try {
       const fetchMock = vi.fn(async () => new Response("", { status: 200 }));
