@@ -1,3 +1,4 @@
+import { deepSeekModel, deepSeekModels, deepSeekSdkOptions, isDeepSeekEnabled } from "./deepseek.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -139,10 +140,14 @@ export function isClaudeOAuthOptInEnabled(
 export function hasExplicitClaudeCredential(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
+  if (isDeepSeekEnabled(env)) return Boolean(env.DEEPSEEK_API_KEY?.trim());
   return Boolean(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN);
 }
 
 function canStartClaudeSdk(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (isDeepSeekEnabled(env)) {
+    return hasExplicitClaudeCredential(env);
+  }
   return (
     hasExplicitClaudeCredential(env)
     // Amazon Bedrock authenticates with AWS credentials on the Bridge host, so
@@ -160,6 +165,10 @@ const CLAUDE_AUTH_RESOLUTION_TIMEOUT_MS = 500;
 export async function listAvailableClaudeModels(
   projectPath?: string,
 ): Promise<ClaudeModelMetadata[]> {
+  if (isDeepSeekEnabled()) {
+    deepSeekSdkOptions();
+    return deepSeekModels();
+  }
   if (!canStartClaudeSdk()) {
     throw new Error(CLAUDE_OAUTH_OPT_IN_MESSAGE);
   }
@@ -798,8 +807,12 @@ export class SdkProcess extends EventEmitter<SdkProcessEvents> {
         if (this.stopped) return;
         this.emitMessage({
           type: "error",
-          message: CLAUDE_OAUTH_OPT_IN_MESSAGE,
-          errorCode: CLAUDE_OAUTH_OPT_IN_ERROR_CODE,
+          message: isDeepSeekEnabled()
+            ? "DeepSeek requires DEEPSEEK_API_KEY on the Bridge host"
+            : CLAUDE_OAUTH_OPT_IN_MESSAGE,
+          errorCode: isDeepSeekEnabled()
+            ? "deepseek_api_key_required"
+            : CLAUDE_OAUTH_OPT_IN_ERROR_CODE,
         });
         this.stop();
         this.emit("exit", 1);
@@ -818,6 +831,7 @@ export class SdkProcess extends EventEmitter<SdkProcessEvents> {
   }
 
   private startSdkQuery(projectPath: string, options?: StartOptions): void {
+    const model = deepSeekModel(options?.model);
     console.log(`[sdk-process] Starting SDK query (cwd: ${projectPath}, mode: ${this._permissionMode ?? "default"}${options?.sessionId ? `, resume: ${options.sessionId}` : ""}${options?.continueMode ? ", continue: true" : ""})`);
 
     // In -p mode with --input-format stream-json, Claude CLI won't emit
@@ -837,18 +851,19 @@ export class SdkProcess extends EventEmitter<SdkProcessEvents> {
       prompt: this.createUserMessageStream(),
       options: {
         cwd: projectPath,
+        ...deepSeekSdkOptions(),
         ...(options?.additionalDirectories?.length
           ? { additionalDirectories: options.additionalDirectories }
           : {}),
         resume: options?.sessionId,
         continue: options?.continueMode,
         permissionMode: this._permissionMode ?? "default",
-        ...(options?.model ? { model: options.model } : {}),
-        ...buildThinkingOptions(options?.model),
-        ...(options?.effort ? { effort: options.effort } : {}),
+        ...(model ? { model } : {}),
+        ...buildThinkingOptions(model),
+        ...(options?.effort && !isDeepSeekEnabled() ? { effort: options.effort } : {}),
         ...(options?.maxTurns != null ? { maxTurns: options.maxTurns } : {}),
         ...(options?.maxBudgetUsd != null ? { maxBudgetUsd: options.maxBudgetUsd } : {}),
-        ...(options?.fallbackModel ? { fallbackModel: options.fallbackModel } : {}),
+        ...(options?.fallbackModel ? { fallbackModel: deepSeekModel(options.fallbackModel) } : {}),
         ...(options?.forkSession != null ? { forkSession: options.forkSession } : {}),
         ...(options?.persistSession != null ? { persistSession: options.persistSession } : {}),
         hooks: {
@@ -1173,6 +1188,7 @@ export class SdkProcess extends EventEmitter<SdkProcessEvents> {
 
   async listAvailableModels(): Promise<ClaudeModelMetadata[]> {
     if (!this.queryInstance) return [];
+    if (isDeepSeekEnabled()) return deepSeekModels();
     const models = await this.queryInstance.supportedModels();
     return models
       .map(normalizeClaudeModelMetadata)

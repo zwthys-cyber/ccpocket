@@ -130,3 +130,7 @@ cd apps/mobile && flutter pub get && cd ../..
 ## 许可证
 
 [MIT](LICENSE)
+
+### 使用 DeepSeek
+
+已支持通过现有 Claude 会话通道接入 DeepSeek，手机端可选择 DeepSeek 模型。参见[DeepSeek 接入与 GitHub 编译说明](docs/deepseek.zh-CN.md)。
