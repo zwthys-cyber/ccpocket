@@ -35,47 +35,6 @@ jobs:
         with:
           node-version: '24.22.1'
           cache: npm
-      - name: Import requested upstream Bridge release
-        env:
-          UPSTREAM_VERSION: '1.119.0'
-        run: |
-          set -euo pipefail
-          [[ "$UPSTREAM_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          CURRENT_VERSION=$(node -p 'require("./packages/bridge/package.json").version')
-          [[ "$CURRENT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          if [ "$CURRENT_VERSION" = "$UPSTREAM_VERSION" ]; then
-            echo "Requested version is already present; verifying current source."
-            exit 0
-          fi
-          EXPECTED_COMMIT=$(npm view "@ccpocket/bridge@$UPSTREAM_VERSION" gitHead)
-          [[ "$EXPECTED_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-          git fetch --no-tags --depth=1 https://github.com/K9i-0/ccpocket.git \
-            "refs/tags/bridge/v$CURRENT_VERSION:refs/upstream-bridge/base" \
-            "refs/tags/bridge/v$UPSTREAM_VERSION:refs/upstream-bridge/target"
-          test "$(git rev-parse 'refs/upstream-bridge/target^{commit}')" = "$EXPECTED_COMMIT"
-          git diff --binary 'refs/upstream-bridge/base^{commit}' 'refs/upstream-bridge/target^{commit}' -- \
-            packages/bridge/src packages/bridge/CHANGELOG.md \
-            docs/new-project-setup.md docs/design/pending-input-lifecycle.md \
-            docs/design/durable-chat-input-delivery.md docs/codex-api-migration.md \
-            > "$RUNNER_TEMP/bridge-upgrade.patch"
-          if ! git apply --3way --index "$RUNNER_TEMP/bridge-upgrade.patch"; then
-            git diff --name-only --diff-filter=U
-            git diff --cc
-            exit 1
-          fi
-          node --input-type=module <<'JS'
-          import fs from 'node:fs';
-          import { execFileSync } from 'node:child_process';
-          const upstream = JSON.parse(execFileSync('git', ['show', 'refs/upstream-bridge/target:packages/bridge/package.json'], { encoding: 'utf8' }));
-          const path = 'packages/bridge/package.json';
-          const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
-          if (upstream.version !== process.env.UPSTREAM_VERSION) throw new Error('Upstream version mismatch');
-          pkg.version = upstream.version;
-          pkg.engines = upstream.engines;
-          pkg.dependencies = upstream.dependencies;
-          pkg.devDependencies = upstream.devDependencies;
-          fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
-          JS
       - name: Repair lockfile within declared dependency ranges
         run: npm update --package-lock-only --ignore-scripts
       - name: Install repaired dependencies on GitHub runner

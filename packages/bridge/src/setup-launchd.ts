@@ -35,7 +35,6 @@ interface SetupOptions {
   host?: string;
   apiKey?: string;
   publicWsUrl?: string;
-  disableMdns?: boolean;
   insecureNoAuth?: boolean;
   codexAppServerMode?: string;
   codexSharedAppServerUrl?: string;
@@ -52,7 +51,6 @@ export function setupLaunchd(opts: SetupOptions): void {
   const allowedDirs = process.env.BRIDGE_ALLOWED_DIRS ?? "";
   const publicWsUrl =
     opts.publicWsUrl ?? process.env.BRIDGE_PUBLIC_WS_URL ?? "";
-  const disableMdns = opts.disableMdns || process.env.BRIDGE_DISABLE_MDNS;
   const insecureNoAuth =
     opts.insecureNoAuth || process.env.BRIDGE_INSECURE_NO_AUTH === "1";
   const allowClaudeOAuth = process.env.BRIDGE_ALLOW_CLAUDE_OAUTH === "1";
@@ -128,12 +126,6 @@ export function setupLaunchd(opts: SetupOptions): void {
         <string>${publicWsUrl}</string>`;
   }
 
-  if (disableMdns) {
-    envBlock += `
-        <key>BRIDGE_DISABLE_MDNS</key>
-        <string>1</string>`;
-  }
-
   if (insecureNoAuth) {
     envBlock += `
         <key>BRIDGE_INSECURE_NO_AUTH</key>
@@ -144,6 +136,15 @@ export function setupLaunchd(opts: SetupOptions): void {
     envBlock += `
         <key>BRIDGE_ALLOW_CLAUDE_OAUTH</key>
         <string>1</string>`;
+  }
+
+  // Optional Gemini API key for Antigravity sessions; without it they use
+  // the Google login from `agy`.
+  const antigravityApiKey = process.env.CCPOCKET_ANTIGRAVITY_API_KEY?.trim() ?? "";
+  if (antigravityApiKey) {
+    envBlock += `
+        <key>CCPOCKET_ANTIGRAVITY_API_KEY</key>
+        <string>${antigravityApiKey}</string>`;
   }
 
   if (codexAssistModel) {

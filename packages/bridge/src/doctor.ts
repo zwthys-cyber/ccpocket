@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import {
   isClaudeBedrockModeEnabled,
   isClaudeBedrockRegionConfigured,
+  isClaudeVertexModeEnabled,
 } from "./claude-provider.js";
 import {
   BRIDGE_STABLE_SETUP_COMMAND,
@@ -108,7 +109,10 @@ export async function checkGit(): Promise<CheckResult> {
   }
 }
 
-/** Check both Claude Code CLI and Codex CLI. At least one must be installed. */
+/**
+ * Check the Claude Code and Codex CLIs (at least one must be installed) and
+ * report the optional Antigravity CLI when present.
+ */
 export async function checkCliProviders(): Promise<
   CheckResult & { providers: ProviderResult[] }
 > {
@@ -142,6 +146,12 @@ export async function checkCliProviders(): Promise<
           authMessage = "Amazon Bedrock enabled; AWS_REGION is not configured";
           remediation = "Set AWS_REGION in the Bridge environment or Claude Code user settings";
         }
+      } else if (isClaudeVertexModeEnabled()) {
+        // Like Bedrock, report the configuration only: doctor does not call
+        // Google Cloud, and Claude Code validates the project, region and
+        // credentials at session startup.
+        authenticated = true;
+        authMessage = "Google Vertex AI configured; Google Cloud credentials not verified";
       } else if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) {
         authenticated = true;
         authMessage = "API credential configured";
@@ -221,6 +231,25 @@ export async function checkCliProviders(): Promise<
     });
   }
 
+  // --- Antigravity CLI (optional: listed only when installed) ---
+  try {
+    const version = execQuiet("agy --version").split("\n")[0];
+    const apiKey = Boolean(process.env.CCPOCKET_ANTIGRAVITY_API_KEY?.trim());
+    providers.push({
+      name: "Antigravity CLI",
+      installed: true,
+      version,
+      // Signing in is only checked when a session starts: asking the CLI
+      // would mean starting it.
+      authenticated: true,
+      authMessage: apiKey
+        ? "API key configured (CCPOCKET_ANTIGRAVITY_API_KEY)"
+        : "Uses the Google login from `agy`; checked when a session starts",
+    });
+  } catch {
+    // Not installed: Antigravity sessions are simply not offered.
+  }
+
   const installedCount = providers.filter((p) => p.installed).length;
   const total = providers.length;
 
@@ -250,7 +279,6 @@ export async function checkDependencies(): Promise<CheckResult> {
   const requiredPackages = [
     "ws",
     "@anthropic-ai/claude-agent-sdk",
-    "bonjour-service",
   ];
   const missing: string[] = [];
 

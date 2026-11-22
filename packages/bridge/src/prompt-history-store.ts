@@ -294,9 +294,9 @@ export class PromptHistoryStore {
     clientId: string,
     clientName?: string,
   ): Promise<{ imported: number; entries: PromptHistoryEntry[] }> {
-    this.data.entries = [];
-
-    let imported = 0;
+    // Build the imported entries before clearing anything: an import that
+    // carries no usable prompt must not erase the stored history.
+    const incoming: PromptHistoryEntry[] = [];
     for (const raw of entries) {
       const text = normalizeText(raw.text);
       if (!text) continue;
@@ -307,7 +307,7 @@ export class PromptHistoryStore {
       const createdAt = raw.createdAt ?? now;
       const lastUsedAt = raw.lastUsedAt ?? raw.updatedAt ?? now;
       const updatedAt = raw.updatedAt ?? lastUsedAt;
-      const incoming: PromptHistoryEntry = {
+      const entry: PromptHistoryEntry = {
         id,
         text,
         projectPath,
@@ -324,13 +324,17 @@ export class PromptHistoryStore {
         clientStats: raw.clientStats ?? {},
         sessionStats: raw.sessionStats ?? {},
       };
-      this.incrementClientStat(incoming, clientId, clientName, lastUsedAt, useCount);
-      this.mergeEntry(incoming);
-      imported += 1;
+      this.incrementClientStat(entry, clientId, clientName, lastUsedAt, useCount);
+      incoming.push(entry);
     }
 
+    if (incoming.length === 0) return { imported: 0, entries: this.list() };
+
+    this.data.entries = [];
+    for (const entry of incoming) this.mergeEntry(entry);
+
     await this.saveBumped();
-    return { imported, entries: this.list() };
+    return { imported: incoming.length, entries: this.list() };
   }
 
   async mergeClientEntries(entries: PromptHistoryImportEntry[]): Promise<void> {
@@ -339,6 +343,10 @@ export class PromptHistoryStore {
       const text = normalizeText(raw.text);
       if (!text) continue;
       const projectPath = normalizeProjectPath(raw.projectPath);
+      // A copy without its own timestamp gets "now" below. That default says
+      // nothing about when the client last touched the prompt, so it must not
+      // undo a delete.
+      const canRestore = Boolean(raw.updatedAt ?? raw.lastUsedAt);
       this.mergeEntry({
         id: raw.id ?? promptHistoryId(text, projectPath, raw.projectId),
         text,
@@ -355,7 +363,7 @@ export class PromptHistoryStore {
         commandKind: raw.commandKind ?? detectPromptCommandKind(text),
         clientStats: raw.clientStats ?? {},
         sessionStats: raw.sessionStats ?? {},
-      });
+      }, canRestore);
     }
     await this.saveBumped();
   }
@@ -392,7 +400,7 @@ export class PromptHistoryStore {
     };
   }
 
-  private mergeEntry(incoming: PromptHistoryEntry): void {
+  private mergeEntry(incoming: PromptHistoryEntry, canRestore = true): void {
     const existing = this.findMutable(incoming.id);
     if (!existing) {
       this.data.entries.push(cloneEntry(incoming));
@@ -419,8 +427,19 @@ export class PromptHistoryStore {
       existing.favoriteUpdatedAt = incoming.updatedAt;
     }
 
-    if (incoming.deletedAt && (!existing.deletedAt || incoming.deletedAt >= existing.deletedAt)) {
-      existing.deletedAt = incoming.deletedAt;
+    // A delete travels as a tombstone so other clients can hide the entry, but
+    // it is not permanent: a client copy restored (or used again) after the
+    // delete carries a newer `updatedAt` and wins, exactly like `record`.
+    if (incoming.deletedAt) {
+      if (!existing.deletedAt || incoming.deletedAt >= existing.deletedAt) {
+        existing.deletedAt = incoming.deletedAt;
+      }
+    } else if (
+      canRestore &&
+      existing.deletedAt &&
+      incoming.updatedAt > existing.deletedAt
+    ) {
+      existing.deletedAt = undefined;
     }
 
     for (const [clientId, stat] of Object.entries(incoming.clientStats)) {

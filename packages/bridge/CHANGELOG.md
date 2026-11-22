@@ -2,6 +2,230 @@
 
 All notable changes to `@ccpocket/bridge` will be documented in this file.
 
+## [1.119.0] - 2026-11-22
+
+### Added
+
+- Session handoff: `handoff_session` takes `start`, the start options the app remembers for the target agent. The target follows the source's permission mode where it has a counterpart (Claude auto, Codex auto review and Antigravity auto; default; full access; accept edits between Claude and Antigravity). Without a counterpart (plan mode, custom Codex permissions, accept edits to Codex, auto review switched off, an Antigravity mode the account does not offer) it starts in the remembered mode. Model, effort and the other options also come from `start`.
+- Antigravity swarms: workers are numbered in the order they joined, read from the briefs on the board, and the number is sent on board posts (`agentIndex`, `targetIndex`) and background tasks (`swarmIndex`) so clients can give each worker its own colour.
+
+### Fixed
+
+- Session handoff: an auto-mode session handed over to another agent started in default mode.
+- Performance mode: an Antigravity swarm's board posts and the brief a worker is given were removed from the chat. They are kept now; other swarm tool calls are still removed.
+
+## [1.118.0] - 2026-11-22
+
+### Added
+
+- Session handoff: `handoff_session` stops a session and continues its task in a new session of another agent (Claude Code, Codex and Antigravity, in every direction), announced as `session_handoff_v1`. The source agent writes a handoff note in one last turn; the Bridge adds the recent conversation and the path of a transcript saved under `~/.ccpocket/handoffs/`, starts the target in the same directory, worktree and workspace with that as its first prompt, and stops the source. A running turn is interrupted first. When the source cannot write the note (usage limit, error, three-minute timeout) the target starts from the Bridge-built context alone. The session name is carried over. `session_created` for the new session carries `handoff` and `sourceSessionId`. See `docs/session-handoff.md`.
+
+## [1.117.0] - 2026-11-22
+
+### Added
+
+- Pinned sessions and pinned projects are now kept on the Bridge (`~/.ccpocket/pins.json`) and shared by every app connected to it. A change on one device reaches the others at once. The first app that connects with pins of its own defines the Bridge's pins. New messages: `get_pins`, `set_session_pin`, `set_project_pin` and the opt-in `pins`.
+- Shared state: a store on the Bridge (`~/.ccpocket/shared-state.json`) for settings and data that belong to the Bridge's machine rather than to a device, announced as `shared_state_v1`. The app uses it for per-session Claude settings, read marks, the Codex profile per project, recently used additional writable directories, the parent directory for new projects, new-session defaults and the auto-rename switches. New messages: `get_shared_state`, `set_shared_state`, `seed_shared_state` and the opt-in `shared_state`, `shared_state_changed`, `shared_state_seeded`.
+- `CCPOCKET_PINS_FILE` and `CCPOCKET_SHARED_STATE_FILE` override where the two files are stored.
+
+## [1.116.0] - 2026-11-22
+
+### Added
+
+- Antigravity swarms: while a swarm is active (the coordinator is in a turn or at least one worker is busy), workers that are alive but waiting are also reported as background tasks, with `Waiting` as their summary and busy workers listed first. The agent count no longer drops to 0 between turns. Once the coordinator and all workers are idle the list is empty again, so the completion push is not held back.
+- The session list is re-sent when a session's background task or agent count changes, so session cards follow the count without waiting for another update.
+
+### Fixed
+
+- Antigravity swarms: a worker that sends live updates (thinking, text, tool calls, approval requests) is marked busy right away and stays busy for 10 seconds after its last update, instead of waiting for the swarm roster file to catch up.
+
+## [1.115.1] - 2026-11-22
+
+### Changed
+
+- Internal restructuring with no intended change in behaviour: `websocket.ts` (12,700 lines) is split into one handler per client message under `src/websocket/handlers/` and helper modules under `src/websocket/`.
+- Ten server messages that were sent as untyped records (`session_list`, `recent_sessions`, `input_ack` and others) are now declared in the protocol types, and a type-level check fails the build when the app and the Bridge disagree about message types or keys. Nothing on the wire changes.
+
+## [1.115.0] - 2026-11-21
+
+### Added
+
+- Antigravity swarms (`/swarm`) now run to the end. A swarm worker is a conversation of its own whose approval requests never reached the Bridge, so it timed out after 60 seconds and the swarm stalled. The Bridge now opens each worker's conversation, relays its approval requests (the tool input carries `swarmWorker`), keeps workers in the coordinator's permission mode, and applies bypass and session grants to them.
+- Antigravity swarms: board posts are sent as `SwarmPost` tool calls, and busy workers are reported as background tasks (`Swarm: <name>`), which also holds the completion push while they work.
+
+### Fixed
+
+- Slash command and skill completion no longer goes missing in a chat reopened after a long conversation: the command list is now re-sent with `get_history_delta` and Codex history snapshots, as it already was with `get_history`.
+- Antigravity: updates from a swarm worker's conversation no longer change the coordinator's mode, commands or title, and the terminal-only `Run /swarm board` hint is removed from replies.
+
+## [1.114.1] - 2026-11-21
+
+### Fixed
+
+- Assistant markdown images: an inline code span between an image's alt text and its destination (``![a]`code`(x.png)``) is no longer read as an image. Code is now replaced by whitespace instead of being removed, so the text on both sides is not joined.
+- Antigravity: Recent Sessions now report the worktree branch of a worktree session even when `agy` recorded the main checkout as the session directory.
+
+## [1.114.0] - 2026-11-21
+
+### Changed
+
+- Performance mode now keeps thinking for clients that enable it: `thinking` blocks stay in assistant messages and history, and `thinking_delta` streams are delivered through the normal batched delta queue instead of being dropped.
+- Performance mode now keeps assistant images: `ImageGeneration` tool calls are preserved alongside their results, and assistant messages that carry only markdown-embedded `images` are delivered with empty content instead of being removed. Other tool inputs, tool output bodies, incidental tool images and tool summaries are still stripped.
+
+## [1.113.2] - 2026-11-21
+
+### Fixed
+
+- Antigravity: normalize Windows file-URI pathname `cwd` values (e.g. `/D:/%E9%A1%B9%E7%9B%AE/demo` and `file://` URIs) returned by `agy acp` `session/list` into native Windows paths so Recent Sessions display, project-scoped filtering, and `resume_session` work properly on Windows (#358).
+
+## [1.113.1] - 2026-11-20
+
+### Fixed
+
+- Antigravity (preview): "Allow for session" now generalizes safe single shell commands by binary and subcommand prefix (matching `agy` CLI behavior while keeping compound shell syntax, wrappers, and destructive commands exact-match) and persists session grants across `session/load` resumes.
+- Antigravity (preview): flush buffered assistant thinking/text and wait for replay/async message drains before recording a new `user_input`, preventing prior agent output from appearing below newly sent messages.
+
+## [1.113.0] - 2026-11-20
+
+### Added
+
+- Opt-in `agent_activity` server message (and snapshot delivery on open/resync) carrying ephemeral mid-turn progress across Claude and Codex sessions: streaming tool JSON preparation hints (`content_block_start` / `input_json_delta`), tool execution elapsed seconds (`tool_progress`), classifier `task_summary` phrases, foreground/background subagent progress summaries (`agentProgressSummaries: true` / `system/task_progress`), redacted thinking token estimates (`system/thinking_tokens`), and Codex `item/mcpToolCall/progress` updates.
+- Opt-in `session_recap` server message and `past_history` `recap` entries surfacing Claude Code's Session Recap (`away_summary` in `.jsonl` transcripts and live frames, plus `/recap` command output).
+
+### Changed
+
+- Claude sessions request summarized thinking display (`--thinking-display=summarized`, and `{ type: "adaptive", display: "summarized" }` on Opus 4.7+) so adaptive thinking streams live `thinking_delta` progress instead of silent omitted blocks.
+- Codex sessions emit `assistant(tool_use)` immediately on `item/started` for `mcpToolCall` and `webSearch` items instead of waiting until `item/completed`.
+
+### Fixed
+
+- Claude parallel tool calls now emit all `tool_result` blocks from a multi-result `user` message instead of dropping results after the first.
+- Codex reasoning items no longer duplicate already-streamed `thinking_delta` text on `item/completed`, properly separate multi-part summaries (`summaryPartAdded`), and support string arrays in `item.summary`.
+
+## [1.112.0] - 2026-11-20
+
+### Added
+
+- Antigravity (preview): image generation through the `image-generator` subagent (Nano Banana) is surfaced as an `ImageGeneration` tool call, tracked as a background agent while running, and linked to the generated image card and gallery once the file is written.
+- Antigravity (preview): context compaction (`/compact` and automatic compaction detected from context usage drops) emits `context_compaction` boundaries and replays them when a conversation is resumed.
+- Antigravity (preview): full conversation transcripts (`get_session_transcript` / "View earlier messages") from the untrimmed session transcript or the stored Antigravity brain log on disk.
+- Antigravity (preview): recent session pinning, session link resolution (`resolve_session_link`), project/filter matching, and base64 image blocks in tool results.
+
+### Changed
+
+- Antigravity (preview): conversations remember their approval mode (including Bypass and the mode before Plan) across restarts, report context usage as soon as an idle session loads, and group worktree conversations under their main repository (falling back to the main repository path if the worktree was deleted).
+
+### Fixed
+
+- Antigravity (preview): large file edits compute minimal unified diffs in linear time instead of replacing the whole file past 2,000 lines, and plan reviews include the `ExitPlanMode` tool block so the plan card renders even without assistant prose.
+- Antigravity (preview): `session/load` populates history quietly before `session_created` instead of broadcasting every replayed message live, and trailing notifications before the first prompt no longer put a resumed session into a stuck running state.
+
+## [1.111.0] - 2026-11-20
+
+### Added
+
+- Antigravity (preview): timers and commands a turn leaves running are reported as background tasks, like those of Claude and Codex sessions.
+- Antigravity (preview): MCP tools are shown under their server and tool name instead of as a shell command, and "Always allow" covers the tool for the session whatever its arguments.
+
+### Changed
+
+- Antigravity (preview): the completion notification waits while the agent is expected to carry on by itself, and is sent once for the work instead of once per pause. That is while a timer is set, or for five minutes after a turn that left a command running.
+
+### Fixed
+
+- Antigravity (preview): a session no longer looks finished while the agent works. When a timer or a finished background command wakes the agent after its turn ended, the session runs again, returns to running after an approval, and reports the end of that turn.
+- Antigravity (preview): a timer that fires after its turn ended is no longer shown as a second tool call.
+
+## [1.110.0] - 2026-11-19
+
+### Added
+
+- Antigravity (preview) sessions now cover most of what Claude and Codex sessions do:
+  - Question forms: `ask_question` reaches the app as a form to answer.
+  - Plan review: a plan written in plan mode is offered for approval; approving returns to the earlier mode and proceeds.
+  - Model family and thinking level, chosen before the session starts or while it runs. The app can read the models, levels, modes and plan of the account without starting a conversation.
+  - New sessions start in Auto where the account has it, as the `agy` CLI does.
+  - "Always allow" for the same command or for file edits, kept by the Bridge for the session, and a Bypass mode in which the Bridge allows every request.
+  - Messages sent during a turn can be queued until it ends, or steered into it.
+  - Plan usage (5-hour and weekly) from `agy -p /usage`, read only when a client asks for usage and never with an API key.
+  - Context window usage, thinking tokens, duration and tool counts per turn.
+  - Extra directories, descriptions for slash commands, and familiar names for read, search and fetch tools.
+  - Conversations can be renamed, and resume on the model they last used.
+
+### Changed
+
+- Antigravity conversations join searched and project-path listings of recent sessions.
+
+### Fixed
+
+- A missing project folder is reported as such instead of as a missing Antigravity CLI.
+- The question notification no longer says "Claude" for other agents.
+
+## [1.109.0] - 2026-11-19
+
+### Added
+
+- Preview: Google Antigravity sessions through the Antigravity CLI (`agy acp`). When `agy` is installed on the Bridge machine, the app offers an Antigravity tab: start and resume conversations, approve file edits and commands, switch model and mode, attach images, and find Antigravity conversations in the recent list. Sessions use the Google login stored by `agy`, or a Gemini API key when `CCPOCKET_ANTIGRAVITY_API_KEY` is set; the Bridge never sends prompts of its own to Antigravity. Rewind, fork, message editing and usage display are not available for these sessions yet. See "Preview: Antigravity" in the README for setup, authentication and limits.
+- `doctor` lists the Antigravity CLI when it is installed.
+- `setup` keeps `CCPOCKET_ANTIGRAVITY_API_KEY` in the launchd / systemd service when it is set.
+
+## [1.108.1] - 2026-11-18
+
+### Fixed
+
+- Claude sessions now start with the Claude Code system prompt (the SDK's `claude_code` preset), so they follow the same instructions as the `claude` CLI. Until now they ran with an empty system prompt. Sessions use a few thousand more input tokens as a result, and a session started on an older Bridge may keep its previous prompt until it is compacted. ([#355](https://github.com/K9i-0/ccpocket/issues/355), reported by @hustneverland)
+
+## [1.108.0] - 2026-11-17
+
+### Removed
+
+- mDNS advertisement (`_ccpocket._tcp`). The app no longer discovers Bridges over mDNS, and advertising was already off on macOS. Connect with the QR code, a saved machine, a manual URL, or Tailscale. `--no-mdns` is still accepted and ignored, so existing commands and service definitions keep working; `BRIDGE_DISABLE_MDNS` no longer has any effect. The `bonjour-service` dependency is gone.
+
+### Changed
+
+- Updated `@anthropic-ai/claude-agent-sdk` to 0.3.325.
+- Updated `ws` to 8.23.0, which fixes a memory exhaustion issue where a peer flooding Ping frames could make the Bridge run out of memory.
+
+## [1.107.5] - 2026-11-17
+
+### Fixed
+
+- Session history is no longer empty when `sessions-index.json` still points at a transcript path that no longer exists (for example after the project moved). The Bridge now falls back to finding the transcript where it lives now. ([#345](https://github.com/K9i-0/ccpocket/pull/345) by @KuljeetSinghXDA)
+- Image paths in tool output are extracted as printed: a relative path such as `src/assets/logo.png` is no longer turned into `/assets/logo.png`, a Windows drive prefix (`C:/...`) stays attached, and directory names with non-ASCII letters no longer split the path. ([#346](https://github.com/K9i-0/ccpocket/pull/346) by @KuljeetSinghXDA)
+- Two quick project switches can no longer leave an older recent-projects list on disk; saves of `project-history.json` now run one at a time. ([#347](https://github.com/K9i-0/ccpocket/pull/347) by @KuljeetSinghXDA)
+
+## [1.107.4] - 2026-11-17
+
+### Fixed
+
+- The worktree list no longer includes worktrees from a sibling directory that only shares the `<project>-worktrees` prefix (for example `<project>-worktrees-legacy/`). ([#342](https://github.com/K9i-0/ccpocket/pull/342) by @KuljeetSinghXDA)
+- A 1.0 prompt history import that contains no usable prompt (an empty list or blank text only) now leaves the Bridge history and its revision unchanged instead of erasing it. ([#343](https://github.com/K9i-0/ccpocket/pull/343) by @KuljeetSinghXDA)
+- A prompt that was deleted and then restored or used again on another device is no longer kept deleted when that device's newer copy is merged through `sync_prompt_history`. Older copies and copies without a timestamp still keep the delete. ([#344](https://github.com/K9i-0/ccpocket/pull/344) by @KuljeetSinghXDA)
+
+## [1.107.3] - 2026-11-16
+
+### Fixed
+
+- Claude sessions now start on hosts that use Google Cloud Vertex AI (`CLAUDE_CODE_USE_VERTEX=1` in the environment or in the Claude Code user settings) without an Anthropic API key, the same way Amazon Bedrock hosts do. `ccpocket-bridge doctor` reports Vertex AI mode instead of checking the Anthropic login. ([#340](https://github.com/K9i-0/ccpocket/pull/340) by @KuljeetSinghXDA)
+- Markdown images whose alt text contains brackets (`![a [b] c](...)`) or whose path contains balanced or escaped parentheses (`Screenshot(1).png`) are now attached instead of being dropped. Windows paths keep their backslashes. ([#339](https://github.com/K9i-0/ccpocket/pull/339) by @KuljeetSinghXDA)
+- A Git remote that spells out the scheme's default port (for example `ssh://git@github.com:22/owner/repo.git`) now matches the same repository written without the port, so the session is attached to its project. Non-default ports still count as a different host. ([#341](https://github.com/K9i-0/ccpocket/pull/341) by @KuljeetSinghXDA)
+
+## [1.107.2] - 2026-11-16
+
+### Fixed
+
+- Auto-rename now uses the session name when the model wraps its answer in a Markdown code fence on separate lines (` ``` `, ` ```text `, or `~~~`), instead of keeping the old title. A name wrapped in a one-line fence keeps its first word. ([#336](https://github.com/K9i-0/ccpocket/pull/336) by @KuljeetSinghXDA)
+- On Windows, the allowed root directory itself is accepted when its letter casing differs from the configured path (for example `c:\users\...` vs `C:\Users\...`, or UNC share names). POSIX paths remain case-sensitive. ([#337](https://github.com/K9i-0/ccpocket/pull/337) by @KuljeetSinghXDA)
+- The branch list no longer includes a `(HEAD detached at ...)` entry when HEAD is detached, so it can no longer be selected as a branch to check out. ([#338](https://github.com/K9i-0/ccpocket/pull/338) by @KuljeetSinghXDA)
+
+## [1.107.1] - 2026-11-16
+
+### Fixed
+
+- Clearing a Claude session name no longer brings back an older name. A cleared title in the transcript is no longer replaced by an earlier title near the end of a large transcript or by a stale `sessions-index.json` name. ([#335](https://github.com/K9i-0/ccpocket/pull/335) by @KuljeetSinghXDA)
+- Windows drive paths (`C:\...`) and UNC paths (`\\server\share\...`) are now kept in the project history instead of being silently dropped. Removing a worktree path also removes its parent project entry, matching how it was added. ([#333](https://github.com/K9i-0/ccpocket/pull/333) by @KuljeetSinghXDA)
+- A value-taking CLI option followed directly by a known flag (for example `ccpocket-bridge --port --help`) no longer treats that flag as its value. Values that start with a hyphen, such as API keys, are still accepted. Text previews with a negative line limit now return empty content instead of the full text. ([#334](https://github.com/K9i-0/ccpocket/pull/334) by @KuljeetSinghXDA)
+
 ## [1.107.0] - 2026-11-16
 
 ### Added

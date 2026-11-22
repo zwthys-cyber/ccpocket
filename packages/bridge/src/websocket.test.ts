@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { WebSocket } from "ws";
 import { createHash } from "node:crypto";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -12,8 +13,11 @@ import {
 } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PinStore } from "./pin-store.js";
+import { SharedStateStore } from "./shared-state-store.js";
+import { AntigravityStore } from "./antigravity-store.js";
 import { resolvePlatformPath } from "./path-utils.js";
 import { MediaStore } from "./media-store.js";
 import { ImageStore } from "./image-store.js";
@@ -64,6 +68,10 @@ vi.mock("./finder-reveal.js", () => ({
 }));
 
 vi.mock("./sessions-index.js", () => ({
+  normalizeWorktreePath: (p: string) =>
+    p.match(/^(.+)-worktrees[\\/][^\\/]+$/)?.[1] ??
+    p.match(/^(.+)[\\/]\.claude[\\/]worktrees[\\/][^\\/]+$/)?.[1] ??
+    p,
   getSessionHistory: getSessionHistoryMock,
   getCodexSessionHistory: getCodexSessionHistoryMock,
   codexThreadToSessionHistory: codexThreadToSessionHistoryMock,
@@ -146,6 +154,11 @@ vi.mock("./session.js", () => ({
     }
 
     setAssistantImageResolver(): void {}
+    setAntigravityCompactionHandler(): void {}
+    setAntigravityPermissionGrantsHandler(): void {}
+    hasPendingMessages(): boolean {
+      return false;
+    }
 
     create(
       projectPath: string,
@@ -540,6 +553,7 @@ import {
   recentSessionsFiltersRequested,
 } from "./websocket.js";
 import { CodexProcess, CodexRpcError } from "./codex-process.js";
+import { AntigravityProcess } from "./antigravity-process.js";
 
 describe("downloadMimeType", () => {
   it("recognizes common deliverables and falls back safely", () => {
@@ -1253,6 +1267,490 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
         "recent_sessions_filters_v1",
       );
       bridge.close();
+    });
+
+    describe("Antigravity", () => {
+      function catalogOf(bridge: BridgeWebSocketServer): any {
+        const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+        (bridge as any).sendSessionList(ws);
+        return ws.send.mock.calls
+          .map((call: unknown[]) => JSON.parse(call[0] as string))
+          .find((message: any) => message.type === "session_list");
+      }
+
+      it("advertises antigravity_v1 only once the CLI is detected", async () => {
+        const absent = new BridgeWebSocketServer({ server: httpServer });
+        await (absent as any).refreshAntigravityAvailability();
+        expect(catalogOf(absent).protocolCapabilities).not.toContain(
+          "antigravity_v1",
+        );
+        absent.close();
+
+        const present = new BridgeWebSocketServer({
+          server: httpServer,
+          detectAntigravity: async () => true,
+        });
+        expect(catalogOf(present).protocolCapabilities).not.toContain(
+          "antigravity_v1",
+        );
+        await (present as any).refreshAntigravityAvailability();
+        expect(catalogOf(present).protocolCapabilities).toContain(
+          "antigravity_v1",
+        );
+        present.close();
+      });
+
+      it("merges Antigravity rows only for clients that ask for them", async () => {
+        const bridge = new BridgeWebSocketServer({
+          server: httpServer,
+          detectAntigravity: async () => true,
+        });
+        const internal = bridge as any;
+        await internal.refreshAntigravityAvailability();
+        const claude = {
+          sessionId: "c1",
+          provider: "claude",
+          modified: "2026-11-02T00:00:00Z",
+        };
+        const antigravity = [
+          { sessionId: "a2", provider: "antigravity", modified: "2026-11-03T00:00:00Z", projectPath: "/p" },
+          { sessionId: "a1", provider: "antigravity", modified: "2026-11-01T00:00:00Z", projectPath: "/p" },
+        ];
+        vi.spyOn(internal, "listRecentClaudeAndCodexSessions").mockResolvedValue({
+          sessions: [claude],
+          hasMore: true,
+        });
+        vi.spyOn(internal, "listRecentAntigravitySessions").mockResolvedValue(
+          antigravity,
+        );
+        const list = (msg: Record<string, unknown>) =>
+          internal.listRecentSessions({ type: "list_recent_sessions", ...msg });
+
+        // Older apps would resume these rows as Claude sessions.
+        expect(ids(await list({}))).toEqual(["c1"]);
+        const merged = await list({ includeAntigravity: true });
+        expect(ids(merged)).toEqual(["a2", "c1", "a1"]);
+        expect(merged.hasMore).toBe(true);
+        // Later pages and filtered listings page Claude/Codex rows only.
+        expect(ids(await list({ includeAntigravity: true, offset: 20 }))).toEqual(["c1"]);
+        expect(
+          ids(await list({ includeAntigravity: true, namedOnly: true })),
+        ).toEqual(["c1"]);
+        // Title searches and a project path are filters Antigravity can apply.
+        expect(
+          ids(await list({ includeAntigravity: true, searchQuery: "x" })),
+        ).toEqual(["a2", "c1", "a1"]);
+
+        const own = await list({ provider: "antigravity", limit: 1 });
+        expect(ids(own)).toEqual(["a2"]);
+        expect(own.hasMore).toBe(true);
+        expect(
+          ids(await list({ provider: "antigravity", limit: 1, offset: 1 })),
+        ).toEqual(["a1"]);
+        bridge.close();
+      });
+
+      it("advertises antigravity_v2 and serves the catalog without a session", async () => {
+        const fetchAntigravityCatalog = vi.fn(async () => ({
+          models: [{ id: "gemini-3.8-flash-high", name: "Flash (High)" }],
+          modelOptions: [],
+          permissionModes: ["default" as const],
+          authMode: "login" as const,
+          tier: { name: "Google AI Ultra" },
+        }));
+        const dir = mkdtempSync(join(tmpdir(), "ccpocket-agy-"));
+        const bridge = new BridgeWebSocketServer({
+          server: httpServer,
+          detectAntigravity: async () => true,
+          fetchAntigravityCatalog,
+          antigravityStore: new AntigravityStore(dir),
+        });
+        await (bridge as any).refreshAntigravityAvailability();
+        expect(catalogOf(bridge).protocolCapabilities).toContain("antigravity_v2");
+        const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+        const ask = () =>
+          (bridge as any).handleClientMessage(
+            { type: "get_antigravity_catalog", requestId: "r1" },
+            ws,
+          );
+        await ask();
+        await ask();
+        await vi.waitFor(() => expect(ws.send).toHaveBeenCalledTimes(2));
+        expect(JSON.parse(ws.send.mock.calls[0][0])).toMatchObject({
+          type: "antigravity_catalog",
+          requestId: "r1",
+          catalog: { tier: { name: "Google AI Ultra" } },
+        });
+        // One helper process answers both requests.
+        expect(fetchAntigravityCatalog).toHaveBeenCalledTimes(1);
+        bridge.close();
+
+        // Each read leaves an empty conversation in the agy profile, so a
+        // restarted Bridge reuses the stored catalog instead of reading again.
+        await vi.waitFor(() =>
+          expect(existsSync(join(dir, "antigravity-sessions.json"))).toBe(true),
+        );
+        const store = new AntigravityStore(dir);
+        await store.init();
+        const restarted = new BridgeWebSocketServer({
+          server: httpServer,
+          detectAntigravity: async () => true,
+          fetchAntigravityCatalog,
+          antigravityStore: store,
+        });
+        await expect((restarted as any).antigravityCatalog()).resolves.toMatchObject({
+          tier: { name: "Google AI Ultra" },
+        });
+        expect(fetchAntigravityCatalog).toHaveBeenCalledTimes(1);
+        restarted.close();
+        rmSync(dir, { recursive: true, force: true });
+      });
+
+      it("reads Antigravity usage when asked and reuses a recent reading", async () => {
+        const fetchAntigravityUsage = vi.fn(async () => [
+          {
+            provider: "antigravity" as const,
+            label: "Gemini Models",
+            fiveHour: { utilization: 1, resetsAt: "2026-11-19T17:30:14Z" },
+            sevenDay: null,
+          },
+        ]);
+        const bridge = new BridgeWebSocketServer({
+          server: httpServer,
+          detectAntigravity: async () => true,
+          fetchAntigravityUsage,
+          antigravityConfig: { bin: "agy", requireApiKey: false },
+        });
+        const internal = bridge as any;
+        await internal.refreshAntigravityAvailability();
+
+        // Clients asking together share one read.
+        const [first, second] = await Promise.all([
+          internal.antigravityUsage(false),
+          internal.antigravityUsage(false),
+        ]);
+        expect(first).toHaveLength(1);
+        expect(second).toHaveLength(1);
+        // Later requests, and refreshes within a minute, reuse the reading.
+        expect(await internal.antigravityUsage(true)).toHaveLength(1);
+        expect(fetchAntigravityUsage).toHaveBeenCalledTimes(1);
+
+        // A tapped refresh reads again after a minute; other requests wait
+        // fifteen.
+        internal.antigravityUsageCache.at = Date.now() - 2 * 60_000;
+        await internal.antigravityUsage(false);
+        expect(fetchAntigravityUsage).toHaveBeenCalledTimes(1);
+        await internal.antigravityUsage(true);
+        expect(fetchAntigravityUsage).toHaveBeenCalledTimes(2);
+        bridge.close();
+      });
+
+      it("keeps the name of a recent Antigravity conversation", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "ccpocket-agy-"));
+        const bridge = new BridgeWebSocketServer({
+          server: httpServer,
+          detectAntigravity: async () => true,
+          antigravityStore: new AntigravityStore(dir),
+        });
+        const internal = bridge as any;
+        await internal.refreshAntigravityAvailability();
+        internal.antigravitySessionsCache = {
+          at: Date.now(),
+          entries: Promise.resolve([
+            { sessionId: "a1", projectPath: "/p", title: "agy title" },
+          ]),
+        };
+        const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+        await internal.handleClientMessage(
+          {
+            type: "rename_session",
+            sessionId: "a1",
+            name: "My name",
+            provider: "antigravity",
+            providerSessionId: "a1",
+            projectPath: "/p",
+          },
+          ws,
+        );
+        await vi.waitFor(() =>
+          expect(
+            ws.send.mock.calls
+              .map((call: unknown[]) => JSON.parse(call[0] as string))
+              .find((message: any) => message.type === "rename_result"),
+          ).toMatchObject({ success: true, name: "My name" }),
+        );
+        const rows = await internal.listRecentAntigravitySessions({
+          type: "list_recent_sessions",
+        });
+        expect(rows[0]).toMatchObject({ sessionId: "a1", name: "My name" });
+        bridge.close();
+        rmSync(dir, { recursive: true, force: true });
+      });
+
+      it("lists nothing for Antigravity while the CLI is unavailable", async () => {
+        const bridge = new BridgeWebSocketServer({ server: httpServer });
+        expect(
+          await (bridge as any).listRecentAntigravitySessions({
+            type: "list_recent_sessions",
+          }),
+        ).toEqual([]);
+        bridge.close();
+      });
+
+      it("supports namedOnly, date filters, pinning, and resolve_session_link for Antigravity", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "ccpocket-agy-filter-"));
+        const store = new AntigravityStore(dir);
+        await store.setName("a2", "Pinned Named");
+        await store.setPermissionMode("a2", "plan", "auto");
+        const bridge = new BridgeWebSocketServer({
+          server: httpServer,
+          detectAntigravity: async () => true,
+          antigravityStore: store,
+        });
+        const internal = bridge as any;
+        await internal.refreshAntigravityAvailability();
+        internal.antigravitySessionsCache = {
+          at: Date.now(),
+          entries: Promise.resolve([
+            { sessionId: "a2", projectPath: "/p", title: "Title 2", updatedAt: "2026-11-10T00:00:00Z" },
+            { sessionId: "a1", projectPath: "/p", title: "Title 1", updatedAt: "2026-11-01T00:00:00Z" },
+          ]),
+        };
+
+        // namedOnly includes named Antigravity session
+        const namedOnly = await internal.listRecentSessions({
+          type: "list_recent_sessions",
+          provider: "antigravity",
+          namedOnly: true,
+        });
+        expect(ids(namedOnly)).toEqual(["a2"]);
+        expect(namedOnly.sessions[0]).toMatchObject({
+          sessionId: "a2",
+          name: "Pinned Named",
+          permissionMode: "plan",
+        });
+
+        // Date filter
+        const dated = await internal.listRecentSessions({
+          type: "list_recent_sessions",
+          provider: "antigravity",
+          modifiedAfter: "2026-11-05T00:00:00Z",
+        });
+        expect(ids(dated)).toEqual(["a2"]);
+
+        // Pinned sessions & pinnedOnly
+        const withPinned = await internal.listRecentSessions({
+          type: "list_recent_sessions",
+          provider: "antigravity",
+          pinnedSessions: [{ provider: "antigravity", sessionId: "a1" }],
+        });
+        expect(withPinned.pinnedSessions?.map((s: any) => s.sessionId)).toEqual(["a1"]);
+
+        const pinnedOnly = await internal.listRecentSessions({
+          type: "list_recent_sessions",
+          provider: "antigravity",
+          pinnedSessions: [{ provider: "antigravity", sessionId: "a1" }],
+          pinnedOnly: true,
+        });
+        expect(ids(pinnedOnly)).toEqual(["a1"]);
+
+        // resolve_session_link for Antigravity
+        const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+        await internal.handleClientMessage(
+          {
+            type: "resolve_session_link",
+            requestId: "req-agy-link",
+            sessionId: "a2",
+            provider: "antigravity",
+          },
+          ws,
+        );
+        const linkMsg = ws.send.mock.calls
+          .map((call: unknown[]) => JSON.parse(call[0] as string))
+          .find((m: any) => m.type === "session_link_resolution");
+        expect(linkMsg).toMatchObject({
+          requestId: "req-agy-link",
+          sourceSessionId: "a2",
+          status: "recent",
+          provider: "antigravity",
+          recentSession: { sessionId: "a2", name: "Pinned Named" },
+        });
+
+        bridge.close();
+        rmSync(dir, { recursive: true, force: true });
+      });
+
+      it("preserves default auto on start, persists/restores mode & worktree on resume, and serves Antigravity transcripts & cached commands", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "ccpocket-agy-flow-"));
+        const worktreeDir = mkdtempSync(join(tmpdir(), "ccpocket-agy-wt-"));
+        const store = new AntigravityStore(dir);
+        await store.setModel("conv-r1", "gemini-3.8-flash-high");
+        await store.setPermissionMode("conv-r1", "plan", "acceptEdits");
+        await store.addCompaction("conv-r1", {
+          afterUserTurns: 1,
+          id: "cmp-r1",
+          timestamp: "2026-11-20T00:00:00Z",
+          trigger: "manual",
+        });
+
+        const bridge = new BridgeWebSocketServer({
+          server: httpServer,
+          detectAntigravity: async () => true,
+          antigravityStore: store,
+        });
+        const internal = bridge as any;
+        await internal.refreshAntigravityAvailability();
+        vi.spyOn(internal.sessionManager, "getCachedCommands").mockReturnValue({
+          slashCommands: ["compact", "plan"],
+          slashCommandDescriptions: { compact: "Compact conversation" },
+          skills: [],
+          apps: [],
+          plugins: [],
+        });
+        const createSpy = vi.spyOn(internal.sessionManager, "create");
+
+        // 1. Start without mode fields -> passes permissionMode: undefined (allows default auto)
+        const ws = { readyState: OPEN_STATE, send: vi.fn() } as any;
+        await internal.handleClientMessage(
+          { type: "start", projectPath: dir, provider: "antigravity" },
+          ws,
+        );
+        expect(createSpy).toHaveBeenCalled();
+        const startCall = createSpy.mock.calls[0] as unknown[];
+        expect((startCall[7] as any).permissionMode).toBeUndefined();
+        let createdMsg: any;
+        await vi.waitFor(() => {
+          createdMsg = ws.send.mock.calls
+            .map((call: unknown[]) => JSON.parse(call[0] as string))
+            .find((m: any) => m.type === "system" && m.subtype === "session_created");
+          expect(createdMsg).toBeDefined();
+        });
+        expect(createdMsg).toMatchObject({
+          provider: "antigravity",
+          slashCommands: ["compact", "plan"],
+          slashCommandDescriptions: { compact: "Compact conversation" },
+        });
+
+        // 2. broadcastSessionMessage persists permissionMode & modeBeforePlan
+        const createdSession = internal.sessionManager.get(createdMsg.sessionId);
+        createdSession.claudeSessionId = "conv-live";
+        createdSession.provider = "antigravity";
+        internal.broadcastSessionMessage(createdMsg.sessionId, {
+          type: "system",
+          subtype: "init",
+          provider: "antigravity",
+          sessionId: "conv-live",
+          permissionMode: "auto",
+          model: "gemini-3.8-flash-high",
+        });
+        internal.broadcastSessionMessage(createdMsg.sessionId, {
+          type: "system",
+          subtype: "antigravity_settings",
+          provider: "antigravity",
+          sessionId: "conv-live",
+          permissionMode: "plan",
+          model: "gemini-3.8-flash-high",
+        });
+        await vi.waitFor(() =>
+          expect(store.get("conv-live")).toMatchObject({
+            permissionMode: "plan",
+            modeBeforePlan: "auto",
+            model: "gemini-3.8-flash-high",
+          }),
+        );
+
+        // 3. sendCachedCommands includes provider and slashCommandDescriptions
+        ws.send.mockClear();
+        internal.sendCachedCommands(ws, createdMsg.sessionId, createdSession);
+        const cachedMsg = JSON.parse(ws.send.mock.calls[0][0]);
+        expect(cachedMsg).toMatchObject({
+          type: "system",
+          subtype: "supported_commands",
+          provider: "antigravity",
+          slashCommands: ["compact", "plan"],
+          slashCommandDescriptions: { compact: "Compact conversation" },
+        });
+
+        // 4. get_session_transcript returns provider: "antigravity" with untrimmed transcript
+        createdSession.antigravityTranscript = Array.from({ length: 120 }, (_, i) => ({
+          role: "user",
+          content: [{ type: "text", text: `turn ${i}` }],
+        }));
+        ws.send.mockClear();
+        await internal.handleClientMessage(
+          {
+            type: "get_session_transcript",
+            requestId: "tr-agy",
+            sessionId: createdMsg.sessionId,
+            limit: 50,
+          },
+          ws,
+        );
+        const transcriptMsg = ws.send.mock.calls
+          .map((call: unknown[]) => JSON.parse(call[0] as string))
+          .find((m: any) => m.type === "session_transcript");
+        expect(transcriptMsg).toMatchObject({
+          requestId: "tr-agy",
+          provider: "antigravity",
+          total: 120,
+          startIndex: 70,
+          endIndex: 120,
+        });
+        expect(transcriptMsg.messages).toHaveLength(50);
+
+        // 5. resume_session restores remembered permissionMode, modeBeforePlan, compactions, and worktree
+        vi.spyOn(internal.worktreeStore, "get").mockReturnValue({
+          sessionId: "conv-r1",
+          worktreePath: worktreeDir,
+          worktreeBranch: "feat/agy",
+          projectPath: dir,
+          createdAt: "2026-11-20T00:00:00Z",
+        });
+        createSpy.mockClear();
+        await internal.handleClientMessage(
+          {
+            type: "resume_session",
+            sessionId: "conv-r1",
+            projectPath: dir,
+            provider: "antigravity",
+          },
+          ws,
+        );
+        expect(createSpy).toHaveBeenCalledTimes(1);
+        const resumeCall = createSpy.mock.calls[0] as unknown[];
+        const resumeWtOpts = resumeCall[3];
+        const resumeAgyOpts = resumeCall[7];
+        expect(resumeAgyOpts).toMatchObject({
+          sessionId: "conv-r1",
+          model: "gemini-3.8-flash-high",
+          permissionMode: "plan",
+          modeBeforePlan: "acceptEdits",
+          compactions: [{ afterUserTurns: 1, id: "cmp-r1", trigger: "manual" }],
+        });
+        expect(resumeWtOpts).toEqual({
+          existingWorktreePath: worktreeDir,
+          worktreeBranch: "feat/agy",
+        });
+
+        // 6. resume_session falls back to main repo path when worktree directory was deleted
+        vi.spyOn(internal.worktreeStore, "get").mockReturnValue(undefined);
+        createSpy.mockClear();
+        await internal.handleClientMessage(
+          {
+            type: "resume_session",
+            sessionId: "conv-deleted-wt",
+            projectPath: join(dir, ".claude", "worktrees", "deleted-wt"),
+            provider: "antigravity",
+          },
+          ws,
+        );
+        expect(createSpy).toHaveBeenCalledTimes(1);
+        expect(createSpy.mock.calls[0][0]).toBe(dir);
+
+        bridge.close();
+        rmSync(dir, { recursive: true, force: true });
+        rmSync(worktreeDir, { recursive: true, force: true });
+      });
     });
 
     it("ORs projectFilters by path and project id", async () => {
@@ -3018,6 +3516,210 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     expect(ws.send).toHaveBeenCalledWith(JSON.stringify(msg));
 
     bridge.close();
+  });
+
+  it("shares pins between clients and seeds them from the first client", async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "ccpocket-pins-ws-"));
+    const bridge = new BridgeWebSocketServer({
+      server: httpServer,
+      pinStore: new PinStore(resolve(dir, "pins.json")),
+    });
+    vi.spyOn(bridge as any, "refreshConnectionMetadata").mockImplementation(() => {});
+    httpServer.listen(0, "127.0.0.1");
+    await once(httpServer, "listening");
+    const port = (httpServer.address() as { port: number }).port;
+    async function connect(supportedServerMessages: string[]) {
+      const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+      const pins: any[] = [];
+      socket.on("message", (data) => {
+        const message = JSON.parse(data.toString());
+        if (message.type === "pins") pins.push(message);
+      });
+      await once(socket, "open");
+      socket.send(
+        JSON.stringify({
+          type: "client_capabilities",
+          protocolVersion: 1,
+          minimumProtocolVersion: 1,
+          supportedServerMessages,
+        }),
+      );
+      return { socket, pins };
+    }
+    const pin = (sessionId: string) => ({
+      provider: "claude",
+      sessionId,
+      projectPath: "/p",
+    });
+    try {
+      const first = await connect(["pins"]);
+      const second = await connect(["pins"]);
+      const legacy = await connect([]);
+
+      // Nothing stored and nothing offered: an empty answer, still unseeded.
+      second.socket.send(JSON.stringify({ type: "get_pins" }));
+      await vi.waitFor(() => expect(second.pins).toHaveLength(1));
+      expect(second.pins[0]).toMatchObject({ sessions: [], projects: [] });
+
+      // The first non-empty seed becomes the Bridge's pins for everyone.
+      first.socket.send(
+        JSON.stringify({
+          type: "get_pins",
+          seed: { sessions: [pin("a")], projects: ["/p"] },
+        }),
+      );
+      await vi.waitFor(() => expect(second.pins).toHaveLength(2));
+      expect(first.pins).toEqual([
+        { type: "pins", sessions: [pin("a")], projects: ["/p"] },
+      ]);
+      expect(second.pins[1]).toEqual(first.pins[0]);
+
+      // A later seed is ignored and answered only to the sender.
+      second.socket.send(
+        JSON.stringify({ type: "get_pins", seed: { sessions: [pin("b")] } }),
+      );
+      await vi.waitFor(() => expect(second.pins).toHaveLength(3));
+      expect(second.pins[2].sessions).toEqual([pin("a")]);
+      expect(first.pins).toHaveLength(1);
+
+      // Changes reach every opted-in client, including the sender.
+      second.socket.send(
+        JSON.stringify({ type: "set_session_pin", ...pin("b"), pinned: true }),
+      );
+      second.socket.send(
+        JSON.stringify({ type: "set_project_pin", projectPath: "/p", pinned: false }),
+      );
+      await vi.waitFor(() => expect(first.pins).toHaveLength(3));
+      await vi.waitFor(() => expect(second.pins).toHaveLength(5));
+      expect(first.pins[2]).toEqual({
+        type: "pins",
+        sessions: [pin("a"), pin("b")],
+        projects: [],
+      });
+      expect(legacy.pins).toEqual([]);
+    } finally {
+      for (const socket of (bridge as any).wss.clients) socket.terminate();
+      bridge.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("shares state between clients, echoes writes and adopts seeds", async () => {
+    const dir = mkdtempSync(resolve(tmpdir(), "ccpocket-shared-state-ws-"));
+    const bridge = new BridgeWebSocketServer({
+      server: httpServer,
+      sharedStateStore: new SharedStateStore(resolve(dir, "shared-state.json")),
+    });
+    vi.spyOn(bridge as any, "refreshConnectionMetadata").mockImplementation(() => {});
+    httpServer.listen(0, "127.0.0.1");
+    await once(httpServer, "listening");
+    const port = (httpServer.address() as { port: number }).port;
+    const types = ["shared_state", "shared_state_changed", "shared_state_seeded"];
+    async function connect(supportedServerMessages: string[]) {
+      const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+      const received: any[] = [];
+      const capabilities: string[][] = [];
+      socket.on("message", (data) => {
+        const message = JSON.parse(data.toString());
+        if (types.includes(message.type)) received.push(message);
+        if (message.type === "session_list") capabilities.push(message.protocolCapabilities);
+      });
+      await once(socket, "open");
+      socket.send(
+        JSON.stringify({
+          type: "client_capabilities",
+          protocolVersion: 1,
+          minimumProtocolVersion: 1,
+          supportedServerMessages,
+          performanceMode: true,
+        }),
+      );
+      return { socket, received, capabilities };
+    }
+    try {
+      const first = await connect(types);
+      const second = await connect(types);
+      const legacy = await connect([]);
+      await vi.waitFor(() =>
+        expect(first.capabilities.at(-1)).toContain("shared_state_v1"),
+      );
+
+      first.socket.send(JSON.stringify({ type: "get_shared_state" }));
+      await vi.waitFor(() => expect(first.received).toHaveLength(1));
+      const storeId = first.received[0].storeId;
+      expect(first.received[0]).toEqual({ type: "shared_state", storeId, entries: {} });
+
+      // A write is echoed to every client with its mutation id.
+      first.socket.send(
+        JSON.stringify({
+          type: "set_shared_state",
+          key: "auto_rename.claude",
+          value: true,
+          mutationId: "m1",
+        }),
+      );
+      await vi.waitFor(() => expect(second.received).toHaveLength(1));
+      const change = {
+        type: "shared_state_changed",
+        key: "auto_rename.claude",
+        value: true,
+        mutationId: "m1",
+      };
+      expect(second.received[0]).toEqual(change);
+      expect(first.received[1]).toEqual(change);
+
+      // max: the Bridge answers with the value it kept.
+      second.socket.send(
+        JSON.stringify({ type: "set_shared_state", key: "seen_at/s", value: "2", mode: "max" }),
+      );
+      second.socket.send(
+        JSON.stringify({ type: "set_shared_state", key: "seen_at/s", value: "1", mode: "max", mutationId: "m2" }),
+      );
+      await vi.waitFor(() => expect(first.received).toHaveLength(4));
+      expect(first.received[3]).toEqual({
+        type: "shared_state_changed",
+        key: "seen_at/s",
+        value: "2",
+        mutationId: "m2",
+      });
+
+      // A seed adds what is missing, tells everyone, then confirms.
+      second.socket.send(
+        JSON.stringify({
+          type: "seed_shared_state",
+          entries: { "auto_rename.claude": false, new_project_parent: "/work" },
+        }),
+      );
+      await vi.waitFor(() => expect(second.received.at(-1)?.type).toBe("shared_state_seeded"));
+      expect(second.received.at(-1)).toEqual({
+        type: "shared_state_seeded",
+        storeId,
+        adopted: ["new_project_parent"],
+      });
+      await vi.waitFor(() => expect(first.received.at(-1)?.type).toBe("shared_state"));
+      expect(first.received.at(-1).entries).toEqual({
+        "auto_rename.claude": true,
+        "seen_at/s": "2",
+        new_project_parent: "/work",
+      });
+
+      // Deleting is a write of null.
+      first.socket.send(
+        JSON.stringify({ type: "set_shared_state", key: "new_project_parent", value: null }),
+      );
+      await vi.waitFor(() =>
+        expect(second.received.at(-1)).toEqual({
+          type: "shared_state_changed",
+          key: "new_project_parent",
+          value: null,
+        }),
+      );
+      expect(legacy.received).toEqual([]);
+    } finally {
+      for (const socket of (bridge as any).wss.clients) socket.terminate();
+      bridge.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("limits file list payloads and reports truncation", async () => {
@@ -4875,6 +5577,68 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       messages: [{ seq: second.seq, message: { type: "status", status: "idle" } }],
       status: "idle",
     });
+
+    bridge.close();
+  });
+
+  it("re-sends cached commands with get_history_delta once init has left the history", async () => {
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const ws = {
+      readyState: OPEN_STATE,
+      send: vi.fn(),
+    } as any;
+
+    await (bridge as any).handleClientMessage(
+      {
+        type: "start",
+        projectPath: "/tmp/project-a",
+        provider: "claude",
+      },
+      ws,
+    );
+    await Promise.resolve();
+
+    const created = ws.send.mock.calls
+      .map((c: unknown[]) => JSON.parse(c[0] as string))
+      .find((m: any) => m.type === "system" && m.subtype === "session_created");
+    const sessionId = created.sessionId as string;
+    const internal = bridge as any;
+    const session = internal.sessionManager.get(sessionId);
+    vi.spyOn(internal.sessionManager, "getCachedCommands").mockReturnValue({
+      slashCommands: ["compact", "swarm"],
+      slashCommandDescriptions: { swarm: "Run a swarm" },
+      skills: [],
+      apps: [],
+      plugins: [],
+    });
+    let last = { seq: 0 };
+    for (let i = 0; i < 120; i++) {
+      last = internal.sessionManager.appendHistory(sessionId, {
+        type: "status",
+        status: i % 2 === 0 ? "running" : "idle",
+      });
+    }
+    expect(session.history).toHaveLength(100);
+
+    for (const sinceSeq of [0, last.seq]) {
+      ws.send.mockClear();
+      await internal.handleClientMessage(
+        { type: "get_history_delta", sessionId, sinceSeq },
+        ws,
+      );
+      const sent = ws.send.mock.calls.map((c: unknown[]) =>
+        JSON.parse(c[0] as string),
+      );
+      expect(
+        sent.find(
+          (m: any) => m.type === "system" && m.subtype === "supported_commands",
+        ),
+      ).toMatchObject({
+        sessionId,
+        slashCommands: ["compact", "swarm"],
+        slashCommandDescriptions: { swarm: "Run a swarm" },
+      });
+    }
 
     bridge.close();
   });
@@ -8768,6 +9532,9 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     } as any;
     (bridge as any).codexAutoReviewDisabled = true;
     (bridge as any).codexAutoReviewPolicyLoaded = true;
+    // The policy is set by hand above. Starting a session reloads it in the
+    // background, and the mock would report it as not disabled.
+    vi.spyOn(bridge as any, "refreshCodexMetadata").mockResolvedValue(undefined);
 
     await (bridge as any).handleClientMessage(
       {
@@ -10527,6 +11294,62 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
         eventType: "session_completed",
         body: "still waiting",
       });
+      bridge.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("holds Antigravity completion pushes while the agent is expected to carry on", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn(async () => new Response("", { status: 200 }));
+      globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+      const bridge = new BridgeWebSocketServer({ server: httpServer, firebaseAuth: {
+        uid: "bridge-test", getIdToken: vi.fn(async () => "mock-token"),
+        initialize: vi.fn(async () => {}),
+      } as any });
+      (bridge as any).tokenLocales.set("token-1", "en");
+      let expectsFollowUp = true;
+      const process = Object.create(AntigravityProcess.prototype);
+      Object.defineProperty(process, "expectsFollowUp", { get: () => expectsFollowUp });
+      const tasks = [{ taskId: "t1", taskType: "antigravity_terminal", description: "flutter test" }];
+      const session: Record<string, unknown> = {
+        id: "s-1", provider: "antigravity", status: "idle", process, backgroundTasks: tasks,
+      };
+      vi.spyOn((bridge as any).sessionManager, "get").mockImplementation(
+        (id: unknown) => (id === "s-1" ? session : undefined),
+      );
+      const send = (msg: Record<string, unknown>) =>
+        (bridge as any).broadcastSessionMessage("s-1", msg);
+
+      // A pause: the tests run in the background and the agent will return.
+      send({ type: "result", subtype: "success", result: "running the tests" });
+      send({ type: "status", status: "idle" });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      // The agent woke up and finished with nothing left open.
+      session.status = "running";
+      send({ type: "status", status: "running" });
+      expectsFollowUp = false;
+      session.status = "idle";
+      send({ type: "result", subtype: "success", result: "all done" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+      expect(JSON.parse(String(init.body))).toMatchObject({ body: "all done" });
+
+      // A command that never ends: the wait runs out and the pause is reported.
+      expectsFollowUp = true;
+      send({ type: "result", subtype: "success", result: "server started" });
+      send({ type: "status", status: "idle" });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expectsFollowUp = false;
+      send({ type: "background_tasks", tasks });
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
       bridge.close();
     } finally {
       vi.useRealTimers();
@@ -13154,13 +13977,19 @@ describe("performance mode delivery", () => {
       expect(JSON.parse(performance.send.mock.calls[0][0])).toMatchObject({ filtered: true, fromSeq: 1, toSeq: 2, messages: [{ seq: 2, message: { content: "" } }] });
       internal.send(performance, { ...history, sessionId: "full" });
       expect(JSON.parse(performance.send.mock.calls[1][0]).messages).toEqual(history.messages);
-      // Thinking batches queued before a mode switch are filtered when flushed.
-      internal.queueDeltaForClient(performance, "s1", "thinking_delta", internal.splitDeltaText("SECRET"));
+      // Thinking deltas remain delivered while omitted tool events emit throttled session_activity.
+      internal.queueDeltaForClient(performance, "s1", "thinking_delta", internal.splitDeltaText("STEP"));
       internal.flushClientDeltaBatch(performance, "s1");
-      const activity = JSON.parse(performance.send.mock.calls[2][0]);
+      expect(JSON.parse(performance.send.mock.calls[2][0])).toEqual({
+        type: "thinking_delta",
+        text: "STEP",
+        sessionId: "s1",
+      });
+      internal.send(performance, { type: "tool_use_summary", summary: "many tools", sessionId: "s1" });
+      const activity = JSON.parse(performance.send.mock.calls[3][0]);
       expect(activity.type).toBe("session_activity");
-      internal.send(performance, { type: "thinking_delta", text: "SECRET2", sessionId: "s1" });
-      expect(performance.send.mock.calls).toHaveLength(3);
+      internal.send(performance, { type: "tool_use_summary", summary: "throttled", sessionId: "s1" });
+      expect(performance.send.mock.calls).toHaveLength(4);
       await internal.handleClientMessage({ type: "client_capabilities", performanceMode: false, deliveryRevision: 2 }, performance);
       internal.send(performance, history);
       expect(JSON.parse(performance.send.mock.calls.at(-1)![0])).toEqual(history);

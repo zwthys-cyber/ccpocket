@@ -162,6 +162,7 @@ describe("doctor checks", () => {
       vi.stubEnv("ANTHROPIC_API_KEY", "");
       vi.stubEnv("ANTHROPIC_AUTH_TOKEN", "");
       vi.stubEnv("CLAUDE_CODE_USE_BEDROCK", "");
+      vi.stubEnv("CLAUDE_CODE_USE_VERTEX", "");
       vi.stubEnv("AWS_REGION", "");
     });
 
@@ -169,11 +170,29 @@ describe("doctor checks", () => {
       vi.unstubAllEnvs();
     });
 
+    it("lists the optional Antigravity CLI only when it is installed", async () => {
+      mockExecSync.mockImplementation((cmd: string) => {
+        if (cmd === "claude --version") return "1.0.23";
+        if (cmd === "claude auth status") return "Logged in";
+        if (cmd === "agy --version") return "1.5.12";
+        throw new Error("not found");
+      });
+      const result = await checkCliProviders();
+      expect(result.message).toBe("2 of 3 available");
+      expect(result.providers.at(-1)).toMatchObject({
+        name: "Antigravity CLI",
+        installed: true,
+        version: "1.5.12",
+        authenticated: true,
+      });
+    });
+
     it("passes when both CLIs are installed and authenticated", async () => {
       mockExecSync.mockImplementation((cmd: string) => {
         if (cmd === "claude --version") return "1.0.23";
         if (cmd === "claude auth status") return "Logged in";
         if (cmd === "codex --version") return "0.104.0";
+        if (cmd === "agy --version") throw new Error("not found");
         return "";
       });
       const originalEnv = process.env.OPENAI_API_KEY;
@@ -298,6 +317,30 @@ describe("doctor checks", () => {
       expect(claude?.remediation).toBeUndefined();
       // Bedrock authenticates through AWS, so doctor must not probe Claude
       // Code's Anthropic login or call AWS to verify credentials.
+      expect(mockExecSync).not.toHaveBeenCalledWith(
+        "claude auth status",
+        expect.anything(),
+      );
+    });
+
+    it("reports Vertex AI mode without asking for Anthropic credentials", async () => {
+      vi.stubEnv("BRIDGE_ALLOW_CLAUDE_OAUTH", "");
+      vi.stubEnv("CLAUDE_CODE_USE_VERTEX", "1");
+      mockExecSync.mockImplementation((cmd: string) => {
+        if (cmd === "claude --version") return "2.1.250";
+        throw new Error("command not found");
+      });
+
+      const result = await checkCliProviders();
+      const claude = result.providers.find(
+        (provider: ProviderResult) => provider.name === "Claude Code CLI",
+      );
+
+      expect(result.status).toBe("pass");
+      expect(claude?.authenticated).toBe(true);
+      expect(claude?.authMessage).toContain("Google Vertex AI");
+      expect(claude?.authMessage).toContain("not verified");
+      expect(claude?.remediation).toBeUndefined();
       expect(mockExecSync).not.toHaveBeenCalledWith(
         "claude auth status",
         expect.anything(),

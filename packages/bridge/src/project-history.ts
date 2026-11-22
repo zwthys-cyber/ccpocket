@@ -8,16 +8,26 @@ const MAX_PROJECTS = 20;
 
 /** Minimum path depth to be considered a valid project path (e.g. /Users/name/project = 3). */
 const MIN_PATH_SEGMENTS = 3;
+const WINDOWS_DRIVE_PATH_RE = /^[A-Za-z]:[\\/]/;
+const WINDOWS_UNC_PATH_RE = /^\\\\[^\\/]+[\\/][^\\/]+/;
 
 function isValidProjectPath(path: string): boolean {
-  if (!path.startsWith("/")) return false;
-  const segments = path.split("/").filter(Boolean);
-  return segments.length >= MIN_PATH_SEGMENTS;
+  if (path.startsWith("/")) {
+    const segments = path.split("/").filter(Boolean);
+    return segments.length >= MIN_PATH_SEGMENTS;
+  }
+  if (WINDOWS_DRIVE_PATH_RE.test(path) || WINDOWS_UNC_PATH_RE.test(path)) {
+    const segments = path.split(/[\\/]+/).filter(Boolean);
+    return segments.length >= MIN_PATH_SEGMENTS;
+  }
+  return false;
 }
 
 export class ProjectHistory {
   private projects: string[] = [];
   private readonly filePath: string;
+  /** Serializes index writes so concurrent saves never interleave. */
+  private saveChain: Promise<void> = Promise.resolve();
 
   constructor(filePath?: string) {
     this.filePath = filePath ?? DEFAULT_HISTORY_FILE;
@@ -67,13 +77,24 @@ export class ProjectHistory {
   }
 
   removeProject(path: string): void {
-    this.projects = this.projects.filter((p) => p !== path);
+    const normalized = normalizeWorktreePath(path);
+    this.projects = this.projects.filter(
+      (p) => p !== path && p !== normalized,
+    );
     this.saveIndex().catch((err) => {
       console.error("[project-history] Failed to save:", err);
     });
   }
 
-  private async saveIndex(): Promise<void> {
-    await writeFile(this.filePath, JSON.stringify(this.projects, null, 2), "utf-8");
+  private saveIndex(): Promise<void> {
+    const next = this.saveChain
+      .catch(() => {})
+      .then(() =>
+        // Snapshot at write time so the last queued save persists the latest
+        // list, whatever order the callers ran in.
+        writeFile(this.filePath, JSON.stringify(this.projects, null, 2), "utf-8"),
+      );
+    this.saveChain = next;
+    return next;
   }
 }

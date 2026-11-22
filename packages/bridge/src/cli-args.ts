@@ -12,9 +12,29 @@ const VALUE_FLAGS = new Set([
 const BOOLEAN_FLAGS = new Set([
   "json",
   "uninstall",
+  // Accepted and ignored: mDNS advertisement was removed, but existing
+  // commands and service definitions may still pass it.
   "no-mdns",
   "insecure-no-auth",
 ]);
+
+function isKnownFlag(arg: string): boolean {
+  if (arg === "-h" || arg === "-v") {
+    return true;
+  }
+  if (!arg.startsWith("--")) {
+    return false;
+  }
+  const raw = arg.slice(2);
+  const equalIndex = raw.indexOf("=");
+  const name = equalIndex === -1 ? raw : raw.slice(0, equalIndex);
+  return (
+    VALUE_FLAGS.has(name) ||
+    BOOLEAN_FLAGS.has(name) ||
+    name === "help" ||
+    name === "version"
+  );
+}
 
 export interface ParsedCliArgs {
   command?: string;
@@ -48,7 +68,7 @@ export function parseCliArgs(args: string[]): ParsedCliArgs {
       if (VALUE_FLAGS.has(name)) {
         if (inlineValue !== undefined) {
           flags.set(name, inlineValue);
-        } else if (i + 1 < args.length) {
+        } else if (i + 1 < args.length && !isKnownFlag(args[i + 1])) {
           flags.set(name, args[i + 1]);
           i += 1;
         } else {

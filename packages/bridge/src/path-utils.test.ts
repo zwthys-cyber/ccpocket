@@ -35,6 +35,23 @@ describe("path-utils", () => {
     ).toBe("\\\\server\\share\\project");
   });
 
+  it("strips the extended prefix only from a leading drive path", () => {
+    // No prefix: the first four characters must not be dropped.
+    expect(stripWindowsExtendedPathPrefix("abcdD:\\Users\\alice")).toBe(
+      "abcdD:\\Users\\alice",
+    );
+    // Prefixed, but the drive letter is not at the start of the remainder.
+    expect(stripWindowsExtendedPathPrefix("\\\\?\\Volume\\D:\\x")).toBe(
+      "\\\\?\\Volume\\D:\\x",
+    );
+  });
+
+  it("leaves the extended prefix alone outside Windows", () => {
+    expect(normalizePlatformPath("\\\\?\\D:\\Users", "linux")).toBe(
+      "\\\\?\\D:\\Users",
+    );
+  });
+
   it("rejects paths outside the allowed parent on Windows", () => {
     expect(
       isPathWithinAllowedDirectory(
@@ -70,6 +87,10 @@ describe("path-utils", () => {
       .toEqual(["/home/alice"]);
   });
 
+  it("defaults to no allowed directories when none are given", () => {
+    expect(parseAllowedDirectories(undefined, "linux")).toEqual([]);
+  });
+
   it("allows unrestricted access only with an exact star", () => {
     expect(parseAllowedDirectories("*", "linux", ["/home/alice"]))
       .toEqual([]);
@@ -103,6 +124,9 @@ describe("path-utils", () => {
     expect(
       directoryListWarnings("BRIDGE_ALLOWED_DIRS", "C:\\Users\\alice,D:\\"),
     ).toEqual([]);
+    expect(
+      directoryListWarnings("BRIDGE_ALLOWED_DIRS", "/srv/a,  /srv/b;/srv/c  "),
+    ).toEqual([expect.stringContaining('entry "/srv/b;/srv/c" contains')]);
     expect(directoryListWarnings("BRIDGE_ALLOWED_DIRS", undefined)).toEqual([]);
     expect(directoryListWarnings("BRIDGE_ALLOWED_DIRS", "*")).toEqual([]);
   });
@@ -146,5 +170,48 @@ describe("path-utils", () => {
         "win32",
       ),
     ).toBe(false);
+  });
+
+  it("accepts the allowed root itself when Windows casing differs", () => {
+    // `resolve` keeps the caller's casing, and `path.win32.relative` folds
+    // case and answers "" for the same directory, so the exact-match check
+    // has to ignore case on Windows.
+    expect(
+      isPathWithinAllowedDirectory(
+        "c:\\users\\alice\\project",
+        "C:\\Users\\Alice\\Project",
+        "win32",
+      ),
+    ).toBe(true);
+    expect(
+      isPathWithinAllowedDirectory(
+        "C:\\Users\\Alice\\Project",
+        "c:\\users\\alice\\project",
+        "win32",
+      ),
+    ).toBe(true);
+    expect(
+      isPathWithinAllowedDirectory(
+        "\\\\server\\Share",
+        "\\\\SERVER\\share",
+        "win32",
+      ),
+    ).toBe(true);
+    expect(
+      isPathWithinAllowedDirectory(
+        "\\\\?\\C:\\Users\\Alice\\Project",
+        "c:\\users\\alice\\project",
+        "win32",
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps POSIX directory matching case-sensitive", () => {
+    expect(
+      isPathWithinAllowedDirectory("/home/Alice", "/home/alice", "linux"),
+    ).toBe(false);
+    expect(isPathWithinAllowedDirectory("/tmp/repo", "/tmp/repo", "linux")).toBe(
+      true,
+    );
   });
 });

@@ -436,6 +436,58 @@ describe("scanJsonlDir", () => {
     expect(result[0].name).toBeUndefined();
   });
 
+  it("keeps scanning past the newest message for a cleared tail title", async () => {
+    const sessionId = "cleared-title-after-message";
+    const lines = [
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "hello title" }],
+        },
+        cwd: "/my/project",
+        gitBranch: "main",
+        sessionId,
+        timestamp: "2026-01-01T00:00:00.000Z",
+      }),
+      JSON.stringify({ type: "custom-title", customTitle: "Old", sessionId }),
+      // >24KB of filler pushes the cleared title out of the 16KB head and
+      // into the 8KB tail, past the small-file read path.
+      ...Array.from({ length: 30 }, (_, i) =>
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: `${i}:${"x".repeat(1024)}` }],
+          },
+          sessionId,
+          timestamp: "2026-01-01T00:00:01.000Z",
+        }),
+      ),
+      // The cleared title sits before the newest message, so a reverse scan
+      // that stops at the first timestamped line never reaches it.
+      JSON.stringify({ type: "custom-title", customTitle: "", sessionId }),
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "newest message" }],
+        },
+        sessionId,
+        timestamp: "2026-01-01T00:00:02.000Z",
+      }),
+    ];
+    const filePath = join(testDir, `${sessionId}.jsonl`);
+    writeFileSync(filePath, lines.join("\n") + "\n");
+    expect(statSync(filePath).size).toBeGreaterThan(24 * 1024);
+
+    const result = await scanJsonlDir(testDir);
+    expect(result).toHaveLength(1);
+    expect(result[0].firstPrompt).toBe("hello title");
+    expect(result[0].modified).toBe("2026-01-01T00:00:02.000Z");
+    expect(result[0].name).toBeUndefined();
+  });
+
   it("excludes Claude auto-rename helper sessions", async () => {
     const lines = [
       JSON.stringify({
@@ -3083,6 +3135,247 @@ describe("claude namedOnly optimization", () => {
   });
 });
 
+describe("claude cleared custom titles", () => {
+  const oldHome = process.env.HOME;
+  const tempHome = mkdtempSync(join(tmpdir(), "ccpocket-test-claude-title-home-"));
+  const projectPath = "/tmp/project-a";
+  const staleIndexName = "Stale index name";
+
+  beforeEach(() => {
+    process.env.HOME = tempHome;
+  });
+
+  afterEach(() => {
+    process.env.HOME = oldHome;
+    rmSync(tempHome, { recursive: true, force: true });
+  });
+
+  function projectDir(): string {
+    return join(tempHome, ".claude", "projects", pathToSlug(projectPath));
+  }
+
+  function userLine(sessionId: string): string {
+    return JSON.stringify({
+      type: "user",
+      sessionId,
+      message: { role: "user", content: `prompt for ${sessionId}` },
+      cwd: projectPath,
+      gitBranch: "main",
+      timestamp: "2026-02-13T11:00:00.000Z",
+    });
+  }
+
+  function assistantLine(sessionId: string, index: number): string {
+    return JSON.stringify({
+      type: "assistant",
+      sessionId,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: `${index}:${"x".repeat(1024)}` }],
+      },
+      timestamp: "2026-02-13T11:30:00.000Z",
+    });
+  }
+
+  function titleLine(sessionId: string, customTitle: string): string {
+    return JSON.stringify({ type: "custom-title", customTitle, sessionId });
+  }
+
+  // 24 filler lines (~28KB) push every trailing title past HEAD_BYTES (16KB),
+  // so the fast parser and the title lookup see them only in the 8KB tail.
+  function fillerLines(sessionId: string): string[] {
+    return Array.from({ length: 24 }, (_, i) => assistantLine(sessionId, i));
+  }
+
+  function writeTranscript(sessionId: string, lines: string[]): void {
+    const dir = projectDir();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${sessionId}.jsonl`), lines.join("\n") + "\n");
+  }
+
+  function writeIndex(sessionId: string, customTitle: string): void {
+    const dir = projectDir();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "sessions-index.json"),
+      JSON.stringify({
+        version: 1,
+        entries: [
+          {
+            sessionId,
+            fullPath: join(dir, `${sessionId}.jsonl`),
+            fileMtime: Date.now(),
+            firstPrompt: `prompt for ${sessionId}`,
+            customTitle,
+            messageCount: 2,
+            created: "2026-02-13T11:00:00.000Z",
+            modified: "2026-02-13T11:30:00.000Z",
+            gitBranch: "main",
+            projectPath,
+            isSidechain: false,
+          },
+        ],
+      }),
+    );
+  }
+
+  async function listRecent(options: { namedOnly?: boolean } = {}) {
+    return getAllRecentSessions({
+      provider: "claude",
+      projectPath,
+      namedOnly: options.namedOnly,
+      limit: 200,
+    });
+  }
+
+  describe.each([
+    { label: "small (<24KB)", large: false },
+    { label: "large (>24KB)", large: true },
+  ])("$label transcript", ({ large }) => {
+    function transcriptLines(
+      sessionId: string,
+      tailLines: string[],
+      headLines: string[] = [],
+    ): string[] {
+      return [
+        userLine(sessionId),
+        ...headLines,
+        ...(large ? fillerLines(sessionId) : []),
+        ...tailLines,
+      ];
+    }
+
+    it("ignores a stale index title when the JSONL title was cleared", async () => {
+      writeTranscript(
+        "cleared-title",
+        transcriptLines("cleared-title", [
+          titleLine("cleared-title", "Older JSONL title"),
+          titleLine("cleared-title", ""),
+        ]),
+      );
+      writeIndex("cleared-title", staleIndexName);
+
+      await expect(
+        getClaudeSessionName(projectPath, "cleared-title"),
+      ).resolves.toBeUndefined();
+    });
+
+    it("ignores a stale index title when a cleared tail clears a head title", async () => {
+      writeTranscript(
+        "cleared-head-title",
+        transcriptLines(
+          "cleared-head-title",
+          [titleLine("cleared-head-title", "")],
+          [titleLine("cleared-head-title", "Head JSONL title")],
+        ),
+      );
+      writeIndex("cleared-head-title", staleIndexName);
+
+      await expect(
+        getClaudeSessionName(projectPath, "cleared-head-title"),
+      ).resolves.toBeUndefined();
+    });
+
+    it("returns no name for a cleared title without an index entry", async () => {
+      writeTranscript(
+        "cleared-no-index",
+        transcriptLines("cleared-no-index", [
+          titleLine("cleared-no-index", "Older JSONL title"),
+          titleLine("cleared-no-index", ""),
+        ]),
+      );
+
+      await expect(
+        getClaudeSessionName(projectPath, "cleared-no-index"),
+      ).resolves.toBeUndefined();
+    });
+
+    it("falls back to the index title when the JSONL has no title line", async () => {
+      writeTranscript("index-only-name", transcriptLines("index-only-name", []));
+      writeIndex("index-only-name", staleIndexName);
+
+      await expect(
+        getClaudeSessionName(projectPath, "index-only-name"),
+      ).resolves.toBe(staleIndexName);
+
+      const result = await listRecent({ namedOnly: true });
+      expect(result.sessions.map((s) => [s.sessionId, s.name])).toEqual([
+        ["index-only-name", staleIndexName],
+      ]);
+    });
+
+    it("prefers the newest JSONL title over the index title", async () => {
+      writeTranscript(
+        "renamed-indexed",
+        transcriptLines("renamed-indexed", [
+          titleLine("renamed-indexed", "Older JSONL title"),
+          titleLine("renamed-indexed", "Newest JSONL title"),
+        ]),
+      );
+      writeIndex("renamed-indexed", staleIndexName);
+
+      await expect(
+        getClaudeSessionName(projectPath, "renamed-indexed"),
+      ).resolves.toBe("Newest JSONL title");
+
+      const result = await listRecent({ namedOnly: true });
+      expect(result.sessions.map((s) => [s.sessionId, s.name])).toEqual([
+        ["renamed-indexed", "Newest JSONL title"],
+      ]);
+    });
+
+    it("excludes an indexed session whose JSONL title was cleared from namedOnly", async () => {
+      writeTranscript(
+        "cleared-indexed",
+        transcriptLines("cleared-indexed", [
+          titleLine("cleared-indexed", "Older JSONL title"),
+          titleLine("cleared-indexed", ""),
+        ]),
+      );
+      writeIndex("cleared-indexed", staleIndexName);
+
+      const result = await listRecent({ namedOnly: true });
+      expect(result.sessions).toEqual([]);
+    });
+
+    it("does not resurrect an older tail title after a cleared title", async () => {
+      writeTranscript(
+        "cleared-jsonl-only",
+        transcriptLines("cleared-jsonl-only", [
+          titleLine("cleared-jsonl-only", "Older tail title"),
+          titleLine("cleared-jsonl-only", ""),
+        ]),
+      );
+
+      const result = await listRecent();
+      expect(result.sessions.map((s) => s.sessionId)).toEqual(["cleared-jsonl-only"]);
+      expect(result.sessions[0].name).toBeUndefined();
+    });
+
+    it("keeps a newest message from hiding a cleared tail title", async () => {
+      writeTranscript(
+        "cleared-before-newest",
+        transcriptLines(
+          "cleared-before-newest",
+          [
+            titleLine("cleared-before-newest", ""),
+            assistantLine("cleared-before-newest", 99),
+          ],
+          [titleLine("cleared-before-newest", "Old")],
+        ),
+      );
+      writeIndex("cleared-before-newest", staleIndexName);
+
+      const result = await listRecent();
+      expect(result.sessions.map((s) => s.sessionId)).toEqual(["cleared-before-newest"]);
+      expect(result.sessions[0].name).toBeUndefined();
+      await expect(
+        getClaudeSessionName(projectPath, "cleared-before-newest"),
+      ).resolves.toBeUndefined();
+    });
+  });
+});
+
 describe("recent sessions grouped by git repository", () => {
   const oldHome = process.env.HOME;
   const oldUserProfile = process.env.USERPROFILE;
@@ -3373,6 +3666,90 @@ describe("recent sessions grouped by git repository", () => {
     );
     expect(entry?.projectPath).toBe(other);
     expect(entry?.resumeCwd).toBeUndefined();
+  });
+});
+
+describe("getSessionHistory stale index paths", () => {
+  const oldHome = process.env.HOME;
+  let tempHome: string;
+
+  beforeEach(() => {
+    tempHome = mkdtempSync(join(tmpdir(), "ccpocket-history-stale-"));
+    process.env.HOME = tempHome;
+  });
+
+  afterEach(() => {
+    process.env.HOME = oldHome;
+    rmSync(tempHome, { recursive: true, force: true });
+  });
+
+  function projectsDir(): string {
+    return join(tempHome, ".claude", "projects");
+  }
+
+  function userLine(text: string): string {
+    return JSON.stringify({
+      type: "user",
+      uuid: `u-${text}`,
+      message: { role: "user", content: text },
+    });
+  }
+
+  it("ignores a recorded path that no longer exists", async () => {
+    // The project moved, so the old project's index still points at the
+    // previous location while the transcript now lives in the new one.
+    const oldDir = join(projectsDir(), "-a-old-project");
+    const newDir = join(projectsDir(), "-z-new-project");
+    mkdirSync(oldDir, { recursive: true });
+    mkdirSync(newDir, { recursive: true });
+    writeFileSync(
+      join(oldDir, "sessions-index.json"),
+      JSON.stringify({
+        version: 1,
+        entries: [
+          {
+            sessionId: "moved-session",
+            fullPath: join(oldDir, "moved-session.jsonl"),
+          },
+        ],
+      }),
+    );
+    writeFileSync(
+      join(newDir, "moved-session.jsonl"),
+      userLine("still readable"),
+    );
+
+    const history = await getSessionHistory("moved-session");
+
+    expect(history.map((message) => message.role)).toEqual(["user"]);
+    expect(history[0].content).toEqual([{ type: "text", text: "still readable" }]);
+  });
+
+  it("keeps using a recorded path that exists", async () => {
+    const projectDir = join(projectsDir(), "-tmp-project");
+    // The transcript does not follow the `<sessionId>.jsonl` naming rule, so
+    // only the index entry can resolve it.
+    mkdirSync(join(projectDir, "nested"), { recursive: true });
+    writeFileSync(
+      join(projectDir, "nested", "transcript.jsonl"),
+      userLine("indexed"),
+    );
+    writeFileSync(
+      join(projectDir, "sessions-index.json"),
+      JSON.stringify({
+        version: 1,
+        entries: [
+          {
+            sessionId: "indexed-session",
+            fullPath: join(projectDir, "nested", "transcript.jsonl"),
+          },
+        ],
+      }),
+    );
+
+    const history = await getSessionHistory("indexed-session");
+
+    expect(history[0].content).toEqual([{ type: "text", text: "indexed" }]);
   });
 });
 
@@ -4167,5 +4544,90 @@ describe("claudeAbandonedBranchUuids", () => {
       entry("user", "u2", "missing", "TWO"),
     ];
     expect(claudeAbandonedBranchUuids(lines)).toBeNull();
+  });
+});
+
+describe("Claude session away_summary recap extraction", () => {
+  const oldHome = process.env.HOME;
+  const oldUserProfile = process.env.USERPROFILE;
+  let tempHome: string;
+  const projectPath = "/tmp/claude-recap-proj";
+
+  beforeEach(() => {
+    tempHome = mkdtempSync(join(tmpdir(), "ccpocket-recap-home-"));
+    process.env.HOME = tempHome;
+    process.env.USERPROFILE = tempHome;
+  });
+
+  afterEach(() => {
+    process.env.HOME = oldHome;
+    process.env.USERPROFILE = oldUserProfile;
+    rmSync(tempHome, { recursive: true, force: true });
+  });
+
+  it("includes only the trailing away_summary as a recap entry and omits superseded ones", async () => {
+    const dir = join(tempHome, ".claude", "projects", pathToSlug(projectPath));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "recap-sess.jsonl"),
+      [
+        {
+          type: "user",
+          uuid: "u1",
+          message: { role: "user", content: [{ type: "text", text: "Fix bug" }] },
+        },
+        {
+          type: "assistant",
+          uuid: "a1",
+          message: { role: "assistant", content: [{ type: "text", text: "Fixed part 1" }] },
+        },
+        {
+          type: "system",
+          subtype: "away_summary",
+          uuid: "aw-old",
+          content: "Old superseded away summary",
+        },
+        {
+          type: "user",
+          uuid: "u2",
+          message: { role: "user", content: [{ type: "text", text: "Continue" }] },
+        },
+        {
+          type: "assistant",
+          uuid: "a2",
+          message: { role: "assistant", content: [{ type: "text", text: "All done" }] },
+        },
+        {
+          type: "system",
+          subtype: "away_summary",
+          uuid: "aw-mid",
+          content: "Earlier trailing summary",
+        },
+        {
+          type: "system",
+          subtype: "away_summary",
+          uuid: "aw-latest",
+          timestamp: "2026-11-20T03:00:00.000Z",
+          content: "Finished fixing the bug and verified all tests pass.",
+        },
+      ]
+        .map((line) => JSON.stringify(line))
+        .join("\n"),
+    );
+
+    const history = await getSessionHistory("recap-sess", projectPath);
+    const recaps = history.filter((m) => m.role === "recap");
+    expect(recaps).toEqual([
+      {
+        role: "recap",
+        uuid: "aw-latest",
+        timestamp: "2026-11-20T03:00:00.000Z",
+        recap: {
+          content: "Finished fixing the bug and verified all tests pass.",
+          source: "away_summary",
+        },
+        content: [],
+      },
+    ]);
   });
 });

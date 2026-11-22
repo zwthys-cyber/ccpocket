@@ -1,64 +1,51 @@
-import { currentGitBranch, hasGitHead } from "./git-project-state.js";
-import { bootstrapProject } from "./project-bootstrap.js";
+import { hasGitHead } from "./git-project-state.js";
 import { performanceMessage } from "./performance-mode.js";
-import { transcriptPageRange } from "./context-compaction.js";
 import type { Server as HttpServer } from "node:http";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
-import { readFileSync, existsSync } from "node:fs";
-import { lstat, readFile, readlink, realpath, stat, unlink } from "node:fs/promises";
-import { resolve, extname, basename, relative, posix, win32 } from "node:path";
-import { promisify } from "node:util";
 import { WebSocketServer, WebSocket } from "ws";
-import { textPreview } from "./text-preview.js";
-import { consumeFinderProof, verifyFinderSocketProof, revealInFinder } from "./finder-reveal.js";
 import {
   SessionManager,
-  MAX_HISTORY_PER_SESSION,
   type HistoryEntry,
-  type QueuedSessionInput,
   type SessionInfo,
-  type SessionSummary,
-  type WorktreeOptions,
 } from "./session.js";
 import {
   SdkProcess,
-  listAvailableClaudeModels,
   type ClaudeEffortLevel,
   type ClaudeModelMetadata,
 } from "./sdk-process.js";
-import type { StartOptions } from "./sdk-process.js";
 import {
-  codexErrorMessage,
-  isCodexThreadWriterConflict,
-  normalizeCodexReasoningEffortForModel,
-  CodexRpcError,
   CodexProcess,
   type CodexModelMetadata,
-  type CodexStartOptions,
-  type CodexThreadSourceKind,
   type CodexThreadSummary,
 } from "./codex-process.js";
 import {
-  normalizeCodexServiceTierForClient,
-  isCodexServiceTierSupported,
+  AntigravityProcess,
+  getAntigravityConfig,
+  type AntigravityCatalog,
+  type AntigravityConfig,
+} from "./antigravity-process.js";
+import { AntigravityStore } from "./antigravity-store.js";
+import {
+  antigravityRecentSessions,
+  fetchAntigravityCatalog,
+  listAntigravitySessions,
+  type AntigravityRecentSession,
+  type AntigravitySessionEntry,
+} from "./antigravity-sessions.js";
+import {
   type CodexServiceTierMetadata,
 } from "./codex-service-tier.js";
 import { stopManagedCodexAppServers } from "./codex-transport.js";
 import {
-  isAgentBackgroundTask,
   parseClientMessage,
-  type AssistantContent,
   type ClientMessage,
   type DebugTraceEvent,
-  type ImageChange,
   type Provider,
-  type RecentProjectFilter,
   type ServerMessage,
 } from "./parser.js";
 import {
   CONTENT_SEARCH_MAX_FILES,
-  recentSessionMetadataSearchField,
   withRecentSessionMetadataSearchMatch,
 } from "./recent-session-search.js";
 import { CodexThreadSnapshot } from "./codex-thread-snapshot.js";
@@ -70,44 +57,21 @@ import {
 } from "./protocol-version.js";
 import {
   getAllRecentSessions,
-  getPinnedCodexSessions,
-  codexEntryAsThreadListShape,
-  recentSessionIdentityKey,
-  type SessionIndexEntry,
-  getCodexSessionHistory,
-  getSessionHistory,
-  codexUserTurnUuid,
-  codexThreadToSessionHistory,
   type SessionHistoryMessage,
-  findSessionsByClaudeIds,
-  extractMessageImages,
-  getClaudeSessionName,
   getCodexSessionIndexMetadata,
-  type CodexSessionIndexMetadata,
   loadCodexSessionNames,
-  listIndexedCodexThreadIds,
   renameClaudeSession,
   renameCodexSession,
-  saveCodexSessionProfile,
 } from "./sessions-index.js";
-import type { ImageRef, ImageStore } from "./image-store.js";
+import type { ImageStore } from "./image-store.js";
 import {
-  assistantTextBlocks,
   createAssistantImageResolver,
-  hasMarkdownImages,
-  type AssistantImageRef,
   type AssistantImageResolver,
 } from "./markdown-images.js";
 import type { MediaStore } from "./media-store.js";
 import {
-  isSafeUploadFileName,
-  UploadStoreError,
   type UploadStore,
 } from "./upload-store.js";
-import {
-  formatResumePerformanceLog,
-  summarizeResumeHistory,
-} from "./resume-metrics.js";
 import type { GalleryStore } from "./gallery-store.js";
 import type { ProjectHistory } from "./project-history.js";
 import {
@@ -115,960 +79,292 @@ import {
   type WorkspaceStore,
 } from "./workspace-store.js";
 import { ArchiveStore } from "./archive-store.js";
+import { PinStore } from "./pin-store.js";
+import { SharedStateStore } from "./shared-state-store.js";
 import { WorktreeStore } from "./worktree-store.js";
-import {
-  listWorktrees,
-  removeWorktree,
-  createWorktree,
-  worktreeExists,
-  getMainBranch,
-} from "./worktree.js";
-import {
-  stageFiles,
-  stageHunks,
-  unstageFiles,
-  unstageHunks,
-  gitCommit,
-  gitPush,
-  listProjectFilesAndDirectoriesForClient,
-  listBranches,
-  createBranch,
-  checkoutBranch,
-  revertFiles,
-  revertHunks,
-  gitFetch,
-  gitPull,
-  gitRemoteStatus,
-  gitStatus,
-} from "./git-operations.js";
-import { generateCommitMessage } from "./git-assist.js";
-import { getGitHubItem, listGitHubItems, toGitHubError } from "./github-cli.js";
-import { listWindows, takeScreenshot } from "./screenshot.js";
 import { DebugTraceStore } from "./debug-trace-store.js";
 import { RecordingStore } from "./recording-store.js";
 import { PushRelayClient } from "./push-relay.js";
 import type { FirebaseAuthClient } from "./firebase-auth.js";
-import { type PushLocale, normalizePushLocale, t } from "./push-i18n.js";
-import { consumeCodexReset, fetchAllUsage } from "./usage.js";
+import { type PushLocale } from "./push-i18n.js";
+import {
+  consumeCodexReset,
+  fetchAntigravityUsage,
+  type UsageInfo,
+} from "./usage.js";
 import type { PromptHistoryBackupStore } from "./prompt-history-backup.js";
 import type { PromptHistoryStore } from "./prompt-history-store.js";
 import { getPackageVersion } from "./version.js";
 import { tokensMatch } from "./bridge-auth.js";
 import { BackgroundCompletionGate } from "./background-completion-gate.js";
 import {
-  catalogFromCachedCommands,
-  convertSkillTriggers,
-  hasForeignSkillTrigger,
-} from "./skill-triggers.js";
-import {
-  isPathWithinAllowedDirectory,
-  resolvePlatformPath,
-  resolvePlatformPathFrom,
-} from "./path-utils.js";
-import {
-  DirectoryListingError,
-  listAllowedDirectories,
-} from "./directory-listing.js";
-import {
-  deriveCodexPermissionsMode,
-  normalizeCodexPermissionsMode,
   withDerivedCodexPermissionsMode,
 } from "./codex-permissions.js";
-
-type SystemServerMessage = Extract<ServerMessage, { type: "system" }>;
-type ResultServerMessage = Extract<ServerMessage, { type: "result" }>;
-
-/** How long a session must stay idle without background work before Done. */
-const BACKGROUND_COMPLETION_SETTLE_MS = 2_000;
-/** How long a new session's first prompt waits for the skill list. */
-const INITIAL_PROMPT_SKILL_WAIT_MS = 5_000;
-const INITIAL_PROMPT_SKILL_POLL_MS = 100;
-type InputClientMessage = Extract<ClientMessage, { type: "input" }>;
-type ResumeClientMessage = Extract<ClientMessage, { type: "resume_session" }>;
-type CorrelatedProjectRequest = {
-  projectPath: string;
-  requestId?: string;
-};
-
-function projectRequestMetadata(
-  request: CorrelatedProjectRequest,
-): { projectPath: string; requestId?: string } {
-  return {
-    projectPath: request.projectPath,
-    ...(request.requestId ? { requestId: request.requestId } : {}),
-  };
-}
-type ResumeOperation = {
-  id: string;
-  provider: Provider;
-  sourceSessionId: string;
-  projectPath: string;
-  resumeRequestId?: string;
-  fingerprint: string;
-  waiters: Set<WebSocket>;
-  provisionalSessionId?: string;
-  timeout?: ReturnType<typeof setTimeout>;
-  completed?: {
-    sessionId: string;
-    message: SystemServerMessage;
-    completedAt: number;
-  };
-};
-const RESUME_OPERATION_TIMEOUT_MS = 5 * 60 * 1000;
-const RESUME_COMPLETED_TTL_MS = 30 * 1000;
-type ClaudePermissionMode =
-  | "default"
-  | "auto"
-  | "acceptEdits"
-  | "bypassPermissions"
-  | "plan";
-
-// ---- Available model lists (delivered to clients via session_list) ----
-
-// Used only when the Agent SDK cannot report its model list. These are the
-// Claude Code aliases, which always resolve to the current model of each
-// family, so the fallback never needs version-specific updates.
-const FALLBACK_CLAUDE_MODEL_OPTIONS: ClaudeModelOption[] = [
-  { value: "default", displayName: "Default" },
-  { value: "opus", displayName: "Opus" },
-  { value: "sonnet", displayName: "Sonnet" },
-  { value: "haiku", displayName: "Haiku" },
-];
-
-const FALLBACK_CLAUDE_MODELS: string[] = FALLBACK_CLAUDE_MODEL_OPTIONS.map(
-  (option) => option.value,
-);
-
-const FALLBACK_CLAUDE_EFFORTS: ClaudeEffortLevel[] = ["low", "medium", "high"];
-
-const FALLBACK_CLAUDE_MODEL_EFFORTS: Record<string, ClaudeEffortLevel[]> = {
-  default: FALLBACK_CLAUDE_EFFORTS,
-  opus: FALLBACK_CLAUDE_EFFORTS,
-  sonnet: FALLBACK_CLAUDE_EFFORTS,
-  haiku: [],
-};
-
-export interface ClaudeModelOption {
-  value: string;
-  displayName?: string;
-  description?: string;
-  /** Claude Code fast mode is available for this model. */
-  supportsFastMode?: boolean;
-}
-
-const FALLBACK_CODEX_MODELS: string[] = [
-  "gpt-5.6-sol",
-  "gpt-5.6-terra",
-  "gpt-5.6-luna",
-  "gpt-5.5",
-  "gpt-5.4",
-  "gpt-5.4-mini",
-  "gpt-5.3-codex",
-  "gpt-5.3-codex-spark",
-];
-
-const FALLBACK_CODEX_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"];
-const FALLBACK_GPT_5_6_REASONING_EFFORTS = [
-  ...FALLBACK_CODEX_REASONING_EFFORTS,
-  "max",
-];
-const FALLBACK_GPT_5_6_ULTRA_REASONING_EFFORTS = [
-  ...FALLBACK_GPT_5_6_REASONING_EFFORTS,
-  "ultra",
-];
-
-function fallbackCodexReasoningEfforts(model: string): string[] {
-  if (model === "gpt-5.6-sol" || model === "gpt-5.6-terra") {
-    return FALLBACK_GPT_5_6_ULTRA_REASONING_EFFORTS;
-  }
-  if (model === "gpt-5.6-luna") return FALLBACK_GPT_5_6_REASONING_EFFORTS;
-  return FALLBACK_CODEX_REASONING_EFFORTS;
-}
-
-function fallbackCodexServiceTiers(model: string): string[] {
-  return [
-    "gpt-5.6-sol",
-    "gpt-5.6-terra",
-    "gpt-5.6-luna",
-    "gpt-5.5",
-    "gpt-5.4",
-  ].includes(model)
-    ? ["fast"]
-    : [];
-}
-
-const CODEX_RECENT_THREAD_SOURCE_KINDS: CodexThreadSourceKind[] = [
-  "cli",
-  "vscode",
-  "appServer",
-];
-
-const CODEX_USER_TURN_UUID_RE = /^codex:user-turn:(\d+)$/;
-/** Upper bound for waiting on a replaced Codex app-server to exit. */
-const CODEX_SHUTDOWN_WAIT_MS = 5_000;
-/** How long a retract waits for a just-sent prompt's turn to start. */
-const RETRACT_START_TIMEOUT_MS = 3_000;
-/** How long a retract waits for the interrupted turn to end. */
-const RETRACT_IDLE_TIMEOUT_MS = 15_000;
-
-const BRIDGE_PROTOCOL_CAPABILITIES = [
-  "performance_mode_v1",
-  "project_request_correlation_v1",
-  "session_context_v1",
-  "codex_service_tiers_v1",
-  "input_delivery_v1",
-  "claude_session_settings_v1",
-  "claude_fork_v1",
-  "message_edit_v1",
-  "recent_sessions_filters_v1",
-  "context_compaction_v1",
-];
-
-/** Default and maximum page size for `get_session_transcript`. */
-const TRANSCRIPT_PAGE_DEFAULT = 200;
-const TRANSCRIPT_PAGE_MAX = 1000;
-
-const OPT_IN_SERVER_MESSAGES = new Set<string>([
-  "background_tasks",
-  "context_compaction",
-  "conversation_queue",
-  "goal_state",
-  "codex_recovery_state",
-  "guardian_approval",
-  "prompt_history_status",
-  "projects",
-  "push_registration_result",
-]);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function parseCodexUserTurnOrdinal(uuid: string | undefined): number | null {
-  if (!uuid) return null;
-  const match = uuid.match(CODEX_USER_TURN_UUID_RE);
-  if (!match) return null;
-  const ordinal = Number(match[1]);
-  return Number.isInteger(ordinal) && ordinal > 0 ? ordinal : null;
-}
-
-function countCodexUserTurnsInSession(session: SessionInfo): number {
-  let count = 0;
-  let maxOrdinal = 0;
-
-  const observe = (uuid?: string): void => {
-    count += 1;
-    const ordinal = parseCodexUserTurnOrdinal(uuid);
-    if (ordinal !== null) {
-      maxOrdinal = Math.max(maxOrdinal, ordinal);
-    }
-  };
-
-  if (Array.isArray(session.pastMessages)) {
-    for (const message of session.pastMessages) {
-      if (!message || typeof message !== "object") continue;
-      const item = message as { role?: unknown; uuid?: unknown; isMeta?: unknown };
-      if (item.role === "user" && item.isMeta !== true) {
-        observe(typeof item.uuid === "string" ? item.uuid : undefined);
-      }
-    }
-  }
-
-  for (const message of session.history) {
-    if (message.type === "user_input") {
-      observe(message.userMessageUuid);
-    }
-  }
-
-  return Math.max(count, maxOrdinal);
-}
-
-function nextCodexUserTurnUuid(session: SessionInfo): string {
-  return codexUserTurnUuid(countCodexUserTurnsInSession(session) + 1);
-}
-
-function normalizeHistoryContent(
-  content: unknown,
-): SessionHistoryMessage["content"] {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return [];
-
-  const normalized: Array<{
-    type: string;
-    text?: string;
-    id?: string;
-    name?: string;
-    input?: Record<string, unknown>;
-  }> = [];
-
-  for (const item of content) {
-    if (!item || typeof item !== "object") continue;
-    const value = item as Record<string, unknown>;
-    if (typeof value.type !== "string") continue;
-    if (value.type === "text") {
-      normalized.push({
-        type: "text",
-        text: typeof value.text === "string" ? value.text : "",
-      });
-    } else if (value.type === "tool_use") {
-      normalized.push({
-        type: "tool_use",
-        id: typeof value.id === "string" ? value.id : undefined,
-        name: typeof value.name === "string" ? value.name : undefined,
-        input:
-          value.input && typeof value.input === "object" && !Array.isArray(value.input)
-            ? (value.input as Record<string, unknown>)
-            : undefined,
-      });
-    }
-  }
-
-  return normalized;
-}
-
-function buildCodexHistoryPrefix(
-  session: SessionInfo,
-  targetOrdinal: number,
-): SessionHistoryMessage[] {
-  const messages: SessionHistoryMessage[] = [];
-  let userOrdinal = 0;
-  let reachedEnd = false;
-
-  const appendPastMessage = (message: unknown): void => {
-    if (reachedEnd || !message || typeof message !== "object") return;
-    const item = message as SessionHistoryMessage;
-    if (item.role === "user" && item.isMeta !== true) {
-      userOrdinal += 1;
-      if (userOrdinal > targetOrdinal) {
-        reachedEnd = true;
-        return;
-      }
-      messages.push({ ...item });
-      return;
-    }
-    if (item.role === "assistant" && userOrdinal > 0 && userOrdinal <= targetOrdinal) {
-      messages.push({ ...item });
-    }
-  };
-
-  for (const message of session.pastMessages ?? []) {
-    appendPastMessage(message);
-    if (reachedEnd) return messages;
-  }
-
-  for (const message of session.history) {
-    if (message.type === "user_input") {
-      if (message.isMeta === true) continue;
-      const userInput = message as typeof message & { timestamp?: string };
-      userOrdinal += 1;
-      if (userOrdinal > targetOrdinal) break;
-      messages.push({
-        role: "user",
-        uuid: userInput.userMessageUuid,
-        timestamp: userInput.timestamp,
-        imageCount: userInput.imageCount,
-        content: [{ type: "text", text: userInput.text }],
-      });
-    } else if (
-      message.type === "assistant" &&
-      userOrdinal > 0 &&
-      userOrdinal <= targetOrdinal
-    ) {
-      messages.push({
-        role: "assistant",
-        uuid: message.messageUuid,
-        content: normalizeHistoryContent(message.message.content),
-      });
-    }
-  }
-
-  return messages;
-}
-
-function countCodexHistoryUserTurns(messages: SessionHistoryMessage[]): number {
-  return messages.filter((message) => message.role === "user" && !message.isMeta)
-    .length;
-}
-
-// ---- Codex mode mapping helpers ----
-
-/** Map unified PermissionMode to Codex approval_policy.
- *  Only "bypassPermissions" maps to "never"; all others use "on-request". */
-function permissionModeToApprovalPolicy(mode?: string): "never" | "on-request" {
-  return mode === "bypassPermissions" ? "never" : "on-request";
-}
-
-function normalizeCodexApprovalPolicy(
-  value?: string,
-): "never" | "on-request" | "on-failure" | "untrusted" {
-  switch (value) {
-    case "untrusted":
-      return "untrusted";
-    case "on-failure":
-      return "on-failure";
-    case "never":
-      return "never";
-    case "on-request":
-    default:
-      return "on-request";
-  }
-}
-
-type CodexPermissionsMode = NonNullable<
-  CodexStartOptions["codexPermissionsMode"]
->;
-
-interface CodexPermissionSettings {
-  codexPermissionsMode?: CodexPermissionsMode;
-  approvalPolicy?: CodexStartOptions["approvalPolicy"];
-  approvalsReviewer?: CodexStartOptions["approvalsReviewer"];
-  sandboxMode?: CodexStartOptions["sandboxMode"];
-}
-
-function isCodexAutoReviewApprovalsReviewer(value: unknown): boolean {
-  return value === "auto_review" || value === "guardian_subagent";
-}
-
-function sanitizeCodexModel(model: unknown): string | undefined {
-  if (typeof model !== "string") return undefined;
-  const normalized = model.trim();
-  if (!normalized || normalized === "codex") return undefined;
-  return normalized;
-}
-
-function codexSettingsFromPermissionsMode(
-  mode: CodexPermissionsMode,
-): CodexPermissionSettings {
-  switch (mode) {
-    case "default":
-      return {
-        codexPermissionsMode: mode,
-        approvalPolicy: "on-request",
-        approvalsReviewer: "user",
-        sandboxMode: "workspace-write",
-      };
-    case "autoReview":
-      return {
-        codexPermissionsMode: mode,
-        approvalPolicy: "on-request",
-        approvalsReviewer: "auto_review",
-        sandboxMode: "workspace-write",
-      };
-    case "fullAccess":
-      return {
-        codexPermissionsMode: mode,
-        approvalPolicy: "never",
-        approvalsReviewer: "user",
-        sandboxMode: "danger-full-access",
-      };
-    case "custom":
-      return { codexPermissionsMode: mode };
-  }
-}
-
-function errorMessageOf(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-function isClaudeAutoModeUnavailableError(err: unknown): boolean {
-  const message = errorMessageOf(err).toLowerCase();
-  const autoMentionsMode =
-    message.includes("auto mode") ||
-    message.includes('permission mode "auto"') ||
-    message.includes("permission mode auto") ||
-    message.includes("mode auto");
-  if (!autoMentionsMode) return false;
-  return (
-    message.includes("unavailable") ||
-    message.includes("not available") ||
-    message.includes("unsupported") ||
-    message.includes("not supported") ||
-    message.includes("disabled") ||
-    message.includes("requires") ||
-    message.includes("only available") ||
-    message.includes("not enabled")
-  );
-}
-
-function deriveExecutionMode(params: {
-  permissionMode?: string;
-  executionMode?: string;
-  approvalPolicy?: string;
-  provider?: Provider;
-}): "default" | "acceptEdits" | "fullAccess" {
-  if (
-    params.executionMode === "default" ||
-    params.executionMode === "acceptEdits" ||
-    params.executionMode === "fullAccess"
-  ) {
-    return params.executionMode;
-  }
-  if (
-    params.permissionMode === "bypassPermissions" ||
-    params.approvalPolicy === "never"
-  ) {
-    return "fullAccess";
-  }
-  if (params.permissionMode === "acceptEdits") {
-    return params.provider === "codex" ? "default" : "acceptEdits";
-  }
-  return "default";
-}
-
-function derivePlanMode(params: {
-  permissionMode?: string;
-  planMode?: boolean;
-  collaborationMode?: "plan" | "default";
-}): boolean {
-  return (
-    params.planMode ??
-    (params.permissionMode === "plan" || params.collaborationMode === "plan")
-  );
-}
-
-function modesToLegacyPermissionMode(
-  provider: Provider,
-  executionMode: "default" | "acceptEdits" | "fullAccess",
-  planMode: boolean,
-): "default" | "acceptEdits" | "bypassPermissions" | "plan" {
-  if (planMode) return "plan";
-  switch (executionMode) {
-    case "fullAccess":
-      return "bypassPermissions";
-    case "acceptEdits":
-      return "acceptEdits";
-    case "default":
-    default:
-      return provider === "codex" ? "acceptEdits" : "default";
-  }
-}
-
-/** Map simplified SandboxMode (on/off) to Codex internal sandbox mode. */
-function sandboxModeToInternal(
-  mode?: string,
-): "read-only" | "workspace-write" | "danger-full-access" {
-  switch (mode) {
-    case "danger-full-access":
-    case "workspace-write":
-    case "read-only":
-      return mode;
-    case "off":
-      return "danger-full-access";
-    default:
-      return "workspace-write";
-  }
-}
-
-/** Map Codex internal sandbox mode back to simplified on/off for clients. */
-function sandboxModeToExternal(mode?: string): "on" | "off" {
-  return mode === "danger-full-access" ? "off" : "on";
-}
-
-function threadTimestampToIso(value: number): string {
-  return value > 0 ? new Date(value * 1000).toISOString() : "";
-}
-
-function envFlagEnabled(name: string): boolean {
-  const value = process.env[name]?.trim().toLowerCase();
-  return value === "1" || value === "true" || value === "yes" || value === "on";
-}
-
-const MAX_TIMER_DELAY_MS = 2_147_483_647;
-
-function positiveEnvInt(name: string, fallback: number): number {
-  const raw = process.env[name]?.trim();
-  if (!raw) return fallback;
-  const value = Number(raw);
-  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
-}
-
-function nonNegativeEnvInt(name: string, fallback: number): number {
-  const raw = process.env[name]?.trim();
-  if (!raw) return fallback;
-  const value = Number(raw);
-  return Number.isSafeInteger(value) &&
-    value >= 0 &&
-    value <= MAX_TIMER_DELAY_MS
-    ? value
-    : fallback;
-}
-
-function normalizePositiveLimit(
-  value: number | undefined,
-  fallback: number,
-): number {
-  return value !== undefined && Number.isSafeInteger(value) && value > 0
-    ? value
-    : fallback;
-}
-
-function normalizeNonNegativeLimit(
-  value: number | undefined,
-  fallback: number,
-): number {
-  return value !== undefined &&
-    Number.isSafeInteger(value) &&
-    value >= 0 &&
-    value <= MAX_TIMER_DELAY_MS
-    ? value
-    : fallback;
-}
-
-const FILE_PEEK_MEDIA_TYPES: Record<
-  string,
-  { kind: "audio" | "video"; mimeType: string }
-> = {
-  ".wav": { kind: "audio", mimeType: "audio/wav" },
-  ".mp3": { kind: "audio", mimeType: "audio/mpeg" },
-  ".m4a": { kind: "audio", mimeType: "audio/mp4" },
-  ".aac": { kind: "audio", mimeType: "audio/aac" },
-  ".flac": { kind: "audio", mimeType: "audio/flac" },
-  ".ogg": { kind: "audio", mimeType: "audio/ogg" },
-  ".opus": { kind: "audio", mimeType: "audio/ogg" },
-  ".aif": { kind: "audio", mimeType: "audio/aiff" },
-  ".aiff": { kind: "audio", mimeType: "audio/aiff" },
-  ".aifc": { kind: "audio", mimeType: "audio/aiff" },
-  ".mp4": { kind: "video", mimeType: "video/mp4" },
-  ".mov": { kind: "video", mimeType: "video/quicktime" },
-  ".m4v": { kind: "video", mimeType: "video/x-m4v" },
-  ".webm": { kind: "video", mimeType: "video/webm" },
-  ".mkv": { kind: "video", mimeType: "video/x-matroska" },
-  ".avi": { kind: "video", mimeType: "video/x-msvideo" },
-  ".mpg": { kind: "video", mimeType: "video/mpeg" },
-  ".mpeg": { kind: "video", mimeType: "video/mpeg" },
-};
-
-export function downloadMimeType(filePath: string): string {
-  const extension = extname(filePath).toLowerCase();
-  const mediaType = FILE_PEEK_MEDIA_TYPES[extension];
-  if (mediaType) return mediaType.mimeType;
-  const mimeTypes: Record<string, string> = {
-    ".glb": "model/gltf-binary",
-    ".bmp": "image/bmp",
-    ".csv": "text/csv",
-    ".doc": "application/msword",
-    ".docx":
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ".gif": "image/gif",
-    ".gz": "application/gzip",
-    ".html": "text/html",
-    ".jpeg": "image/jpeg",
-    ".jpg": "image/jpeg",
-    ".json": "application/json",
-    ".md": "text/markdown",
-    ".pdf": "application/pdf",
-    ".png": "image/png",
-    ".ppt": "application/vnd.ms-powerpoint",
-    ".pptx":
-      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    ".svg": "image/svg+xml",
-    ".tar": "application/x-tar",
-    ".txt": "text/plain",
-    ".webp": "image/webp",
-    ".xls": "application/vnd.ms-excel",
-    ".xlsx":
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ".xml": "application/xml",
-    ".zip": "application/zip",
-  };
-  return mimeTypes[extension] ?? "application/octet-stream";
-}
-
-function codexThreadToRecentSession(
-  thread: CodexThreadSummary,
-  indexed?: CodexSessionIndexMetadata,
-): Record<string, unknown> {
-  // thread/list only exposes a single preview blob; prefer the real
-  // first/last/summary texts parsed from the rollout file so display-mode
-  // switches (first prompt / last prompt / summary) show distinct content.
-  return {
-    sessionId: thread.id,
-    provider: "codex",
-    ...(thread.name ? { name: thread.name } : {}),
-    ...(thread.agentNickname ? { agentNickname: thread.agentNickname } : {}),
-    ...(thread.agentRole ? { agentRole: thread.agentRole } : {}),
-    summary: indexed?.summary || thread.preview || undefined,
-    firstPrompt: indexed?.firstPrompt || thread.preview || "",
-    ...(indexed?.lastPrompt ? { lastPrompt: indexed.lastPrompt } : {}),
-    created: threadTimestampToIso(thread.createdAt),
-    modified: threadTimestampToIso(thread.updatedAt),
-    gitBranch: thread.gitBranch ?? "",
-    projectPath: thread.cwd,
-    ...(indexed?.resumeCwd ? { resumeCwd: indexed.resumeCwd } : {}),
-    isSidechain: false,
-    ...(indexed?.codexSettings ? { codexSettings: indexed.codexSettings } : {}),
-  };
-}
-
-function recentSessionModifiedTime(session: unknown): number {
-  const modified = (session as { modified?: unknown })?.modified;
-  return typeof modified === "string" ? new Date(modified).getTime() || 0 : 0;
-}
-
-function recentSessionDedupeKey(session: unknown, fallbackIndex: number): string {
-  const value = session as { provider?: unknown; sessionId?: unknown };
-  return typeof value.provider === "string" && typeof value.sessionId === "string"
-    ? `${value.provider}:${value.sessionId}`
-    : `unknown:${fallbackIndex}`;
-}
-
-type ListRecentSessionsMessage = Extract<
-  ClientMessage,
-  { type: "list_recent_sessions" }
->;
-
-interface RecentSessionsListing {
-  sessions: unknown[];
-  hasMore: boolean;
-  /**
-   * Requested pinned sessions that match the listing filters, independent of
-   * pagination. Only set for first-page list requests that sent pins.
-   */
-  pinnedSessions?: unknown[];
-}
-
-/**
- * Provider-qualified keys of the pinned sessions a request asks for, or
- * undefined when pinned sessions must not be resolved for this request
- * (project-scoped pages, later pages, or no pins sent).
- */
-export function pinnedSessionKeysForRecentRequest(
-  msg: ListRecentSessionsMessage,
-): Set<string> | undefined {
-  // With pinnedOnly the page itself already contains every pinned session.
-  if (msg.pinnedOnly === true) return undefined;
-  if (msg.requestScope === "project") return undefined;
-  if ((msg.offset ?? 0) !== 0) return undefined;
-  const pinned = msg.pinnedSessions;
-  if (!pinned || pinned.length === 0) return undefined;
-  return new Set(
-    pinned
-      .filter((pin) => !msg.provider || pin.provider === msg.provider)
-      .map((pin) => recentSessionIdentityKey(pin.provider, pin.sessionId)),
-  );
-}
-
-/**
- * Keys of `pinnedSessions` that define the result set of a `pinnedOnly`
- * request (any scope / offset), or undefined when `pinnedOnly` is not set.
- */
-export function pinnedOnlySessionKeys(
-  msg: ListRecentSessionsMessage,
-): Set<string> | undefined {
-  if (msg.pinnedOnly !== true) return undefined;
-  return new Set(
-    (msg.pinnedSessions ?? [])
-      .filter((pin) => !msg.provider || pin.provider === msg.provider)
-      .map((pin) => recentSessionIdentityKey(pin.provider, pin.sessionId)),
-  );
-}
-
-/**
- * In-flight coalescing key of a `list_recent_sessions` request. Includes every
- * field that changes the result (pins only where they are used).
- */
-export function recentSessionsCoalescingKey(
-  msg: ListRecentSessionsMessage,
-): string {
-  const pinnedKeys = pinnedSessionKeysForRecentRequest(msg);
-  const pinnedOnlyKeys = pinnedOnlySessionKeys(msg);
-  const sortedFilters = (filters: RecentProjectFilter[] | undefined) =>
-    filters
-      ? filters
-          .map((filter) =>
-            JSON.stringify([
-              filter.projectPath ?? null,
-              filter.projectId ?? null,
-              filter.workspaceKind ?? null,
-            ]),
-          )
-          .sort()
-      : null;
-  return JSON.stringify({
-    limit: msg.limit ?? null,
-    offset: msg.offset ?? null,
-    projectPath: msg.projectPath ?? null,
-    projectId: msg.projectId ?? null,
-    workspaceKind: msg.workspaceKind ?? null,
-    requestScope: msg.requestScope ?? null,
-    provider: msg.provider ?? null,
-    namedOnly: msg.namedOnly ?? null,
-    searchQuery: msg.searchQuery ?? null,
-    searchContent: msg.searchContent ?? null,
-    pinnedSessions: pinnedKeys ? [...pinnedKeys].sort() : null,
-    projectFilters: sortedFilters(msg.projectFilters),
-    modifiedAfter: msg.modifiedAfter ?? null,
-    modifiedBefore: msg.modifiedBefore ?? null,
-    dateField: msg.dateField ?? null,
-    pinnedOnly: msg.pinnedOnly ?? null,
-    pinnedOnlySessions: pinnedOnlyKeys ? [...pinnedOnlyKeys].sort() : null,
-    pinnedProjects: msg.pinnedOnly ? sortedFilters(msg.pinnedProjects) : null,
-  });
-}
-
-/** Content (transcript) search requested with a non-empty query. */
-export function isRecentContentSearch(msg: ListRecentSessionsMessage): boolean {
-  return msg.searchContent === true && Boolean(msg.searchQuery?.trim());
-}
-
-/** `projectFilters` apply to list requests only (project scope replaces them). */
-function effectiveRecentProjectFilters(
-  msg: ListRecentSessionsMessage,
-): RecentProjectFilter[] | undefined {
-  return msg.requestScope !== "project" && (msg.projectFilters?.length ?? 0) > 0
-    ? msg.projectFilters
-    : undefined;
-}
-
-/**
- * Whether the request uses any `recent_sessions_filters_v1` filter, which
- * routes it through the predicate-based listing path.
- */
-export function recentSessionsFiltersRequested(
-  msg: ListRecentSessionsMessage,
-): boolean {
-  return (
-    effectiveRecentProjectFilters(msg) !== undefined ||
-    msg.modifiedAfter !== undefined ||
-    msg.modifiedBefore !== undefined ||
-    msg.pinnedOnly === true ||
-    // Keyword searches, single projects and named only too: app-server
-    // `thread/list` paging / searchTerm took seconds, while the index plus the
-    // Codex thread snapshot answers in tens of milliseconds.
-    Boolean(msg.searchQuery?.trim()) ||
-    msg.projectPath !== undefined ||
-    msg.projectId !== undefined ||
-    msg.workspaceKind !== undefined ||
-    msg.namedOnly === true ||
-    isRecentContentSearch(msg)
-  );
-}
-
-function recentDateBound(value: string | undefined): number | undefined {
-  if (value === undefined) return undefined;
-  const time = Date.parse(value);
-  return Number.isFinite(time) ? time : undefined;
-}
-
-/**
- * Predicate over (workspace-enriched) recent sessions combining, with AND:
- * the single project fields, `projectFilters` (OR), the date range and
- * `pinnedOnly` (pinned session keys OR any `pinnedProjects` entry).
- */
-export function buildRecentSessionPredicate(
-  msg: ListRecentSessionsMessage,
-  listProjects: () => ReadonlyArray<{ id: string; rootPaths: readonly string[] }>,
-  pinnedKeys?: ReadonlySet<string>,
-): (session: unknown) => boolean {
-  type Probe = {
-    provider?: unknown;
-    sessionId?: unknown;
-    projectPath?: unknown;
-    created?: unknown;
-    modified?: unknown;
-    workspace?: Record<string, unknown>;
-  };
-  const projectMatcher = (filter: RecentProjectFilter) => {
-    const primaryProjectIds = new Set(
-      filter.projectPath === undefined
-        ? []
-        : listProjects()
-            .filter((project) => project.rootPaths[0] === filter.projectPath)
-            .map((project) => project.id),
-    );
-    return (value: Probe): boolean => {
-      const workspace = value.workspace;
-      if (filter.projectId && workspace?.projectId !== filter.projectId) {
-        return false;
-      }
-      if (filter.workspaceKind && workspace?.kind !== filter.workspaceKind) {
-        return false;
-      }
-      if (filter.projectPath !== undefined) {
-        const matchesPrimaryProject =
-          typeof workspace?.projectId === "string" &&
-          primaryProjectIds.has(workspace.projectId);
-        if (value.projectPath !== filter.projectPath && !matchesPrimaryProject) {
-          return false;
-        }
-      }
-      return true;
-    };
-  };
-  const matchesScope = projectMatcher({
-    projectPath: msg.projectPath,
-    projectId: msg.projectId,
-    workspaceKind: msg.workspaceKind,
-  });
-  const projectFilterMatchers =
-    effectiveRecentProjectFilters(msg)?.map(projectMatcher);
-  const pinnedProjectMatchers =
-    msg.pinnedOnly === true
-      ? (msg.pinnedProjects ?? []).map(projectMatcher)
-      : undefined;
-  const after = recentDateBound(msg.modifiedAfter);
-  const before = recentDateBound(msg.modifiedBefore);
-  const dateField = msg.dateField === "created" ? "created" : "modified";
-
-  return (session: unknown): boolean => {
-    const value = (session ?? {}) as Probe;
-    if (!matchesScope(value)) return false;
-    if (
-      projectFilterMatchers &&
-      !projectFilterMatchers.some((matches) => matches(value))
-    ) {
-      return false;
-    }
-    if (after !== undefined || before !== undefined) {
-      const raw = value[dateField];
-      const time = typeof raw === "string" ? Date.parse(raw) : Number.NaN;
-      if (!Number.isFinite(time)) return false;
-      if (after !== undefined && time < after) return false;
-      if (before !== undefined && time >= before) return false;
-    }
-    if (pinnedProjectMatchers) {
-      const pinned =
-        typeof value.provider === "string" &&
-        typeof value.sessionId === "string" &&
-        (pinnedKeys?.has(
-          recentSessionIdentityKey(value.provider, value.sessionId),
-        ) ??
-          false);
-      if (!pinned && !pinnedProjectMatchers.some((matches) => matches(value))) {
-        return false;
-      }
-    }
-    return true;
-  };
-}
-
-/**
- * Pinned entries from the rollout/index scan, shaped like the page entries the
- * app-server `thread/list` listing produces for Codex.
- */
-function pinnedIndexEntriesAsListingShape(
-  entries: readonly SessionIndexEntry[] | undefined,
-): SessionIndexEntry[] | undefined {
-  return entries?.map((entry) =>
-    entry.provider === "codex" ? codexEntryAsThreadListShape(entry) : entry,
-  );
-}
-
-function mergeRecentSessionPages(sessions: unknown[]): unknown[] {
-  const seen = new Set<string>();
-  const merged: unknown[] = [];
-  for (const session of sessions) {
-    const key = recentSessionDedupeKey(session, merged.length);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    merged.push(session);
-  }
-  return merged.sort(
-    (a, b) => recentSessionModifiedTime(b) - recentSessionModifiedTime(a),
-  );
-}
+import {
+  type SystemServerMessage,
+  type ResultServerMessage,
+  BACKGROUND_COMPLETION_SETTLE_MS,
+  type InputClientMessage,
+  type ResumeClientMessage,
+  type ResumeOperation,
+  RESUME_OPERATION_TIMEOUT_MS,
+  RESUME_COMPLETED_TTL_MS,
+  FALLBACK_CLAUDE_MODEL_OPTIONS,
+  FALLBACK_CLAUDE_MODELS,
+  FALLBACK_CLAUDE_MODEL_EFFORTS,
+  type ClaudeModelOption,
+  FALLBACK_CODEX_MODELS,
+  fallbackCodexReasoningEfforts,
+  fallbackCodexServiceTiers,
+  CODEX_RECENT_THREAD_SOURCE_KINDS,
+  BRIDGE_PROTOCOL_CAPABILITIES,
+  ANTIGRAVITY_PROTOCOL_CAPABILITIES,
+  ANTIGRAVITY_CATALOG_TTL_MS,
+  OPT_IN_SERVER_MESSAGES,
+  isRecord,
+  errorMessageOf,
+  envFlagEnabled,
+  positiveEnvInt,
+  nonNegativeEnvInt,
+  normalizePositiveLimit,
+  normalizeNonNegativeLimit,
+} from "./websocket/shared.js";
+import {
+  codexThreadToRecentSession,
+  type RecentSessionsListing,
+  pinnedSessionKeysForRecentRequest,
+  pinnedOnlySessionKeys,
+  recentSessionsCoalescingKey,
+  isRecentContentSearch,
+  recentSessionsFiltersRequested,
+  buildRecentSessionPredicate,
+  mergeRecentSessionPages,
+} from "./websocket/recent-sessions.js";
+import {
+  CONNECT_METADATA_REFRESH_COOLDOWN_MS,
+  DEFAULT_FILE_LIST_MAX_ENTRIES,
+  DEFAULT_FILE_LIST_MAX_BYTES,
+  DEFAULT_FILE_DOWNLOAD_MAX_BYTES,
+  DEFAULT_FILE_UPLOAD_MAX_BYTES,
+  DEFAULT_DELTA_BATCH_MS,
+  DEFAULT_DELTA_BATCH_MAX_CHARS,
+} from "./websocket/shared.js";
+import {
+  handleGetDiff,
+  handleGetDiffImage,
+  handleListWorktrees,
+  handleRemoveWorktree,
+  handleGitStage,
+  handleGitUnstage,
+  handleGitUnstageHunks,
+  handleGitCommit,
+  handleGitPush,
+  handleGitBranches,
+  handleGitCreateBranch,
+  handleGitCheckoutBranch,
+  handleGitRevertFile,
+  handleGitRevertHunks,
+  handleGitFetch,
+  handleGitPull,
+  handleGitStatus,
+  handleGitRemoteStatus,
+  handleGithubList,
+} from "./websocket/handlers/git.js";
+import {
+  handlePrepareFileDownload,
+  handlePrepareFileUpload,
+  handleFinalizeFileUpload,
+  handleCancelFileUpload,
+  handleRevealFileLocal,
+  handleReadFile,
+  handleListFiles,
+} from "./websocket/handlers/files.js";
+import {
+  handleListProjectHistory,
+  handleRemoveProjectHistory,
+  handleListProjects,
+  handleBootstrapProject,
+  handleTrustProject,
+  handleCreateProject,
+  handleUpdateProject,
+  handleRemoveProject,
+  handleListDirectory,
+} from "./websocket/handlers/projects.js";
+import {
+  handleBackupPromptHistory,
+  handleRestorePromptHistory,
+  handleGetPromptHistoryBackupInfo,
+  handleRecordPromptHistory,
+  handleSyncPromptHistory,
+  handleMutatePromptHistory,
+  handleImportPromptHistoryV1,
+} from "./websocket/handlers/prompt-history.js";
+import {
+  handlePushRegister,
+  handlePushUnregister,
+} from "./websocket/handlers/push.js";
+import {
+  handleGetDebugBundle,
+  handleGetUsage,
+  handleListRecordings,
+  handleGetRecording,
+  handleListWindows,
+  handleTakeScreenshot,
+} from "./websocket/handlers/diagnostics.js";
+import {
+  handleApprove,
+  handleApproveAlways,
+  handleReject,
+  handleAnswer,
+  handleInstallToolSuggestion,
+} from "./websocket/handlers/approvals.js";
+import {
+  handleSetCodexRecovery,
+  handleGetGoal,
+  handleSetGoal,
+  handleClearGoal,
+} from "./websocket/handlers/codex-control.js";
+import {
+  handleSetAntigravityModel,
+  handleSetAntigravitySettings,
+  handleGetAntigravityCatalog,
+  handleSetCodexModel,
+  handleSetCodexSpeed,
+  handleSetClaudeSettings,
+} from "./websocket/handlers/session-settings.js";
+import {
+  handleListSessions,
+  handleStopSession,
+  handleResolveSessionLink,
+  handleRefreshBranch,
+  handleListRecentSessions,
+  handleArchiveSession,
+  handleRenameSession,
+} from "./websocket/handlers/session-catalog.js";
+import {
+  handleGetPins,
+  handleSetProjectPin,
+  handleSetSessionPin,
+} from "./websocket/handlers/pins.js";
+import {
+  handleGetSharedState,
+  handleSeedSharedState,
+  handleSetSharedState,
+} from "./websocket/handlers/shared-state.js";
+import {
+  handleGetHistory,
+  handleGetSessionTranscript,
+  handleGetSessionContext,
+  handleGetHistoryDelta,
+  handleListGallery,
+  handleGetMessageImages,
+} from "./websocket/handlers/session-history.js";
+import {
+  handleRewindDryRun,
+  handleRewind,
+  handleFork,
+} from "./websocket/handlers/rewind-fork.js";
+import { handleHandoffSession } from "./websocket/handlers/session-handoff.js";
+import {
+  handleInput,
+  handleUpdateQueuedInput,
+  handleCancelQueuedInput,
+  handleSteerQueuedInput,
+  handleInterrupt,
+  handleEditMessage,
+} from "./websocket/handlers/session-input.js";
+import {
+  handleSetPermissionMode,
+  handleSetSandboxMode,
+} from "./websocket/handlers/session-modes.js";
+import { handleStart } from "./websocket/handlers/session-start.js";
+import { handleResumeSession } from "./websocket/handlers/session-resume.js";
+import {
+  extractSessionIdFromClientMessage,
+  extractSessionIdFromServerMessage,
+  recordDebugEvent,
+  summarizeClientMessage,
+  summarizeServerMessage,
+  summarizeOutboundMessage,
+  pruneDebugEvents,
+} from "./websocket/debug-trace.js";
+import {
+  isPathReadable,
+  isCanonicalPathReadable,
+} from "./websocket/file-access.js";
+import {
+  codexThreadIdForSession,
+  applyCodexCanonicalHistoryBaseline,
+  historyValueKey,
+  codexHistoryToServerMessages,
+  sessionHistoryText,
+  sessionHistoryAssistantContent,
+  sessionHistorySingleToolUseId,
+  registerPastUserMessageImages,
+  resolveAssistantImages,
+  registerPastToolResultImages,
+  getCodexThreadHistoryFromRpc,
+} from "./websocket/session-history.js";
+import {
+  getFirstSession,
+  sendPromptHistoryStatus,
+  sendConversationQueue,
+} from "./websocket/session-state.js";
+import {
+  listFilteredAntigravitySessions,
+  listPinnedCodexSessions,
+  listSnapshotOnlyCodexSessions,
+  listWorkspaceFilteredIndexedSessions,
+  listRecentSessionsRaw,
+  enrichRecentSessionWorkspace,
+} from "./websocket/recent-sessions.js";
+import {
+  runtimeSessionsWithWorkspaces,
+  persistPendingSessionWorkspace,
+  workspaceForRuntimeSession,
+  legacyProjectHistoryProjects,
+} from "./websocket/workspaces.js";
+import {
+  loadClaudeModels,
+  applyFallbackClaudeModels,
+  readCodexModels,
+  readCodexAutoReviewDisabled,
+  applyFallbackCodexModels,
+} from "./websocket/models.js";
+import {
+  maybeSendPushNotification,
+  keepsWorkingInBackground,
+  sendCompletionPush,
+} from "./websocket/push-notifications.js";
+export {
+  pinnedSessionKeysForRecentRequest,
+  pinnedOnlySessionKeys,
+  recentSessionsCoalescingKey,
+  isRecentContentSearch,
+  recentSessionsFiltersRequested,
+  buildRecentSessionPredicate,
+} from "./websocket/recent-sessions.js";
+export { downloadMimeType } from "./websocket/shared.js";
+export type { ClaudeModelOption } from "./websocket/shared.js";
 
 export interface BridgeServerOptions {
+  /**
+   * Reports whether the Antigravity CLI can be used. Left out, Antigravity is
+   * treated as unavailable (tests); the Bridge entry point passes the real probe.
+   */
+  detectAntigravity?: () => Promise<boolean>;
+  /** Reads what a new Antigravity session offers. Tests replace it. */
+  fetchAntigravityCatalog?: () => Promise<AntigravityCatalog>;
+  /** Reads Antigravity's plan quota from the CLI. Tests replace it. */
+  fetchAntigravityUsage?: (bin: string) => Promise<UsageInfo[]>;
+  /** Antigravity config override for tests. */
+  antigravityConfig?: AntigravityConfig;
+  /** Where names and models of Antigravity conversations are kept. */
+  antigravityStore?: AntigravityStore;
+  /** Pinned sessions and projects. Tests replace it to avoid `~/.ccpocket`. */
+  pinStore?: PinStore;
+  /** Shared settings. Tests replace it to avoid `~/.ccpocket`. */
+  sharedStateStore?: SharedStateStore;
   server: HttpServer;
   apiKey?: string;
   allowedDirs?: string[];
@@ -1112,39 +408,30 @@ interface DeltaTextChunk {
 }
 
 export class BridgeWebSocketServer {
-  private static readonly MAX_DEBUG_EVENTS = 800;
-  private static readonly MAX_HISTORY_SUMMARY_ITEMS = 300;
-  private static readonly CONNECT_METADATA_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
-  private static readonly DEFAULT_FILE_LIST_MAX_ENTRIES = 5000;
-  private static readonly DEFAULT_FILE_LIST_MAX_BYTES = 512 * 1024;
-  private static readonly DEFAULT_FILE_DOWNLOAD_MAX_BYTES = 512 * 1024 * 1024;
-  private static readonly DEFAULT_FILE_UPLOAD_MAX_BYTES = 512 * 1024 * 1024;
-  private static readonly DEFAULT_DELTA_BATCH_MS = 100;
-  private static readonly DEFAULT_DELTA_BATCH_MAX_CHARS = 4096;
 
   private wss: WebSocketServer;
-  private sessionManager: SessionManager;
+  sessionManager: SessionManager;
   private apiKey: string | null;
-  private allowedDirs: string[];
-  private readOnlyDirs: string[];
-  private assistantImageResolver: AssistantImageResolver | null = null;
-  private fileDownloadAllowAllPaths: boolean;
-  private imageStore: ImageStore | null;
-  private mediaStore: MediaStore | null;
-  private uploadStore: UploadStore | null;
-  private galleryStore: GalleryStore | null;
-  private projectHistory: ProjectHistory | null;
-  private workspaceStore: WorkspaceStore | null;
-  private pendingSessionWorkspaces = new Map<string, ResolvedWorkspace>();
-  private debugTraceStore: DebugTraceStore;
-  private recordingStore: RecordingStore | null;
-  private worktreeStore: WorktreeStore;
-  private pushRelay: PushRelayClient;
-  private completionGate: BackgroundCompletionGate<ResultServerMessage>;
-  private promptHistoryBackup: PromptHistoryBackupStore | null;
-  private promptHistoryStore: PromptHistoryStore | null;
+  allowedDirs: string[];
+  readOnlyDirs: string[];
+  assistantImageResolver: AssistantImageResolver | null = null;
+  fileDownloadAllowAllPaths: boolean;
+  imageStore: ImageStore | null;
+  mediaStore: MediaStore | null;
+  uploadStore: UploadStore | null;
+  galleryStore: GalleryStore | null;
+  projectHistory: ProjectHistory | null;
+  workspaceStore: WorkspaceStore | null;
+  pendingSessionWorkspaces = new Map<string, ResolvedWorkspace>();
+  debugTraceStore: DebugTraceStore;
+  recordingStore: RecordingStore | null;
+  worktreeStore: WorktreeStore;
+  pushRelay: PushRelayClient;
+  completionGate: BackgroundCompletionGate<ResultServerMessage>;
+  promptHistoryBackup: PromptHistoryBackupStore | null;
+  promptHistoryStore: PromptHistoryStore | null;
 
-  private recentSessionsRequestIds = new WeakMap<WebSocket, number>();
+  recentSessionsRequestIds = new WeakMap<WebSocket, number>();
   private recentSessionsInFlight = new Map<
     string,
     Promise<RecentSessionsListing>
@@ -1157,60 +444,76 @@ export class BridgeWebSocketServer {
    */
   private contentSearchDepth = new Map<string, { files: number; at: number }>();
   /** Every Codex thread, for threads only kept as compressed rollouts. */
-  private codexThreadSnapshot = new CodexThreadSnapshot((onPage) =>
+  codexThreadSnapshot = new CodexThreadSnapshot((onPage) =>
     this.loadAllCodexThreads(onPage),
   );
-  private debugEvents = new Map<string, DebugTraceEvent[]>();
-  private notifiedPermissionToolUses = new Map<string, Set<string>>();
-  private archiveStore: ArchiveStore;
-  private codexProfiles: string[] = [];
-  private defaultCodexProfile: string | undefined;
-  private codexAutoReviewDisabled = false;
-  private codexAutoReviewPolicyLoaded = false;
+  debugEvents = new Map<string, DebugTraceEvent[]>();
+  notifiedPermissionToolUses = new Map<string, Set<string>>();
+  archiveStore: ArchiveStore;
+  readonly pinStore: PinStore;
+  readonly sharedStateStore: SharedStateStore;
+  readonly antigravityStore: AntigravityStore;
+  antigravityUsageCache: { at: number; usage: UsageInfo[] } | undefined;
+  private antigravityUsageRead: Promise<UsageInfo[]> | undefined;
+  private readonly loadAntigravityUsage: (bin: string) => Promise<UsageInfo[]>;
+  /** A catalog read in flight, shared by everyone who asks meanwhile. */
+  private antigravityCatalogRead: Promise<AntigravityCatalog> | undefined;
+  private readonly loadAntigravityCatalog: () => Promise<AntigravityCatalog>;
+  codexProfiles: string[] = [];
+  defaultCodexProfile: string | undefined;
+  codexAutoReviewDisabled = false;
+  /** `agy acp` is installed; gates the `antigravity_v1` capability. */
+  private antigravityAvailable = false;
+  private readonly detectAntigravity: (() => Promise<boolean>) | undefined;
+  private readonly antigravityConfigOverride: AntigravityConfig | undefined;
+  private antigravitySessionsCache:
+    | { at: number; entries: Promise<AntigravitySessionEntry[]> }
+    | undefined;
+  codexAutoReviewPolicyLoaded = false;
   private codexMetadataRequest: Promise<void> | null = null;
   private lastConnectMetadataRefreshAt: number | null = null;
-  private claudeModels: string[] = FALLBACK_CLAUDE_MODELS;
-  private claudeModelOptions: ClaudeModelOption[] = FALLBACK_CLAUDE_MODEL_OPTIONS;
-  private claudeModelEfforts: Record<string, ClaudeEffortLevel[]> = {
+  claudeModels: string[] = FALLBACK_CLAUDE_MODELS;
+  claudeModelOptions: ClaudeModelOption[] = FALLBACK_CLAUDE_MODEL_OPTIONS;
+  claudeModelEfforts: Record<string, ClaudeEffortLevel[]> = {
     ...FALLBACK_CLAUDE_MODEL_EFFORTS,
   };
   private claudeModelsRequest: Promise<void> | null = null;
-  private codexModels: string[] = FALLBACK_CODEX_MODELS;
-  private codexModelReasoningEfforts: Record<string, string[]> =
+  codexModels: string[] = FALLBACK_CODEX_MODELS;
+  codexModelReasoningEfforts: Record<string, string[]> =
     Object.fromEntries(
       FALLBACK_CODEX_MODELS.map((model) => [
         model,
         fallbackCodexReasoningEfforts(model),
       ]),
     );
-  private codexModelServiceTiers: Record<string, string[]> = Object.fromEntries(
+  codexModelServiceTiers: Record<string, string[]> = Object.fromEntries(
     FALLBACK_CODEX_MODELS.map((model) => [
       model,
       fallbackCodexServiceTiers(model),
     ]),
   );
-  private codexModelServiceTierMetadata: Record<
+  codexModelServiceTierMetadata: Record<
     string,
     CodexServiceTierMetadata[]
   > = {};
   /** FCM token → push notification locale */
-  private tokenLocales = new Map<string, PushLocale>();
-  private tokenPrivacyMode = new Map<string, boolean>();
-  private pushTokenGeneration = new Map<string, number>();
-  private pushTokenOperations = new Map<string, Promise<void>>();
-  private nextPushTokenGeneration = 0;
-  private failSetPermissionMode = envFlagEnabled(
+  tokenLocales = new Map<string, PushLocale>();
+  tokenPrivacyMode = new Map<string, boolean>();
+  pushTokenGeneration = new Map<string, number>();
+  pushTokenOperations = new Map<string, Promise<void>>();
+  nextPushTokenGeneration = 0;
+  failSetPermissionMode = envFlagEnabled(
     "BRIDGE_FAIL_SET_PERMISSION_MODE",
   );
-  private failSetSandboxMode = envFlagEnabled("BRIDGE_FAIL_SET_SANDBOX_MODE");
-  private readonly fileListMaxEntries: number;
-  private readonly fileListMaxBytes: number;
-  private readonly fileDownloadMaxBytes: number;
-  private readonly fileUploadMaxBytes: number;
+  failSetSandboxMode = envFlagEnabled("BRIDGE_FAIL_SET_SANDBOX_MODE");
+  readonly fileListMaxEntries: number;
+  readonly fileListMaxBytes: number;
+  readonly fileDownloadMaxBytes: number;
+  readonly fileUploadMaxBytes: number;
   private readonly deltaBatchMs: number;
   private readonly deltaBatchMaxChars: number;
   private deltaBatches = new Map<WebSocket, Map<string, DeltaBatch>>();
-  private platform: NodeJS.Platform;
+  platform: NodeJS.Platform;
   private deliveryPreferences = new WeakMap<
     WebSocket,
     { enabled: boolean; sessions: Record<string, boolean> }
@@ -1225,16 +528,22 @@ export class BridgeWebSocketServer {
       : prefs.enabled;
   }
 
-  private clientSupportedServerMessages = new WeakMap<WebSocket, Set<string>>();
+  clientSupportedServerMessages = new WeakMap<WebSocket, Set<string>>();
   private clientProtocolVersions = new WeakMap<WebSocket, number>();
   private rejectedProtocolClients = new WeakSet<WebSocket>();
-  private pendingClaudeResumeInputs = new WeakMap<
+  pendingClaudeResumeInputs = new WeakMap<
     WebSocket,
     Map<string, InputClientMessage[]>
   >();
   private resumeOperations = new Map<string, ResumeOperation>();
 
   constructor(options: BridgeServerOptions) {
+    this.detectAntigravity = options.detectAntigravity;
+    this.antigravityConfigOverride = options.antigravityConfig;
+    this.loadAntigravityUsage =
+      options.fetchAntigravityUsage ?? fetchAntigravityUsage;
+    this.loadAntigravityCatalog =
+      options.fetchAntigravityCatalog ?? (() => fetchAntigravityCatalog());
     const {
       server,
       apiKey,
@@ -1279,11 +588,11 @@ export class BridgeWebSocketServer {
         return (
           !!session &&
           session.status === "idle" &&
-          !session.backgroundTasks?.some(isAgentBackgroundTask)
+          !keepsWorkingInBackground(this, sessionId)
         );
       },
       release: (sessionId, completion) =>
-        this.sendCompletionPush(sessionId, completion),
+        sendCompletionPush(this, sessionId, completion),
     });
     this.promptHistoryBackup = promptHistoryBackup ?? null;
     this.promptHistoryStore = promptHistoryStore ?? null;
@@ -1292,46 +601,54 @@ export class BridgeWebSocketServer {
       fileListMaxEntries,
       positiveEnvInt(
         "BRIDGE_FILE_LIST_MAX_ENTRIES",
-        BridgeWebSocketServer.DEFAULT_FILE_LIST_MAX_ENTRIES,
+        DEFAULT_FILE_LIST_MAX_ENTRIES,
       ),
     );
     this.fileListMaxBytes = normalizePositiveLimit(
       fileListMaxBytes,
       positiveEnvInt(
         "BRIDGE_FILE_LIST_MAX_BYTES",
-        BridgeWebSocketServer.DEFAULT_FILE_LIST_MAX_BYTES,
+        DEFAULT_FILE_LIST_MAX_BYTES,
       ),
     );
     this.fileDownloadMaxBytes = normalizePositiveLimit(
       fileDownloadMaxBytes,
       positiveEnvInt(
         "BRIDGE_FILE_DOWNLOAD_MAX_SIZE_MB",
-        BridgeWebSocketServer.DEFAULT_FILE_DOWNLOAD_MAX_BYTES / 1024 / 1024,
+        DEFAULT_FILE_DOWNLOAD_MAX_BYTES / 1024 / 1024,
       ) * 1024 * 1024,
     );
     this.fileUploadMaxBytes = normalizePositiveLimit(
       fileUploadMaxBytes,
       positiveEnvInt(
         "BRIDGE_FILE_UPLOAD_MAX_SIZE_MB",
-        BridgeWebSocketServer.DEFAULT_FILE_UPLOAD_MAX_BYTES / 1024 / 1024,
+        DEFAULT_FILE_UPLOAD_MAX_BYTES / 1024 / 1024,
       ) * 1024 * 1024,
     );
     this.deltaBatchMs = normalizeNonNegativeLimit(
       deltaBatchMs,
       nonNegativeEnvInt(
         "BRIDGE_DELTA_BATCH_MS",
-        BridgeWebSocketServer.DEFAULT_DELTA_BATCH_MS,
+        DEFAULT_DELTA_BATCH_MS,
       ),
     );
     this.deltaBatchMaxChars = normalizePositiveLimit(
       deltaBatchMaxChars,
       positiveEnvInt(
         "BRIDGE_DELTA_BATCH_MAX_CHARS",
-        BridgeWebSocketServer.DEFAULT_DELTA_BATCH_MAX_CHARS,
+        DEFAULT_DELTA_BATCH_MAX_CHARS,
       ),
     );
 
     this.archiveStore = new ArchiveStore();
+    this.pinStore = options.pinStore ?? new PinStore();
+    void this.pinStore.init();
+    this.sharedStateStore = options.sharedStateStore ?? new SharedStateStore();
+    void this.sharedStateStore.init();
+    this.antigravityStore = options.antigravityStore ?? new AntigravityStore();
+    void this.antigravityStore.init().catch((err) => {
+      console.error("[ws] Failed to initialize Antigravity store:", err);
+    });
     void this.debugTraceStore.init().catch((err) => {
       console.error("[ws] Failed to initialize debug trace store:", err);
     });
@@ -1362,8 +679,8 @@ export class BridgeWebSocketServer {
     this.assistantImageResolver = imageStore
       ? createAssistantImageResolver({
           imageStore,
-          isPathReadable: (path) => this.isPathReadable(path),
-          isCanonicalPathReadable: (path) => this.isCanonicalPathReadable(path),
+          isPathReadable: (path) => isPathReadable(this, path),
+          isCanonicalPathReadable: (path) => isCanonicalPathReadable(this, path),
         })
       : null;
 
@@ -1382,11 +699,21 @@ export class BridgeWebSocketServer {
       },
       this.worktreeStore,
       (sessionId) => {
-        void this.persistPendingSessionWorkspace(sessionId);
+        void persistPendingSessionWorkspace(this, sessionId);
         this.broadcastSessionList();
       },
     );
     this.sessionManager.setAssistantImageResolver(this.assistantImageResolver);
+    this.sessionManager.setAntigravityCompactionHandler(
+      (claudeSessionId, record) => {
+        void this.antigravityStore.addCompaction(claudeSessionId, record);
+      },
+    );
+    this.sessionManager.setAntigravityPermissionGrantsHandler(
+      (claudeSessionId, grants) => {
+        void this.antigravityStore.setPermissionGrants(claudeSessionId, grants);
+      },
+    );
 
     this.wss.on("connection", (ws, req) => {
       // API key authentication
@@ -1411,389 +738,7 @@ export class BridgeWebSocketServer {
     console.log(`[ws] WebSocket server attached to HTTP server`);
   }
 
-  /**
-   * Validate that a project path is within the allowed directories.
-   * Returns true if the path is allowed, false otherwise.
-   */
-  private isPathAllowed(path: string): boolean {
-    if (this.allowedDirs.length === 0) return true;
-    return this.allowedDirs.some(
-      (dir) => isPathWithinAllowedDirectory(path, dir, this.platform),
-    );
-  }
-
-  private async isCanonicalPathAllowed(path: string): Promise<boolean> {
-    if (this.allowedDirs.length === 0) return true;
-    for (const dir of this.allowedDirs) {
-      let canonicalDir = dir;
-      try {
-        canonicalDir = await realpath(dir);
-      } catch {
-        // Keep the configured path when the allowed root cannot be resolved.
-      }
-      if (isPathWithinAllowedDirectory(path, canonicalDir, this.platform)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  private isPathInReadOnlyDir(path: string): boolean {
-    return this.readOnlyDirs.some(
-      (dir) => isPathWithinAllowedDirectory(path, dir, this.platform),
-    );
-  }
-
-  private async isCanonicalPathInReadOnlyDir(path: string): Promise<boolean> {
-    for (const dir of this.readOnlyDirs) {
-      let canonicalDir = dir;
-      try {
-        canonicalDir = await realpath(dir);
-      } catch {
-        // Keep the configured path when the read-only root cannot be resolved.
-      }
-      if (isPathWithinAllowedDirectory(path, canonicalDir, this.platform)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /**
-   * Read access: allowed directories plus BRIDGE_READONLY_DIRS. Use only for
-   * file preview, download, and reveal — never for projects or writes.
-   */
-  private isPathReadable(path: string): boolean {
-    return this.isPathAllowed(path) || this.isPathInReadOnlyDir(path);
-  }
-
-  private async isCanonicalPathReadable(path: string): Promise<boolean> {
-    return (
-      (await this.isCanonicalPathAllowed(path)) ||
-      (await this.isCanonicalPathInReadOnlyDir(path))
-    );
-  }
-
-  private sendFileDownloadError(
-    ws: WebSocket,
-    request: Extract<ClientMessage, { type: "prepare_file_download" }>,
-    errorCode:
-      | "file_download_not_allowed"
-      | "file_download_not_found"
-      | "file_download_not_file"
-      | "file_download_too_large"
-      | "file_download_unavailable"
-      | "file_download_failed",
-    message: string,
-  ): void {
-    this.send(ws, {
-      type: "error",
-      errorCode,
-      message,
-      path: request.filePath,
-      requestId: request.requestId,
-    });
-  }
-
-  private async prepareFileDownload(
-    ws: WebSocket,
-    request: Extract<ClientMessage, { type: "prepare_file_download" }>,
-  ): Promise<void> {
-    const pathApi = this.platform === "win32" ? win32 : posix;
-    const projectPath = pathApi.resolve(request.projectPath);
-    const requestedPath = pathApi.resolve(projectPath, request.filePath);
-    if (
-      !this.isPathAllowed(projectPath) ||
-      (!this.fileDownloadAllowAllPaths &&
-        !isPathWithinAllowedDirectory(requestedPath, projectPath, this.platform) &&
-        !this.isPathInReadOnlyDir(requestedPath))
-    ) {
-      this.sendFileDownloadError(
-        ws,
-        request,
-        "file_download_not_allowed",
-        "The requested file is outside the current project.",
-      );
-      return;
-    }
-
-    let canonicalProjectPath: string;
-    try {
-      canonicalProjectPath = await realpath(projectPath);
-      const projectStat = await stat(canonicalProjectPath);
-      if (
-        !projectStat.isDirectory() ||
-        !(await this.isCanonicalPathAllowed(canonicalProjectPath))
-      ) {
-        throw new Error("project not allowed");
-      }
-    } catch {
-      this.sendFileDownloadError(
-        ws,
-        request,
-        "file_download_not_allowed",
-        "The current project is unavailable or not allowed.",
-      );
-      return;
-    }
-
-    let canonicalFilePath: string;
-    try {
-      canonicalFilePath = await realpath(requestedPath);
-    } catch {
-      this.sendFileDownloadError(
-        ws,
-        request,
-        "file_download_not_found",
-        "File not found.",
-      );
-      return;
-    }
-
-    const canonicalFileInProject =
-      isPathWithinAllowedDirectory(
-        canonicalFilePath,
-        canonicalProjectPath,
-        this.platform,
-      ) && (await this.isCanonicalPathAllowed(canonicalFilePath));
-    if (
-      !this.fileDownloadAllowAllPaths &&
-      !canonicalFileInProject &&
-      !(await this.isCanonicalPathInReadOnlyDir(canonicalFilePath))
-    ) {
-      this.sendFileDownloadError(
-        ws,
-        request,
-        "file_download_not_allowed",
-        "The requested file resolves outside the current project.",
-      );
-      return;
-    }
-
-    try {
-      const fileStat = await stat(canonicalFilePath);
-      if (!fileStat.isFile()) {
-        this.sendFileDownloadError(
-          ws,
-          request,
-          "file_download_not_file",
-          "Only regular files can be downloaded.",
-        );
-        return;
-      }
-      if (fileStat.size > this.fileDownloadMaxBytes) {
-        const maxSizeMb = Math.max(
-          1,
-          Math.ceil(this.fileDownloadMaxBytes / 1024 / 1024),
-        );
-        this.sendFileDownloadError(
-          ws,
-          request,
-          "file_download_too_large",
-          `File is too large to download. Maximum size is ${maxSizeMb} MB.`,
-        );
-        return;
-      }
-      if (!this.mediaStore) {
-        this.sendFileDownloadError(
-          ws,
-          request,
-          "file_download_unavailable",
-          "File downloads are unavailable on this Bridge.",
-        );
-        return;
-      }
-
-      const fileName = pathApi.basename(requestedPath);
-      const mimeType = downloadMimeType(fileName);
-      const ref = await this.mediaStore.register(
-        canonicalFilePath,
-        mimeType,
-        fileStat.size,
-        fileName,
-      );
-      this.send(ws, {
-        type: "file_download_ready",
-        requestId: request.requestId,
-        filePath: request.filePath,
-        fileName,
-        mimeType: ref.mimeType,
-        sizeBytes: ref.sizeBytes,
-        downloadUrl: ref.url,
-      });
-    } catch {
-      this.sendFileDownloadError(
-        ws,
-        request,
-        "file_download_failed",
-        "Unable to prepare the file download.",
-      );
-    }
-  }
-
-  private sendFileUploadError(
-    ws: WebSocket,
-    requestId: string,
-    errorCode: string,
-    message: string,
-    path?: string,
-  ): void {
-    this.send(ws, { type: "error", errorCode, message, requestId, path });
-  }
-
-  private async prepareFileUpload(
-    ws: WebSocket,
-    request: Extract<ClientMessage, { type: "prepare_file_upload" }>,
-  ): Promise<void> {
-    const pathApi = this.platform === "win32" ? win32 : posix;
-    const projectPath = pathApi.resolve(request.projectPath);
-    if (
-      !this.uploadStore ||
-      pathApi.isAbsolute(request.directoryPath) ||
-      !isSafeUploadFileName(request.fileName)
-    ) {
-      this.sendFileUploadError(
-        ws,
-        request.requestId,
-        !this.uploadStore ? "file_upload_unavailable" : "file_upload_not_allowed",
-        !this.uploadStore
-          ? "File uploads are unavailable on this Bridge."
-          : "The upload destination or file name is not allowed.",
-        request.directoryPath,
-      );
-      return;
-    }
-    if (request.sizeBytes > this.fileUploadMaxBytes) {
-      this.sendFileUploadError(
-        ws,
-        request.requestId,
-        "file_upload_too_large",
-        `File is too large to upload. Maximum size is ${Math.ceil(this.fileUploadMaxBytes / 1024 / 1024)} MB.`,
-        request.fileName,
-      );
-      return;
-    }
-
-    const requestedDirectory = pathApi.resolve(projectPath, request.directoryPath || ".");
-    if (
-      !this.isPathAllowed(projectPath) ||
-      !isPathWithinAllowedDirectory(requestedDirectory, projectPath, this.platform)
-    ) {
-      this.sendFileUploadError(ws, request.requestId, "file_upload_not_allowed", "The upload destination is outside the current project.", request.directoryPath);
-      return;
-    }
-
-    try {
-      const canonicalProject = await realpath(projectPath);
-      const canonicalDirectory = await realpath(requestedDirectory);
-      const directoryStat = await stat(canonicalDirectory);
-      if (
-        !directoryStat.isDirectory() ||
-        !isPathWithinAllowedDirectory(canonicalDirectory, canonicalProject, this.platform) ||
-        !(await this.isCanonicalPathAllowed(canonicalDirectory))
-      ) {
-        throw new UploadStoreError("file_upload_directory_changed", "The upload destination is not allowed.");
-      }
-      const ref = await this.uploadStore.register({
-        directoryPath: canonicalDirectory,
-        relativeDirectoryPath: pathApi
-          .relative(projectPath, requestedDirectory)
-          .split(pathApi.sep)
-          .join("/"),
-        fileName: request.fileName,
-        sizeBytes: request.sizeBytes,
-        conflictPolicy: request.conflictPolicy,
-      });
-      this.send(ws, {
-        type: "file_upload_ready",
-        requestId: request.requestId,
-        fileName: request.fileName,
-        sizeBytes: request.sizeBytes,
-        uploadUrl: ref.url,
-        uploadToken: ref.token,
-      });
-    } catch (error) {
-      const known = error instanceof UploadStoreError ? error : null;
-      this.sendFileUploadError(
-        ws,
-        request.requestId,
-        known?.code ?? "file_upload_directory_not_found",
-        known?.message ?? "The upload destination was not found or is not allowed.",
-        request.directoryPath,
-      );
-    }
-  }
-
-  private async finalizeFileUpload(
-    ws: WebSocket,
-    request: Extract<ClientMessage, { type: "finalize_file_upload" }>,
-  ): Promise<void> {
-    if (!this.uploadStore) {
-      this.sendFileUploadError(ws, request.requestId, "file_upload_unavailable", "File uploads are unavailable on this Bridge.");
-      return;
-    }
-    try {
-      const result = await this.uploadStore.finalize(request.uploadToken, request.sha256);
-      this.send(ws, { type: "file_upload_complete", requestId: request.requestId, ...result });
-    } catch (error) {
-      const known = error instanceof UploadStoreError ? error : null;
-      this.sendFileUploadError(ws, request.requestId, known?.code ?? "file_upload_failed", known?.message ?? "Unable to finish the file upload.");
-    }
-  }
-
-  /** Build a user-friendly error for disallowed project paths. */
-  private buildPathNotAllowedError(
-    projectPath: string,
-    requestId?: string,
-  ): Extract<ServerMessage, { type: "error" }> {
-    return {
-      type: "error",
-      message: `⚠ Project path not allowed\n\n"${projectPath}" is not in the allowed directories.\n\nFix: Update BRIDGE_ALLOWED_DIRS on the Bridge server to include this path.`,
-      errorCode: "path_not_allowed",
-      path: projectPath,
-      requestId,
-    };
-  }
-
-  private sendToolActionError(
-    ws: WebSocket,
-    message: { sessionId?: string; id?: string; toolUseId?: string },
-    error: string,
-  ): void {
-    this.send(ws, {
-      type: "error",
-      message: error,
-      sessionId: message.sessionId,
-      toolUseId: message.toolUseId ?? message.id,
-    });
-  }
-
-  private normalizeAdditionalWritableRoots(
-    roots: string[] | undefined,
-    projectPath: string,
-  ): { roots?: string[]; deniedRoot?: string } {
-    if (!roots || roots.length === 0) return {};
-    const normalized = new Map<string, string>();
-    for (const root of roots) {
-      const trimmed = root.trim();
-      if (!trimmed) continue;
-      const resolved = resolvePlatformPathFrom(
-        projectPath,
-        trimmed,
-        this.platform,
-      );
-      if (!this.isPathAllowed(resolved)) {
-        return { deniedRoot: root };
-      }
-      const key = this.platform === "win32" ? resolved.toLowerCase() : resolved;
-      if (!normalized.has(key)) {
-        normalized.set(key, resolved);
-      }
-    }
-    return { roots: [...normalized.values()] };
-  }
-
-  private buildSessionCreatedMessage(params: {
+  buildSessionCreatedMessage(params: {
     sessionId: string;
     provider: Provider;
     projectPath: string;
@@ -1805,6 +750,7 @@ export class BridgeWebSocketServer {
     codexPermissionsMode?: string;
     sandboxMode?: string;
     slashCommands?: string[];
+    slashCommandDescriptions?: Record<string, string>;
     skills?: string[];
     skillMetadata?: Array<Record<string, unknown>>;
     apps?: string[];
@@ -1814,6 +760,8 @@ export class BridgeWebSocketServer {
     sourceSessionId?: string;
     /** The source session keeps running (fork), unlike restarts/rewinds. */
     forked?: boolean;
+    /** Continues the stopped source session in another provider. */
+    handoff?: boolean;
     resumeRequestId?: string;
     requestId?: string;
   }): SystemServerMessage {
@@ -1829,6 +777,7 @@ export class BridgeWebSocketServer {
       codexPermissionsMode,
       sandboxMode,
       slashCommands,
+      slashCommandDescriptions,
       skills,
       skillMetadata,
       apps,
@@ -1843,7 +792,7 @@ export class BridgeWebSocketServer {
       ? withDerivedCodexPermissionsMode(session?.codexSettings)
       : session?.codexSettings;
     const workspace = session
-      ? this.workspaceForRuntimeSession(session)
+      ? workspaceForRuntimeSession(this, session)
       : undefined;
 
     const msg: SystemServerMessage = {
@@ -1890,7 +839,13 @@ export class BridgeWebSocketServer {
           ? session.process.approvalPolicy === "never"
             ? "fullAccess"
             : "default"
-          : undefined))
+          : session?.process instanceof AntigravityProcess
+            ? session.process.permissionMode === "bypassPermissions"
+              ? "fullAccess"
+              : session.process.permissionMode === "acceptEdits"
+                ? "acceptEdits"
+                : "default"
+            : undefined))
         ? {
             executionMode: (executionMode ??
               (session?.process instanceof SdkProcess
@@ -1903,7 +858,13 @@ export class BridgeWebSocketServer {
                   ? session.process.approvalPolicy === "never"
                     ? "fullAccess"
                     : "default"
-                  : undefined)) as "default" | "acceptEdits" | "fullAccess",
+                  : session?.process instanceof AntigravityProcess
+                    ? session.process.permissionMode === "bypassPermissions"
+                      ? "fullAccess"
+                      : session.process.permissionMode === "acceptEdits"
+                        ? "acceptEdits"
+                        : "default"
+                    : undefined)) as "default" | "acceptEdits" | "fullAccess",
           }
         : {}),
       ...((planMode ??
@@ -1911,7 +872,9 @@ export class BridgeWebSocketServer {
           ? session.process.permissionMode === "plan"
           : session?.process instanceof CodexProcess
             ? session.process.collaborationMode === "plan"
-            : undefined)) != null
+            : session?.process instanceof AntigravityProcess
+              ? session.process.permissionMode === "plan"
+              : undefined)) != null
         ? {
             planMode:
               planMode ??
@@ -1919,11 +882,14 @@ export class BridgeWebSocketServer {
                 ? session.process.permissionMode === "plan"
                 : session?.process instanceof CodexProcess
                   ? session.process.collaborationMode === "plan"
-                  : false),
+                  : session?.process instanceof AntigravityProcess
+                    ? session.process.permissionMode === "plan"
+                    : false),
           }
         : {}),
       ...(sandboxMode ? { sandboxMode } : {}),
       ...(slashCommands ? { slashCommands } : {}),
+      ...(slashCommandDescriptions ? { slashCommandDescriptions } : {}),
       ...(skills ? { skills } : {}),
       ...(skillMetadata
         ? {
@@ -1953,6 +919,7 @@ export class BridgeWebSocketServer {
         : {}),
       ...(sourceSessionId ? { sourceSessionId } : {}),
       ...(params.forked ? { forked: true } : {}),
+      ...(params.handoff ? { handoff: true } : {}),
       ...(resumeRequestId ? { resumeRequestId } : {}),
       ...(requestId ? { requestId } : {}),
     };
@@ -1992,573 +959,8 @@ export class BridgeWebSocketServer {
     return msg;
   }
 
-  /**
-   * Interrupt the running turn and, when the agent has shown no output for
-   * the latest prompt, remove that prompt from the conversation and hand its
-   * text back to the client (Claude Code's Esc-to-edit). See
-   * docs/interrupt-retract.md.
-   */
-  private async interruptAndRetract(
-    ws: WebSocket,
-    session: SessionInfo,
-  ): Promise<void> {
-    const sessionId = session.id;
-    let candidate = this.sessionManager.retractableUserInput(sessionId);
-    if (session.status === "idle") {
-      // Stop can be tapped right after sending, before the turn has started
-      // on the Bridge. Interrupting then would be a no-op and the turn would
-      // still run, so wait for it to start first.
-      if (
-        !candidate ||
-        !(await this.waitForSessionRunning(session, RETRACT_START_TIMEOUT_MS))
-      ) {
-        session.process.interrupt();
-        return;
-      }
-      candidate = this.sessionManager.retractableUserInput(sessionId);
-    }
-    session.process.interrupt();
-    if (!candidate) return;
-
-    if (!(await this.waitForSessionIdle(session, RETRACT_IDLE_TIMEOUT_MS))) {
-      return;
-    }
-    // Output may have arrived before the abort landed.
-    const latest = this.sessionManager.retractableUserInput(sessionId);
-    if (!latest || latest.historySeq !== candidate.historySeq) return;
-    if (this.sessionManager.get(sessionId) !== session) return;
-
-    this.flushSessionDeltaBatches(sessionId);
-    await this.sessionManager.rewindInPlace(sessionId, null);
-    this.send(ws, {
-      type: "input_retracted",
-      sessionId,
-      text: latest.text,
-    });
-  }
-
-  /**
-   * Codex App's edit-and-resend: rewind the conversation in place to just
-   * before [targetUuid], then send [text] as a new prompt through the normal
-   * input path. Only allowed between turns.
-   */
-  private async editUserMessage(
-    ws: WebSocket,
-    msg: Extract<ClientMessage, { type: "edit_message" }>,
-  ): Promise<void> {
-    const fail = (message: string) => {
-      this.send(ws, {
-        type: "error",
-        sessionId: msg.sessionId,
-        message,
-        errorCode: "edit_message_failed",
-        ...(msg.clientMessageId ? { clientMessageId: msg.clientMessageId } : {}),
-      });
-    };
-    const session = this.sessionManager.get(msg.sessionId);
-    if (!session) {
-      fail(`Session ${msg.sessionId} not found`);
-      return;
-    }
-    if (session.status !== "idle") {
-      fail("Cannot edit a message while a turn is in progress.");
-      return;
-    }
-    try {
-      this.flushSessionDeltaBatches(msg.sessionId);
-      await this.sessionManager.rewindInPlace(msg.sessionId, msg.targetUuid);
-    } catch (err) {
-      fail(err instanceof Error ? err.message : String(err));
-      return;
-    }
-    await this.handleClientMessage(
-      {
-        type: "input",
-        sessionId: msg.sessionId,
-        text: msg.text,
-        ...(msg.clientMessageId ? { clientMessageId: msg.clientMessageId } : {}),
-      },
-      ws,
-    );
-  }
-
-  private waitForSessionRunning(
-    session: SessionInfo,
-    timeoutMs: number,
-  ): Promise<boolean> {
-    if (session.status !== "idle") return Promise.resolve(true);
-    return new Promise((resolve) => {
-      const proc = session.process;
-      const finish = (running: boolean) => {
-        clearTimeout(timer);
-        proc.off("status", onStatus);
-        resolve(running);
-      };
-      const onStatus = (status: string) => {
-        if (status !== "idle") finish(true);
-      };
-      const timer = setTimeout(
-        () => finish(session.status !== "idle"),
-        timeoutMs,
-      );
-      proc.on("status", onStatus);
-    });
-  }
-
-  private waitForSessionIdle(
-    session: SessionInfo,
-    timeoutMs: number,
-  ): Promise<boolean> {
-    const isIdle = () =>
-      session.status === "idle" &&
-      (session.process.status ?? "idle") === "idle" &&
-      !(session.process instanceof SdkProcess && session.process.isTurnActive);
-    if (isIdle()) return Promise.resolve(true);
-    return new Promise((resolve) => {
-      const proc = session.process;
-      const finish = (idle: boolean) => {
-        clearTimeout(timer);
-        proc.off("status", onStatus);
-        proc.off("exit", onExit);
-        resolve(idle);
-      };
-      const onStatus = () => {
-        // The session's own status listener runs first; re-check after it.
-        queueMicrotask(() => {
-          if (isIdle()) finish(true);
-        });
-      };
-      const onExit = () => finish(false);
-      const timer = setTimeout(() => finish(isIdle()), timeoutMs);
-      proc.on("status", onStatus);
-      proc.on("exit", onExit);
-    });
-  }
-
-  private async rewindCodexConversation(
-    ws: WebSocket,
-    sessionId: string,
-    targetUuid: string,
-    mode: "conversation" | "code" | "both",
-    onRewound?: () => void,
-  ): Promise<void> {
-    if (mode !== "conversation") {
-      this.send(ws, {
-        type: "rewind_result",
-        sessionId,
-        success: false,
-        mode,
-        error: "Codex only supports conversation rewind",
-      });
-      return;
-    }
-
-    const session = this.sessionManager.get(sessionId);
-    if (!session) {
-      this.send(ws, {
-        type: "rewind_result",
-        sessionId,
-        success: false,
-        mode,
-        error: `Session ${sessionId} not found`,
-      });
-      return;
-    }
-    const codexProcess = session.process as CodexProcess;
-    if (
-      session.provider !== "codex" ||
-      typeof codexProcess.forkThreadAtUserTurn !== "function"
-    ) {
-      this.send(ws, {
-        type: "rewind_result",
-        sessionId,
-        success: false,
-        mode,
-        error: "Session is not a Codex session",
-      });
-      return;
-    }
-    if (session.status !== "idle" || (codexProcess.status ?? session.status) !== "idle") {
-      this.send(ws, {
-        type: "rewind_result",
-        sessionId,
-        success: false,
-        mode,
-        error: "Cannot rewind while Codex is running",
-      });
-      return;
-    }
-    if (session.queuedInput) {
-      this.send(ws, {
-        type: "rewind_result",
-        sessionId,
-        success: false,
-        mode,
-        error: "Cannot rewind while Codex has queued input",
-      });
-      return;
-    }
-
-    const targetOrdinal = parseCodexUserTurnOrdinal(targetUuid);
-    const totalUserTurns = countCodexUserTurnsInSession(session);
-    if (targetOrdinal === null || targetOrdinal > totalUserTurns) {
-      this.send(ws, {
-        type: "rewind_result",
-        sessionId,
-        success: false,
-        mode,
-        error: "Invalid Codex rewind target",
-      });
-      return;
-    }
-
-    const numTurns = totalUserTurns - targetOrdinal + 1;
-    if (numTurns <= 0) {
-      this.send(ws, {
-        type: "rewind_result",
-        sessionId,
-        success: false,
-        mode,
-        error: "Invalid Codex rewind target",
-      });
-      return;
-    }
-
-    const threadId = codexProcess.sessionId ?? session.claudeSessionId;
-    if (!threadId) {
-      this.send(ws, {
-        type: "rewind_result",
-        sessionId,
-        success: false,
-        mode,
-        error: "No Codex thread ID available for rewind",
-      });
-      return;
-    }
-
-    const projectPath = session.projectPath;
-    const codexSettings = session.codexSettings;
-    const workspace = this.workspaceForRuntimeSession(session);
-    const worktreeOpts: WorktreeOptions | undefined = session.worktreePath
-      ? {
-          existingWorktreePath: session.worktreePath,
-          worktreeBranch: session.worktreeBranch,
-        }
-      : undefined;
-
-    const forked = targetOrdinal > 1
-      ? await codexProcess.forkThreadAtUserTurn(targetOrdinal - 1)
-      : undefined;
-
-    const pastMessages = this.codexHistoryFromThreadOrFallback({
-      thread: forked?.thread,
-      expectedUserTurns: targetOrdinal - 1,
-      fallback: buildCodexHistoryPrefix(session, targetOrdinal - 1),
-    });
-    // A rewind replaces the conversation rather than branching it (Codex
-    // App's edit-and-resend leaves no old copy in history), so hide the
-    // source thread. Archive through the process that has it loaded.
-    {
-      try {
-        await codexProcess.archiveThread(threadId);
-      } catch (err) {
-        console.warn(
-          `[ws] Failed to archive rewound Codex thread ${threadId}: ${codexErrorMessage(err)}`,
-        );
-      }
-      await this.archiveStore
-        .archive(threadId, "codex", projectPath)
-        .catch((err: unknown) => {
-          console.warn(
-            `[ws] Failed to record archive for ${threadId}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        });
-    }
-    this.destroySession(sessionId);
-    // The source app-server holds the forked thread's write lock until it
-    // exits; resuming the fork before then fails with "active writer".
-    if (forked) {
-      await codexProcess.waitForShutdown?.(CODEX_SHUTDOWN_WAIT_MS);
-    }
-    const newSessionId = this.sessionManager.create(
-      projectPath,
-      undefined,
-      pastMessages,
-      worktreeOpts,
-      "codex",
-      this.withCodexAutoReviewPolicy({
-        ...(codexSettings ?? {}),
-        threadId: forked?.threadId,
-      } as CodexStartOptions),
-    );
-    this.attachWorkspaceToRuntimeSession(newSessionId, workspace);
-    const newSession = this.sessionManager.get(newSessionId);
-
-    onRewound?.();
-    this.send(ws, {
-      type: "rewind_result",
-      sessionId,
-      success: true,
-      mode,
-    });
-    this.send(
-      ws,
-      this.buildSessionCreatedMessage({
-        sessionId: newSessionId,
-        provider: "codex",
-        projectPath,
-        session: newSession,
-        approvalsReviewer: newSession?.codexSettings?.approvalsReviewer,
-        sandboxMode: newSession?.codexSettings?.sandboxMode,
-        sourceSessionId: sessionId,
-      }),
-    );
-    this.sendSessionList(ws);
-  }
-
-  /**
-   * Branch a Claude conversation into a new session that ends at the given
-   * assistant message. The source session keeps running unchanged.
-   */
-  private async forkClaudeSession(
-    ws: WebSocket,
-    sessionId: string,
-    targetUuid: string,
-  ): Promise<void> {
-    const fail = (message: string): void => {
-      this.send(ws, {
-        type: "error",
-        sessionId,
-        message,
-        errorCode: "fork_failed",
-      });
-    };
-    const session = this.sessionManager.get(sessionId);
-    if (!session || session.provider !== "claude") {
-      fail(`Session ${sessionId} not found`);
-      return;
-    }
-    const claudeSessionId = session.claudeSessionId;
-    if (!claudeSessionId) {
-      fail("Session has no Claude session ID yet");
-      return;
-    }
-    const sdkProcess = session.process as SdkProcess;
-    if (session.status !== "idle" || (sdkProcess.status ?? "idle") !== "idle") {
-      fail("Cannot fork while Claude is running");
-      return;
-    }
-    if (session.queuedInput) {
-      fail("Cannot fork while Claude has queued input");
-      return;
-    }
-
-    const history = await getSessionHistory(claudeSessionId);
-    const targetIndex = history.findIndex(
-      (message) => message.role === "assistant" && message.uuid === targetUuid,
-    );
-    if (targetIndex < 0) {
-      fail("Fork target not found in the Claude transcript");
-      return;
-    }
-    const pastMessages = history.slice(0, targetIndex + 1);
-
-    const workspace = this.workspaceForRuntimeSession(session);
-    const worktreeOpts: WorktreeOptions | undefined = session.worktreePath
-      ? {
-          existingWorktreePath: session.worktreePath,
-          worktreeBranch: session.worktreeBranch,
-        }
-      : undefined;
-    const settings = sdkProcess.settings ?? {};
-    const permissionMode = sdkProcess.permissionMode;
-    const newSessionId = this.sessionManager.create(
-      session.projectPath,
-      {
-        sessionId: claudeSessionId,
-        forkSession: true,
-        resumeSessionAt: targetUuid,
-        ...(permissionMode ? { permissionMode } : {}),
-        ...(settings.model ? { model: settings.model } : {}),
-        ...(settings.effort ? { effort: settings.effort } : {}),
-        ...(settings.fastMode ? { fastMode: true } : {}),
-        ...(settings.ultracode ? { ultracode: true } : {}),
-        ...(session.sandboxEnabled !== undefined
-          ? { sandboxEnabled: session.sandboxEnabled }
-          : {}),
-      },
-      pastMessages,
-      worktreeOpts,
-      "claude",
-    );
-    this.attachWorkspaceToRuntimeSession(newSessionId, workspace);
-    const newSession = this.sessionManager.get(newSessionId);
-
-    this.send(
-      ws,
-      this.buildSessionCreatedMessage({
-        sessionId: newSessionId,
-        provider: "claude",
-        projectPath: session.projectPath,
-        session: newSession,
-        permissionMode,
-        sourceSessionId: sessionId,
-        forked: true,
-      }),
-    );
-    this.sendSessionList(ws);
-  }
-
-  private async forkCodexSession(
-    ws: WebSocket,
-    sessionId: string,
-    targetUuid: string,
-  ): Promise<void> {
-    const session = this.sessionManager.get(sessionId);
-    if (!session) {
-      this.send(ws, {
-        type: "error",
-        message: `Session ${sessionId} not found`,
-        errorCode: "fork_failed",
-      });
-      return;
-    }
-    const codexProcess = session.process as CodexProcess;
-    if (
-      session.provider !== "codex" ||
-      typeof codexProcess.forkThreadAtUserTurn !== "function"
-    ) {
-      this.send(ws, {
-        type: "error",
-        message: "Fork is only supported for Codex sessions",
-        errorCode: "fork_failed",
-      });
-      return;
-    }
-    if (session.status !== "idle" || (codexProcess.status ?? session.status) !== "idle") {
-      this.send(ws, {
-        type: "error",
-        message: "Cannot fork while Codex is running",
-        errorCode: "fork_failed",
-      });
-      return;
-    }
-    if (session.queuedInput) {
-      this.send(ws, {
-        type: "error",
-        message: "Cannot fork while Codex has queued input",
-        errorCode: "fork_failed",
-      });
-      return;
-    }
-
-    const targetOrdinal = parseCodexUserTurnOrdinal(targetUuid);
-    const totalUserTurns = countCodexUserTurnsInSession(session);
-    if (targetOrdinal === null || targetOrdinal > totalUserTurns) {
-      this.send(ws, {
-        type: "error",
-        message: "Invalid Codex fork target",
-        errorCode: "fork_failed",
-      });
-      return;
-    }
-
-    const projectPath = session.projectPath;
-    const codexSettings = session.codexSettings;
-    const workspace = this.workspaceForRuntimeSession(session);
-    const worktreeOpts: WorktreeOptions | undefined = session.worktreePath
-      ? {
-          existingWorktreePath: session.worktreePath,
-          worktreeBranch: session.worktreeBranch,
-        }
-      : undefined;
-
-    const sourceThreadId = codexProcess.sessionId ?? session.claudeSessionId;
-    if (!sourceThreadId) {
-      this.send(ws, {
-        type: "error",
-        message: "No Codex thread ID available for fork",
-        errorCode: "fork_failed",
-      });
-      return;
-    }
-    // Fork in a throwaway app-server: whichever app-server forks a thread
-    // holds its write lock until it exits, and the source session keeps
-    // running, so the fork must not be created by the source process.
-    const forker = await this.createStandaloneCodexProcess(
-      session.worktreePath ?? projectPath,
-    );
-    let forked: Awaited<ReturnType<CodexProcess["forkThreadAtUserTurn"]>>;
-    try {
-      forked = await forker.forkThreadAtUserTurn(targetOrdinal, sourceThreadId);
-    } finally {
-      forker.stop();
-      await forker.waitForShutdown(CODEX_SHUTDOWN_WAIT_MS);
-    }
-    const forkedThreadId = forked.threadId;
-    const forkedThread = forked.thread;
-
-    const pastMessages = this.codexHistoryFromThreadOrFallback({
-      thread: forkedThread,
-      expectedUserTurns: targetOrdinal,
-      fallback: buildCodexHistoryPrefix(session, targetOrdinal),
-    });
-    const newSessionId = this.sessionManager.create(
-      projectPath,
-      undefined,
-      pastMessages,
-      worktreeOpts,
-      "codex",
-      this.withCodexAutoReviewPolicy({
-        ...(codexSettings ?? {}),
-        threadId: forkedThreadId,
-      } as CodexStartOptions),
-    );
-    this.attachWorkspaceToRuntimeSession(newSessionId, workspace);
-    const newSession = this.sessionManager.get(newSessionId);
-
-    this.send(
-      ws,
-      this.buildSessionCreatedMessage({
-        sessionId: newSessionId,
-        provider: "codex",
-        projectPath,
-        session: newSession,
-        approvalsReviewer: newSession?.codexSettings?.approvalsReviewer,
-        sandboxMode: newSession?.codexSettings?.sandboxMode,
-        sourceSessionId: sessionId,
-        forked: true,
-      }),
-    );
-    this.sendSessionList(ws);
-  }
-
-  private sendTip(
-    ws: WebSocket,
-    sessionId: string,
-    tipCode: string,
-    session?: SessionInfo,
-  ): void {
-    const tipMsg = {
-      type: "system",
-      subtype: "tip",
-      tipCode,
-      sessionId,
-    } as ServerMessage;
-    if (session) {
-      this.sessionManager.appendHistory(session.id, tipMsg);
-    }
-    this.send(ws, tipMsg);
-  }
-
-  private async splitPastHistoryMessages(
-    session: SessionInfo,
-  ): Promise<{ pastMessages: unknown[]; historyMessages: ServerMessage[] }> {
-    return this.preparePastHistoryMessages(session, session.pastMessages ?? []);
-  }
-
   /** Registers past-history images so clients can fetch them by URL. */
-  private async preparePastHistoryMessages(
+  async preparePastHistoryMessages(
     session: SessionInfo,
     messages: readonly unknown[],
   ): Promise<{ pastMessages: unknown[]; historyMessages: ServerMessage[] }> {
@@ -2568,7 +970,7 @@ export class BridgeWebSocketServer {
     for (const raw of messages) {
       const msg = raw as Record<string, unknown>;
       if (msg.role === "user") {
-        const images = await this.registerPastUserMessageImages(session, msg);
+        const images = await registerPastUserMessageImages(this, session, msg);
         pastMessages.push(
           images.length > 0
             ? {
@@ -2585,7 +987,7 @@ export class BridgeWebSocketServer {
       }
 
       if (msg.role === "assistant") {
-        const images = await this.resolveAssistantImages(session, msg.content);
+        const images = await resolveAssistantImages(this, session, msg.content);
         pastMessages.push(images.length > 0 ? { ...msg, images } : raw);
         continue;
       }
@@ -2596,7 +998,7 @@ export class BridgeWebSocketServer {
       }
 
       const content = typeof msg.content === "string" ? msg.content : "";
-      const images = await this.registerPastToolResultImages(session, msg);
+      const images = await registerPastToolResultImages(this, session, msg);
 
       pastMessages.push({
         role: "tool_result",
@@ -2613,59 +1015,29 @@ export class BridgeWebSocketServer {
     return { pastMessages, historyMessages };
   }
 
-  /**
-   * Full provider transcript for the read-only transcript screen. Unlike the
-   * live history window it is not trimmed, and it keeps compaction markers.
-   */
-  private async sessionTranscriptMessages(
-    session: SessionInfo,
-  ): Promise<SessionHistoryMessage[]> {
-    if (session.provider === "codex") {
-      const threadId = this.codexThreadIdForSession(session);
-      if (!threadId) return [];
-      if (session.codexInitialHistoryPending) {
-        return (session.pastMessages ?? []) as SessionHistoryMessage[];
-      }
-      return this.getCodexThreadHistoryFromRpc(
-        threadId,
-        session.projectPath,
-        session.process instanceof CodexProcess ? session.process : undefined,
-      );
-    }
-    if (!session.claudeSessionId) return [];
-    return getSessionHistory(session.claudeSessionId);
-  }
-
-  private codexThreadIdForSession(session: SessionInfo): string | undefined {
-    if (session.provider !== "codex") return undefined;
-    if (session.claudeSessionId) return session.claudeSessionId;
-    if (session.process instanceof CodexProcess) {
-      return session.process.sessionId ?? undefined;
-    }
-    return undefined;
-  }
-
-  private async codexCanonicalHistoryEntries(
+  async codexCanonicalHistoryEntries(
     session: SessionInfo,
   ): Promise<HistoryEntry[] | null> {
-    const threadId = this.codexThreadIdForSession(session);
+    const threadId = codexThreadIdForSession(session);
     if (!threadId) return null;
 
     const history = session.codexInitialHistoryPending
       ? ((session.pastMessages ?? []) as SessionHistoryMessage[])
-      : await this.getCodexThreadHistoryFromRpc(
+      : await getCodexThreadHistoryFromRpc(
+          this,
           threadId,
           session.projectPath,
           session.process as CodexProcess,
         );
     session.claudeSessionId = threadId;
 
-    const messages = await this.codexHistoryToServerMessages(session, history);
+    const messages = await codexHistoryToServerMessages(this, session, history);
     const entries = messages.map((message, index) => ({
       seq: index + 1,
       message,
     }));
-    this.applyCodexCanonicalHistoryBaseline(
+    applyCodexCanonicalHistoryBaseline(
+      this,
       session,
       history,
       entries,
@@ -2674,240 +1046,7 @@ export class BridgeWebSocketServer {
     return entries;
   }
 
-  private applyCodexCanonicalHistoryBaseline(
-    session: SessionInfo,
-    history: SessionHistoryMessage[],
-    canonicalEntries: HistoryEntry[],
-  ): void {
-    const orderedRevision = session.codexOrderedHistoryRevision ?? 0;
-    const liveEntries: HistoryEntry[] = [
-      ...(session.codexOrderedHistoryEntries ?? []),
-      ...session.historyEntries.filter((entry) => entry.seq > orderedRevision),
-    ].map((entry) => ({
-      seq: entry.seq,
-      message: entry.message,
-    }));
-    const latestUserInput = session.codexLatestUserInput;
-    const latestUserKeys = latestUserInput
-      ? this.codexHistoryMessageIdentityKeys(latestUserInput)
-      : [];
-    if (
-      latestUserInput &&
-      !liveEntries.some(
-        (entry) =>
-          entry.message === latestUserInput ||
-          (entry.message.type === "user_input" &&
-            this.codexHistoryMessageIdentityKeys(entry.message).some((key) =>
-              latestUserKeys.includes(key),
-            )),
-      )
-    ) {
-      const historySeq = (latestUserInput as Record<string, unknown>)
-        .historySeq;
-      liveEntries.unshift({
-        seq: typeof historySeq === "number" ? historySeq : 0,
-        message: latestUserInput,
-      });
-    }
-    const canonicalUserUuids = new Set<string>();
-    for (const entry of canonicalEntries) {
-      const message = entry.message;
-      if (message.type === "user_input" && message.userMessageUuid) {
-        canonicalUserUuids.add(message.userMessageUuid);
-      }
-    }
-
-    this.seedCodexCanonicalUserTurnUuidMap(session, history);
-
-    const merged: Array<{ message: ServerMessage; retained: boolean }> = [];
-    let canonicalCursor = 0;
-    let hasCanonicalAnchor = false;
-    let canMatchAssistantContent = false;
-    const appendCanonicalUntil = (endExclusive: number): void => {
-      while (canonicalCursor < endExclusive) {
-        const message = canonicalEntries[canonicalCursor].message;
-        merged.push({ message, retained: false });
-        canonicalCursor += 1;
-        hasCanonicalAnchor = true;
-        if (message.type === "user_input") {
-          canMatchAssistantContent = true;
-        }
-      }
-    };
-
-    for (let liveIndex = 0; liveIndex < liveEntries.length; liveIndex++) {
-      const liveEntry = liveEntries[liveIndex];
-      const matchIndex = this.findCodexCanonicalMatchIndex(
-        canonicalEntries,
-        liveEntry.message,
-        canonicalCursor,
-        canMatchAssistantContent,
-      );
-      if (matchIndex === -1) {
-        let nextMatchIndex = -1;
-        for (
-          let nextLiveIndex = liveIndex + 1;
-          nextLiveIndex < liveEntries.length;
-          nextLiveIndex++
-        ) {
-          nextMatchIndex = this.findCodexCanonicalMatchIndex(
-            canonicalEntries,
-            liveEntries[nextLiveIndex].message,
-            canonicalCursor,
-            canMatchAssistantContent,
-          );
-          if (nextMatchIndex !== -1) break;
-        }
-        if (nextMatchIndex !== -1) {
-          appendCanonicalUntil(nextMatchIndex);
-        } else if (!hasCanonicalAnchor) {
-          appendCanonicalUntil(canonicalEntries.length);
-        }
-        if (this.shouldRetainCodexLiveHistoryMessage(liveEntry.message)) {
-          merged.push({ message: liveEntry.message, retained: true });
-        }
-        continue;
-      }
-
-      appendCanonicalUntil(matchIndex + 1);
-    }
-    appendCanonicalUntil(canonicalEntries.length);
-
-    const retainedMessages: ServerMessage[] = [];
-    const retainedEntries: HistoryEntry[] = [];
-    let canonicalRevision = 0;
-    const previousRevision = session.historyRevision;
-    const requiresNewBaselineRevision = previousRevision > 0;
-    const targetRevision = requiresNewBaselineRevision
-      ? Math.max(merged.length, previousRevision + 1)
-      : merged.length;
-    const sequenceOffset = targetRevision - merged.length;
-    const mergedEntries = merged.map(({ message, retained }, index) => {
-      const seq = sequenceOffset + index + 1;
-      if (retained) {
-        (message as Record<string, unknown>).historySeq = seq;
-        retainedMessages.push(message);
-        retainedEntries.push({ seq, message });
-      } else {
-        canonicalRevision = seq;
-      }
-      return { seq, message };
-    });
-    canonicalEntries.splice(0, canonicalEntries.length, ...mergedEntries);
-
-    session.codexOrderedHistoryEntries =
-      this.buildCodexOrderedHistoryWindow(mergedEntries);
-    session.codexOrderedHistoryRevision = targetRevision;
-
-    session.pastMessages = history;
-    session.history = retainedMessages;
-    session.historyEntries = retainedEntries;
-    session.historyRevision = targetRevision;
-    session.codexCanonicalHistoryRevision = canonicalRevision;
-    session.codexHistoryResetRevision = targetRevision;
-    session.historyLowWatermark =
-      retainedEntries[0]?.seq ?? session.historyRevision + 1;
-
-    if (session.pendingCodexUserEchoUuids) {
-      for (const uuid of canonicalUserUuids) {
-        session.pendingCodexUserEchoUuids.delete(uuid);
-      }
-      for (const uuid of [...session.pendingCodexUserEchoUuids]) {
-        const stillLive = retainedMessages.some(
-          (message) =>
-            message.type === "user_input" && message.userMessageUuid === uuid,
-        );
-        if (!stillLive) session.pendingCodexUserEchoUuids.delete(uuid);
-      }
-    }
-  }
-
-  private buildCodexOrderedHistoryWindow(
-    entries: HistoryEntry[],
-  ): HistoryEntry[] {
-    if (entries.length <= MAX_HISTORY_PER_SESSION) {
-      return entries.map((entry) => ({
-        seq: entry.seq,
-        message: entry.message,
-      }));
-    }
-
-    const tail = entries.slice(-MAX_HISTORY_PER_SESSION);
-    if (tail.some((entry) => entry.message.type === "user_input")) {
-      return tail;
-    }
-
-    let latestUser: HistoryEntry | undefined;
-    for (let index = entries.length - 1; index >= 0; index--) {
-      if (entries[index].message.type === "user_input") {
-        latestUser = entries[index];
-        break;
-      }
-    }
-    return latestUser
-      ? [latestUser, ...entries.slice(-(MAX_HISTORY_PER_SESSION - 1))]
-      : tail;
-  }
-
-  private findCodexCanonicalMatchIndex(
-    canonicalEntries: HistoryEntry[],
-    liveMessage: ServerMessage,
-    start: number,
-    allowAssistantContentMatch: boolean,
-  ): number {
-    const liveKeys = this.codexHistoryMessageIdentityKeys(liveMessage);
-    if (liveKeys.length > 0) {
-      for (let index = start; index < canonicalEntries.length; index++) {
-        const canonicalKeys = this.codexHistoryMessageIdentityKeys(
-          canonicalEntries[index].message,
-        );
-        if (liveKeys.some((key) => canonicalKeys.includes(key))) return index;
-      }
-    }
-
-    if (!allowAssistantContentMatch || liveMessage.type !== "assistant") {
-      return -1;
-    }
-    const liveContent = this.historyValueKey(liveMessage.message.content);
-    for (let index = start; index < canonicalEntries.length; index++) {
-      const canonicalMessage = canonicalEntries[index].message;
-      if (canonicalMessage.type === "user_input") break;
-      if (
-        canonicalMessage.type === "assistant" &&
-        this.historyValueKey(canonicalMessage.message.content) === liveContent
-      ) {
-        return index;
-      }
-    }
-    return -1;
-  }
-
-  private seedCodexCanonicalUserTurnUuidMap(
-    session: SessionInfo,
-    history: SessionHistoryMessage[],
-  ): void {
-    if (session.provider !== "codex") return;
-    for (const message of history) {
-      if (
-        message.role !== "user" ||
-        !message.rawItemId ||
-        !message.uuid
-      ) {
-        continue;
-      }
-      session.codexUserTurnUuidByRawId ??= new Map<string, string>();
-      session.codexUserTurnUuidByRawId.set(message.rawItemId, message.uuid);
-    }
-  }
-
-  private shouldRetainCodexLiveHistoryMessage(message: ServerMessage): boolean {
-    return !(
-      message.type === "system" &&
-      (message as Record<string, unknown>).subtype === "tip"
-    );
-  }
-
-  private codexHistoryMessageIdentityKeys(message: ServerMessage): string[] {
+  codexHistoryMessageIdentityKeys(message: ServerMessage): string[] {
     if (message.type === "context_compaction") {
       return message.id ? [`compaction:${message.id}`] : [];
     }
@@ -2918,7 +1057,7 @@ export class BridgeWebSocketServer {
       const assistantId = message.messageUuid ?? message.message.id;
       if (assistantId) return [`assistant:${assistantId}`];
       return [
-        `assistant-content:${this.historyValueKey(message.message.content)}`,
+        `assistant-content:${historyValueKey(message.message.content)}`,
       ];
     }
     if (message.type === "tool_result") {
@@ -2932,172 +1071,7 @@ export class BridgeWebSocketServer {
     return [];
   }
 
-  private historyValueKey(value: unknown): string {
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return String(value);
-    }
-  }
-
-  private claudeSettingsMessage(
-    sessionId: string,
-    session: SessionInfo,
-  ): ServerMessage {
-    const settings =
-      session.provider === "claude"
-        ? ((session.process as Partial<Pick<SdkProcess, "settings">>)
-            .settings ?? {})
-        : {};
-    return {
-      type: "system",
-      subtype: "claude_settings",
-      sessionId,
-      provider: "claude",
-      ...(settings.model ? { model: settings.model } : {}),
-      ...(settings.effort ? { effort: settings.effort } : {}),
-      fastMode: settings.fastMode === true,
-      ultracode: settings.ultracode === true,
-    } as ServerMessage;
-  }
-
-  private sendClaudeCurrentSettings(
-    ws: WebSocket,
-    sessionId: string,
-    session: SessionInfo,
-  ): void {
-    if (session.provider !== "claude") return;
-    this.send(ws, this.claudeSettingsMessage(sessionId, session));
-  }
-
-  private sendCodexCurrentSettings(
-    ws: WebSocket,
-    sessionId: string,
-    session: SessionInfo,
-  ): void {
-    const process = session.process instanceof CodexProcess
-      ? session.process
-      : undefined;
-    const settings = session.codexSettings;
-    this.send(ws, {
-      type: "system",
-      subtype: "codex_settings",
-      sessionId,
-      provider: "codex",
-      ...(settings?.model ?? process?.model
-        ? { model: settings?.model ?? process?.model }
-        : {}),
-      ...(settings?.modelReasoningEffort ?? process?.modelReasoningEffort
-        ? {
-            modelReasoningEffort:
-              settings?.modelReasoningEffort ?? process?.modelReasoningEffort,
-          }
-        : {}),
-      serviceTier: settings?.serviceTier ?? process?.serviceTier ?? "standard",
-    });
-  }
-
-  private async sendCodexCanonicalHistorySnapshot(
-    ws: WebSocket,
-    sessionId: string,
-    session: SessionInfo,
-    options: { includeCachedCommands?: boolean } = {},
-  ): Promise<boolean> {
-    try {
-      const entries = await this.codexCanonicalHistoryEntries(session);
-      if (!entries) return false;
-      this.send(ws, {
-        type: "history_snapshot",
-        sessionId,
-        fromSeq: entries[0]?.seq ?? session.historyRevision + 1,
-        toSeq: session.historyRevision,
-        messages: entries,
-        status: session.status,
-        reason: "reset",
-      } satisfies Extract<ServerMessage, { type: "history_snapshot" }>);
-      this.sendCodexCurrentSettings(ws, sessionId, session);
-      this.sendQueueState(ws, sessionId, session);
-      this.sendBackgroundTasksState(ws, sessionId, session);
-      this.sendCodexGoalState(ws, sessionId, session);
-      if (options.includeCachedCommands) {
-        this.sendCachedCommands(ws, sessionId, session);
-      }
-      return true;
-    } catch (err) {
-      this.send(ws, {
-        type: "error",
-        message: `Failed to read Codex thread history: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      });
-      return true;
-    }
-  }
-
-  private async sendCodexCanonicalLegacyHistory(
-    ws: WebSocket,
-    sessionId: string,
-    session: SessionInfo,
-  ): Promise<boolean> {
-    try {
-      const entries = await this.codexCanonicalHistoryEntries(session);
-      if (!entries) return false;
-      this.send(ws, {
-        type: "history",
-        messages: entries.map((entry) => entry.message),
-        sessionId,
-      } as Record<string, unknown>);
-      this.sendCodexCurrentSettings(ws, sessionId, session);
-      this.send(ws, {
-        type: "status",
-        status: session.status,
-        sessionId,
-      } as Record<string, unknown>);
-      this.sendQueueState(ws, sessionId, session);
-      this.sendBackgroundTasksState(ws, sessionId, session);
-      this.sendCodexGoalState(ws, sessionId, session);
-      this.sendCachedCommands(ws, sessionId, session);
-      return true;
-    } catch (err) {
-      this.send(ws, {
-        type: "error",
-        message: `Failed to read Codex thread history: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      });
-      return true;
-    }
-  }
-
-  private shouldResetCodexHistoryDelta(
-    session: SessionInfo,
-    sinceSeq: number,
-    resultKind: "delta" | "snapshot",
-  ): boolean {
-    if (!this.codexThreadIdForSession(session)) return false;
-    const resetRevision = session.codexHistoryResetRevision ??
-      session.codexCanonicalHistoryRevision;
-    if (typeof resetRevision !== "number") return true;
-    if (sinceSeq < resetRevision) return true;
-    return resultKind === "snapshot";
-  }
-
-  private async codexHistoryToServerMessages(
-    session: SessionInfo,
-    history: SessionHistoryMessage[],
-  ): Promise<ServerMessage[]> {
-    const messages: ServerMessage[] = [];
-    for (const item of history) {
-      const converted = await this.codexHistoryMessageToServerMessage(
-        session,
-        item,
-      );
-      if (converted) messages.push(converted);
-    }
-    return messages;
-  }
-
-  private async codexHistoryMessageToServerMessage(
+  async codexHistoryMessageToServerMessage(
     session: SessionInfo,
     item: SessionHistoryMessage,
   ): Promise<ServerMessage | null> {
@@ -3111,11 +1085,12 @@ export class BridgeWebSocketServer {
       };
     }
     if (item.role === "user") {
-      const images = await this.registerPastUserMessageImages(
+      const images = await registerPastUserMessageImages(
+        this,
         session,
         item as unknown as Record<string, unknown>,
       );
-      const text = this.sessionHistoryText(item.content);
+      const text = sessionHistoryText(item.content);
       if (!text && item.imageCount == null && images.length === 0) return null;
       return {
         type: "user_input",
@@ -3131,15 +1106,16 @@ export class BridgeWebSocketServer {
     }
 
     if (item.role === "assistant") {
-      const content = this.sessionHistoryAssistantContent(item.content);
+      const content = sessionHistoryAssistantContent(item.content);
       if (content.length === 0) return null;
-      const assistantImages = await this.resolveAssistantImages(
+      const assistantImages = await resolveAssistantImages(
+        this,
         session,
         content,
       );
       const messageId =
         item.uuid ??
-        this.sessionHistorySingleToolUseId(item.content) ??
+        sessionHistorySingleToolUseId(item.content) ??
         randomUUID();
       return {
         type: "assistant",
@@ -3154,11 +1130,12 @@ export class BridgeWebSocketServer {
       };
     }
 
-    const images = await this.registerPastToolResultImages(
+    const images = await registerPastToolResultImages(
+      this,
       session,
       item as unknown as Record<string, unknown>,
     );
-    const content = this.sessionHistoryText(item.content);
+    const content = sessionHistoryText(item.content);
     if (!content && images.length === 0) return null;
     return {
       type: "tool_result",
@@ -3170,313 +1147,13 @@ export class BridgeWebSocketServer {
     };
   }
 
-  private sessionHistoryText(content: SessionHistoryMessage["content"]): string {
-    if (typeof content === "string") return content;
-    if (!Array.isArray(content)) return "";
-    return content
-      .map((item) => {
-        if (item.type === "text" && typeof item.text === "string") {
-          return item.text;
-        }
-        if (item.type === "thinking" && typeof item.thinking === "string") {
-          return item.thinking;
-        }
-        return "";
-      })
-      .filter((text) => text.length > 0)
-      .join("\n");
-  }
-
-  private sessionHistoryAssistantContent(
-    content: SessionHistoryMessage["content"],
-  ): AssistantContent[] {
-    if (typeof content === "string") {
-      return content.trim().length > 0
-        ? [{ type: "text", text: content }]
-        : [];
-    }
-    if (!Array.isArray(content)) return [];
-    const items: AssistantContent[] = [];
-    for (const item of content) {
-      if (item.type === "text" && typeof item.text === "string") {
-        items.push({ type: "text", text: item.text });
-      } else if (
-        item.type === "thinking" &&
-        typeof item.thinking === "string"
-      ) {
-        items.push({ type: "thinking", thinking: item.thinking });
-      } else if (
-        item.type === "tool_use" &&
-        typeof item.id === "string" &&
-        typeof item.name === "string"
-      ) {
-        items.push({
-          type: "tool_use",
-          id: item.id,
-          name: item.name,
-          input: item.input ?? {},
-        });
-      }
-    }
-    return items;
-  }
-
-  private sessionHistorySingleToolUseId(
-    content: SessionHistoryMessage["content"],
-  ): string | undefined {
-    if (!Array.isArray(content) || content.length !== 1) return undefined;
-    const item = content[0];
-    return item.type === "tool_use" && typeof item.id === "string"
-      ? item.id
-      : undefined;
-  }
-
-  private async registerPastUserMessageImages(
-    session: SessionInfo,
-    msg: Record<string, unknown>,
-  ): Promise<ImageRef[]> {
-    if (!this.imageStore) return [];
-
-    const existingImages = Array.isArray(msg.images)
-      ? (msg.images as ImageRef[])
-      : [];
-    const refs: ImageRef[] = [...existingImages];
-
-    if (Array.isArray(msg.imagePaths)) {
-      const paths = msg.imagePaths.filter(
-        (path): path is string => typeof path === "string" && path.length > 0,
-      );
-      if (paths.length > 0) {
-        refs.push(
-          ...(await this.imageStore.registerImages(paths, session.projectPath)),
-        );
-      }
-    }
-
-    if (Array.isArray(msg.imageBase64)) {
-      for (const image of msg.imageBase64) {
-        const rawImage = image as Record<string, unknown>;
-        if (
-          typeof rawImage.data !== "string" ||
-          typeof rawImage.mimeType !== "string"
-        ) {
-          continue;
-        }
-        const ref = this.imageStore.registerFromBase64(
-          rawImage.data,
-          rawImage.mimeType,
-        );
-        if (ref) refs.push(ref);
-      }
-    }
-
-    const messageUuid = typeof msg.uuid === "string" ? msg.uuid : undefined;
-    const providerSessionId = session.claudeSessionId;
-    if (
-      refs.length === existingImages.length &&
-      messageUuid &&
-      providerSessionId
-    ) {
-      try {
-        const extracted = await extractMessageImages(
-          providerSessionId,
-          messageUuid,
-        );
-        for (const image of extracted) {
-          const ref = this.imageStore.registerFromBase64(
-            image.base64,
-            image.mimeType,
-          );
-          if (ref) refs.push(ref);
-        }
-      } catch (err) {
-        console.warn(
-          `[ws] Failed to restore user message images for ${messageUuid}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
-    }
-
-    return refs;
-  }
-
-  /** Re-registers markdown-embedded images when history is restored. */
-  private async resolveAssistantImages(
-    session: SessionInfo,
-    content: unknown,
-  ): Promise<AssistantImageRef[]> {
-    if (!this.assistantImageResolver) return [];
-    const texts = assistantTextBlocks(content);
-    if (!hasMarkdownImages(texts)) return [];
-    return this.assistantImageResolver(texts, session.projectPath);
-  }
-
-  private async registerPastToolResultImages(
-    session: SessionInfo,
-    msg: Record<string, unknown>,
-  ): Promise<ImageRef[]> {
-    const existingImages = Array.isArray(msg.images)
-      ? (msg.images as ImageRef[])
-      : [];
-    if (!this.imageStore) return [...existingImages];
-
-    const paths = new Set<string>();
-    if (Array.isArray(msg.imagePaths)) {
-      for (const path of msg.imagePaths) {
-        if (typeof path === "string" && path.length > 0) paths.add(path);
-      }
-    }
-
-    const content = typeof msg.content === "string" ? msg.content : "";
-    if (content) {
-      for (const path of this.imageStore.extractImagePaths(content)) {
-        paths.add(path);
-      }
-    }
-
-    const refs: ImageRef[] = [...existingImages];
-    if (paths.size > 0) {
-      refs.push(
-        ...(await this.imageStore.registerImages([...paths], session.projectPath)),
-      );
-    }
-
-    if (Array.isArray(msg.imageBase64)) {
-      for (const image of msg.imageBase64) {
-        const rawImage = image as Record<string, unknown>;
-        if (
-          typeof rawImage.data !== "string" ||
-          typeof rawImage.mimeType !== "string"
-        ) {
-          continue;
-        }
-        const ref = this.imageStore.registerFromBase64(
-          rawImage.data,
-          rawImage.mimeType,
-        );
-        if (ref) refs.push(ref);
-      }
-    }
-
-    return refs;
-  }
-
-  private async getCodexThreadHistoryFromRpc(
-    threadId: string,
-    projectPath?: string,
-    preferredProcess?: CodexProcess,
-  ): Promise<SessionHistoryMessage[]> {
-    const activeProcess = preferredProcess ?? this.getActiveCodexProcess();
-    const process =
-      activeProcess ?? (await this.createStandaloneCodexProcess(projectPath));
-    const isStandalone = process !== activeProcess;
-    try {
-      const thread = await process.readThread(threadId, true);
-      return codexThreadToSessionHistory(thread);
-    } catch (err) {
-      if (this.isCodexThreadNotMaterializedError(err)) return [];
-      throw err;
-    } finally {
-      if (isStandalone) {
-        process.stop();
-      }
-    }
-  }
-
-  private isCodexThreadNotMaterializedError(err: unknown): boolean {
-    const message = err instanceof Error ? err.message : String(err);
-    return (
-      message.includes("is not materialized yet") &&
-      message.includes("includeTurns is unavailable before first user message")
-    );
-  }
-
-  private async getCodexThreadHistory(
-    threadId: string,
-    projectPath?: string,
-  ): Promise<SessionHistoryMessage[]> {
-    if (!this.getActiveCodexProcess() && process.env.NODE_ENV === "test") {
-      return getCodexSessionHistory(threadId);
-    }
-    return this.getCodexThreadHistoryFromRpc(threadId, projectPath);
-  }
-
-  private codexHistoryFromThreadOrFallback(params: {
-    thread: unknown;
-    expectedUserTurns: number;
-    fallback: SessionHistoryMessage[];
-  }): SessionHistoryMessage[] {
-    const messages = codexThreadToSessionHistory(params.thread);
-    if (countCodexHistoryUserTurns(messages) >= params.expectedUserTurns) {
-      return messages;
-    }
-    return params.fallback;
-  }
-
-  private createClaudeSessionWithFallback(params: {
-    projectPath: string;
-    options?: StartOptions & { permissionMode?: ClaudePermissionMode };
-    pastMessages?: unknown[];
-    worktreeOptions?: WorktreeOptions;
-  }): {
-    sessionId: string;
-    permissionMode: ClaudePermissionMode;
-    executionMode: "default" | "acceptEdits" | "fullAccess";
-    planMode: boolean;
-    usedFallback: boolean;
-  } {
-    const initialMode = params.options?.permissionMode ?? "default";
-    try {
-      const sessionId = this.sessionManager.create(
-        params.projectPath,
-        params.options,
-        params.pastMessages,
-        params.worktreeOptions,
-      );
-      return {
-        sessionId,
-        permissionMode: initialMode,
-        executionMode: deriveExecutionMode({
-          provider: "claude",
-          permissionMode: initialMode,
-        }),
-        planMode: derivePlanMode({ permissionMode: initialMode }),
-        usedFallback: false,
-      };
-    } catch (err) {
-      if (
-        initialMode !== "auto" ||
-        !isClaudeAutoModeUnavailableError(err)
-      ) {
-        throw err;
-      }
-      const fallbackOptions = {
-        ...params.options,
-        permissionMode: "default" as const,
-      };
-      const sessionId = this.sessionManager.create(
-        params.projectPath,
-        fallbackOptions,
-        params.pastMessages,
-        params.worktreeOptions,
-      );
-      return {
-        sessionId,
-        permissionMode: "default",
-        executionMode: "default",
-        planMode: false,
-        usedFallback: true,
-      };
-    }
-  }
-
   close(): void {
     console.log("[ws] Shutting down...");
     for (const operation of this.resumeOperations.values()) {
       if (operation.timeout) clearTimeout(operation.timeout);
     }
     this.resumeOperations.clear();
+    void this.sharedStateStore.flush();
     this.flushAllDeltaBatches();
     this.sessionManager.destroyAll();
     this.flushAllDeltaBatches();
@@ -3505,7 +1182,7 @@ export class BridgeWebSocketServer {
     // Send session list and project history on connect
     this.refreshConnectionMetadata();
     this.sendSessionList(ws);
-    const projects = this.legacyProjectHistoryProjects();
+    const projects = legacyProjectHistoryProjects(this);
     this.send(ws, { type: "project_history", projects });
 
     ws.on("message", (data) => {
@@ -3571,13 +1248,14 @@ export class BridgeWebSocketServer {
       lastRefreshAt !== null &&
       now >= lastRefreshAt &&
       now - lastRefreshAt <
-        BridgeWebSocketServer.CONNECT_METADATA_REFRESH_COOLDOWN_MS
+        CONNECT_METADATA_REFRESH_COOLDOWN_MS
     ) {
       return;
     }
     this.lastConnectMetadataRefreshAt = now;
     void this.refreshCodexMetadata();
     void this.refreshClaudeModels();
+    void this.refreshAntigravityAvailability();
     // Load the Codex thread snapshot before the first search / filter.
     this.codexThreadSnapshot.warm();
   }
@@ -3611,7 +1289,7 @@ export class BridgeWebSocketServer {
     }
   }
 
-  private async handleClientMessage(
+  async handleClientMessage(
     msg: ClientMessage,
     ws: WebSocket,
     echoInput = false,
@@ -3647,2615 +1325,137 @@ export class BridgeWebSocketServer {
       if (msg.deliveryRevision !== undefined) {
         this.send(ws, { type: "performance_mode_state", deliveryRevision: msg.deliveryRevision });
       }
-      this.sendPromptHistoryStatus(ws);
+      sendPromptHistoryStatus(this, ws);
       return;
     }
 
-    const incomingSessionId = this.extractSessionIdFromClientMessage(msg);
+    const incomingSessionId = extractSessionIdFromClientMessage(msg);
     const isActiveRuntimeSession =
       incomingSessionId != null &&
       this.sessionManager.get(incomingSessionId) != null;
     if (incomingSessionId && isActiveRuntimeSession) {
-      this.recordDebugEvent(incomingSessionId, {
+      recordDebugEvent(this, incomingSessionId, {
         direction: "incoming",
         channel: "ws",
         type: msg.type,
-        detail: this.summarizeClientMessage(msg),
+        detail: summarizeClientMessage(msg),
       });
       this.recordingStore?.record(incomingSessionId, "incoming", msg);
     }
 
     switch (msg.type) {
-      case "start": {
-        let projectPath = resolvePlatformPath(msg.projectPath, this.platform);
-        let resolvedWorkspace: ResolvedWorkspace | undefined;
-        if (msg.projectId) {
-          const project = this.workspaceStore?.getProject(msg.projectId);
-          if (!project) {
-            this.send(ws, {
-              type: "error",
-              requestId: msg.requestId,
-              errorCode: "project_not_found",
-              message: `Project not found: ${msg.projectId}`,
-            });
-            break;
-          }
-          const normalized = this.normalizeWorkspaceRoots(project.rootPaths);
-          if (normalized.deniedRoot || !normalized.roots) {
-            this.send(
-              ws,
-              this.buildPathNotAllowedError(
-                normalized.deniedRoot ?? project.rootPaths[0],
-                msg.requestId,
-              ),
-            );
-            break;
-          }
-          projectPath = normalized.roots[0];
-          resolvedWorkspace = {
-            kind: "project",
-            projectId: project.id,
-            projectName: project.name,
-            rootPaths: normalized.roots,
-          };
-        }
-        if (!this.isPathAllowed(projectPath)) {
-          this.send(ws, {
-            ...this.buildPathNotAllowedError(msg.projectPath),
-            requestId: msg.requestId,
-            path: msg.projectPath,
-          });
-          break;
-        }
-        try {
-          const provider = msg.provider ?? "claude";
-          const tierError = provider === "codex"
-            ? this.codexServiceTierError(msg.model, msg.serviceTier) : undefined;
-          if (tierError) {
-            this.send(ws, { type: "error", requestId: msg.requestId,
-              errorCode: "codex_service_tier_unavailable", message: tierError });
-            break;
-          }
-          const normalizedCodexPermissionsMode =
-            provider === "codex"
-              ? normalizeCodexPermissionsMode(msg.codexPermissionsMode)
-              : undefined;
-          const requestedCodexPermissionsMode =
-            this.codexAutoReviewDisabled &&
-            normalizedCodexPermissionsMode === "autoReview"
-              ? "default"
-              : normalizedCodexPermissionsMode;
-          const codexPermissionSettings = requestedCodexPermissionsMode
-            ? codexSettingsFromPermissionsMode(requestedCodexPermissionsMode)
-            : undefined;
-          const codexApprovalPolicy =
-            provider === "codex"
-              ? requestedCodexPermissionsMode
-                ? codexPermissionSettings?.approvalPolicy
-                : normalizeCodexApprovalPolicy(
-                    msg.approvalPolicy ??
-                      (msg.executionMode == null
-                        ? undefined
-                        : msg.executionMode === "fullAccess"
-                          ? "never"
-                          : "on-request"),
-                  )
-              : undefined;
-          const executionMode = deriveExecutionMode({
-            provider,
-            permissionMode: msg.permissionMode,
-            executionMode: msg.executionMode,
-            approvalPolicy: codexApprovalPolicy,
-          });
-          const planMode = derivePlanMode({
-            permissionMode: msg.permissionMode,
-            planMode: msg.planMode,
-          });
-          const legacyPermissionMode = modesToLegacyPermissionMode(
-            provider,
-            executionMode,
-            planMode,
-          );
-          const claudePermissionMode =
-            provider === "claude"
-              ? ((msg.permissionMode as
-                  | "default"
-                  | "auto"
-                  | "acceptEdits"
-                  | "bypassPermissions"
-                  | "plan"
-                  | undefined) ?? legacyPermissionMode)
-              : legacyPermissionMode;
-          if (provider === "codex") {
-            console.log(
-              `[ws] start(codex): execution=${executionMode} plan=${planMode}`,
-            );
-            if (
-              msg.profile &&
-              !(await this.validateCodexProfile(msg.profile, projectPath))
-            ) {
-              this.send(ws, {
-                type: "error",
-                requestId: msg.requestId,
-                path: projectPath,
-                message: `Codex profile not found: ${msg.profile}`,
-              });
-              break;
-            }
-          }
-          const requestedAdditionalRoots =
-            resolvedWorkspace?.rootPaths.slice(1) ??
-            msg.additionalWritableRoots;
-          const additionalWritableRoots = this.normalizeAdditionalWritableRoots(
-            requestedAdditionalRoots,
-            projectPath,
-          );
-          if (additionalWritableRoots.deniedRoot) {
-            this.send(
-              ws,
-              {
-                ...this.buildPathNotAllowedError(
-                  additionalWritableRoots.deniedRoot,
-                ),
-                requestId: msg.requestId,
-                path: projectPath,
-              },
-            );
-            break;
-          }
-          const {
-            sessionId,
-            permissionMode: effectivePermissionMode,
-            executionMode: effectiveExecutionMode,
-            planMode: effectivePlanMode,
-            usedFallback: autoFallbackUsed,
-          } =
-            provider === "claude"
-              ? this.createClaudeSessionWithFallback({
-                  projectPath,
-                  options: {
-                    sessionId: msg.sessionId,
-                    continueMode: msg.continue,
-                    permissionMode: claudePermissionMode,
-                    model: msg.model,
-                    effort: msg.effort,
-                    fastMode: msg.claudeFastMode,
-                    ultracode: msg.claudeUltracode,
-                    maxTurns: msg.maxTurns,
-                    maxBudgetUsd: msg.maxBudgetUsd,
-                    fallbackModel: msg.fallbackModel,
-                    forkSession: msg.forkSession,
-                    persistSession: msg.persistSession,
-                    autoRename: msg.autoRename,
-                    ...(msg.sandboxMode
-                      ? { sandboxEnabled: msg.sandboxMode === "on" }
-                      : {}),
-                    additionalDirectories: additionalWritableRoots.roots,
-                  },
-                  worktreeOptions: {
-                    useWorktree: msg.useWorktree,
-                    worktreeBranch: msg.worktreeBranch,
-                    existingWorktreePath: msg.existingWorktreePath,
-                  },
-                })
-              : {
-                  sessionId: this.sessionManager.create(
-                    projectPath,
-                    { autoRename: msg.autoRename },
-                    undefined,
-                    {
-                      useWorktree: msg.useWorktree,
-                      worktreeBranch: msg.worktreeBranch,
-                      existingWorktreePath: msg.existingWorktreePath,
-                    },
-                    provider,
-                    this.withCodexAutoReviewPolicy({
-                      profile: msg.profile,
-                      approvalPolicy: codexPermissionSettings
-                        ? codexPermissionSettings.approvalPolicy
-                        : (codexApprovalPolicy ??
-                          normalizeCodexApprovalPolicy(
-                            executionMode === "fullAccess"
-                              ? "never"
-                              : "on-request",
-                          )),
-                      approvalsReviewer:
-                        codexPermissionSettings?.approvalsReviewer ??
-                        msg.approvalsReviewer,
-                      codexPermissionsMode:
-                        codexPermissionSettings?.codexPermissionsMode,
-                      sandboxMode: codexPermissionSettings
-                        ? codexPermissionSettings.sandboxMode
-                        : sandboxModeToInternal(msg.sandboxMode),
-                      model: msg.model,
-                      modelReasoningEffort:
-                        (msg.modelReasoningEffort as CodexStartOptions["modelReasoningEffort"]) ??
-                        undefined,
-                      serviceTier: msg.serviceTier,
-                      networkAccessEnabled: msg.networkAccessEnabled,
-                      webSearchMode:
-                        (msg.webSearchMode as "disabled" | "cached" | "live") ??
-                        undefined,
-                      additionalWritableRoots: additionalWritableRoots.roots,
-                      threadId: msg.sessionId,
-                      collaborationMode: planMode
-                        ? ("plan" as const)
-                        : ("default" as const),
-                    }),
-                  ),
-                  permissionMode: claudePermissionMode,
-                  executionMode,
-                  planMode,
-                  usedFallback: false,
-                };
-          const createdSession = this.sessionManager.get(sessionId);
-          if (resolvedWorkspace) {
-            this.pendingSessionWorkspaces.set(sessionId, resolvedWorkspace);
-            void this.persistPendingSessionWorkspace(sessionId);
-          }
-          const cached = this.sessionManager.getCachedCommands(
-            provider,
-            createdSession?.worktreePath ?? projectPath,
-          );
-
-          // Load saved session name from CLI storage (for resumed sessions)
-          void this.loadAndSetSessionName(
-            createdSession,
-            provider,
-            projectPath,
-            msg.sessionId,
-          ).then(() => {
-            this.send(
-              ws,
-              this.buildSessionCreatedMessage({
-                sessionId,
-                provider,
-                projectPath,
-                session: createdSession,
-                permissionMode:
-                  provider === "claude"
-                    ? effectivePermissionMode
-                    : claudePermissionMode,
-                executionMode:
-                  provider === "claude"
-                    ? effectiveExecutionMode
-                    : executionMode,
-                planMode: provider === "claude" ? effectivePlanMode : planMode,
-                sandboxMode: createdSession?.codexSettings?.sandboxMode
-                  ? sandboxModeToExternal(createdSession.codexSettings.sandboxMode)
-                  : msg.sandboxMode,
-                codexPermissionsMode:
-                  createdSession?.codexSettings?.codexPermissionsMode,
-                approvalsReviewer:
-                  createdSession?.codexSettings?.approvalsReviewer,
-                requestId: msg.requestId,
-                ...(cached
-                  ? {
-                      slashCommands: cached.slashCommands,
-                      skills: cached.skills,
-                      ...(cached.skillMetadata
-                        ? { skillMetadata: cached.skillMetadata }
-                        : {}),
-                      apps: cached.apps,
-                      ...(cached.appMetadata
-                        ? { appMetadata: cached.appMetadata }
-                        : {}),
-                      plugins: cached.plugins,
-                      ...(cached.pluginMetadata
-                        ? { pluginMetadata: cached.pluginMetadata }
-                        : {}),
-                    }
-                  : {}),
-              }),
-            );
-            this.broadcastSessionList();
-            if (provider === "codex") {
-              void this.refreshCodexMetadata(projectPath);
-            } else {
-              void this.refreshClaudeModels(projectPath);
-            }
-            if (autoFallbackUsed) {
-              this.sendTip(
-                ws,
-                sessionId,
-                "auto_mode_fallback_default",
-                createdSession,
-              );
-            }
-            if (msg.initialPrompt?.trim()) {
-              void this.prepareInitialPrompt(
-                provider,
-                createdSession?.worktreePath ?? projectPath,
-                sessionId,
-                msg.initialPrompt,
-              )
-                .then((prepared) =>
-                  this.handleClientMessage(
-                    {
-                      type: "input",
-                      sessionId,
-                      text: prepared.text,
-                      clientMessageId: randomUUID(),
-                      ...(prepared.skills.length > 0
-                        ? { skills: prepared.skills }
-                        : {}),
-                    },
-                    ws,
-                    true,
-                  ),
-                )
-                .catch((error) => {
-                  this.send(ws, { type: "error", sessionId, message: `Failed to send initial project request: ${(error as Error).message}` });
-                });
-            }
-            // Send a gentle tip when the project is not a git repository
-            if (createdSession && !createdSession.gitBranch) {
-              this.sendTip(ws, sessionId, "git_not_available", createdSession);
-            }
-          });
-          this.debugEvents.set(sessionId, []);
-          this.recordDebugEvent(sessionId, {
-            direction: "internal",
-            channel: "bridge",
-            type: "session_created",
-            detail: `provider=${provider} projectPath=${projectPath}`,
-          });
-          this.recordingStore?.saveMeta(sessionId, {
-            bridgeSessionId: sessionId,
-            projectPath,
-            ...(resolvedWorkspace?.projectId
-              ? { projectId: resolvedWorkspace.projectId }
-              : {}),
-            ...(resolvedWorkspace?.projectName
-              ? { projectName: resolvedWorkspace.projectName }
-              : {}),
-            createdAt: new Date().toISOString(),
-          });
-          if (!resolvedWorkspace) {
-            this.projectHistory?.addProject(projectPath);
-          }
-        } catch (err) {
-          console.error(`[ws] Failed to start session:`, err);
-          this.send(ws, {
-            type: "error",
-            requestId: msg.requestId,
-            path: msg.projectPath,
-            message: `Failed to start session: ${(err as Error).message}`,
-          });
-        }
+      case "start":
+        await handleStart(this, msg, ws);
         break;
-      }
 
-      case "input": {
-        const session = this.resolveSession(msg.sessionId);
-        if (!session) {
-          const pendingInputs = msg.sessionId
-            ? this.pendingClaudeResumeInputs.get(ws)?.get(msg.sessionId)
-            : undefined;
-          if (pendingInputs) {
-            pendingInputs.push(msg);
-            return;
-          }
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: "No active session. Send 'start' first.",
-          });
-          return;
-        }
-        const text = msg.text;
-        const clientMessageId = msg.clientMessageId;
-        const baseSeq = msg.baseSeq;
-        const codexSkills = msg.skills ?? (msg.skill ? [msg.skill] : []);
-        const codexMentions = msg.mentions ?? [];
-
-        // Snapshot busy state before dispatch. We prefer the actual enqueue
-        // result returned by SdkProcess sendInput* below, but keep this as a
-        // fallback for test doubles and async paths.
-        const isAgentBusySnapshot =
-          session.provider === "claude" && !session.process.isWaitingForInput;
-
-        // Normalize images: support new `images` array and legacy single-image fields
-        let images: Array<{ base64: string; mimeType: string }> = [];
-        if (msg.images && msg.images.length > 0) {
-          images = msg.images;
-        } else if (msg.imageBase64 && msg.mimeType) {
-          // Legacy single-image fallback
-          images = [{ base64: msg.imageBase64, mimeType: msg.mimeType }];
-        }
-
-        // Add user_input to in-memory history.
-        // The SDK stream does NOT emit user messages, so session.history would
-        // otherwise lack them.  This ensures get_history responses include user
-        // messages and replaceEntries on the client side preserves them.
-        // Flutter already shows the user bubble optimistically. For Codex we
-        // echo the accepted user_input back with its synthetic UUID so the live
-        // bubble becomes rewindable/forkable without requiring a stop+resume.
-        //
-        // Register images in the image store so they can be served via HTTP
-        // when the client re-enters the session and loads history.
-        let imageRefs:
-          | Array<{ id: string; url: string; mimeType: string }>
-          | undefined;
-        if (images.length > 0 && this.imageStore) {
-          imageRefs = [];
-          for (const img of images) {
-            const ref = this.imageStore.registerFromBase64(
-              img.base64,
-              img.mimeType,
-            );
-            if (ref) imageRefs.push(ref);
-          }
-          if (imageRefs.length === 0) imageRefs = undefined;
-        }
-
-        if (
-          clientMessageId &&
-          baseSeq !== undefined &&
-          this.hasInputConflictSince(session, baseSeq)
-        ) {
-          this.send(ws, {
-            type: "input_rejected",
-            sessionId: session.id,
-            clientMessageId,
-            reason: "conflict",
-          });
-          break;
-        }
-
-        const delivery = msg.delivery;
-        const sdkTurnActive =
-          session.provider === "claude"
-            ? (session.process as Partial<Pick<SdkProcess, "isTurnActive">>)
-                .isTurnActive
-            : undefined;
-        const turnActive =
-          session.provider === "codex"
-            ? !session.process.isWaitingForInput
-            : typeof sdkTurnActive === "boolean"
-              ? sdkTurnActive
-              : isAgentBusySnapshot;
-        // Older clients omit `delivery`: Codex queues and Claude keeps the
-        // legacy interrupt-and-send path below.
-        const usageLimited = this.sessionManager.isUsageLimited(session.id);
-        const holdForDelivery =
-          usageLimited || (turnActive &&
-          (delivery !== undefined || session.provider === "codex"));
-
-        if (holdForDelivery) {
-          const pendingInput: QueuedSessionInput = {
-            itemId: randomUUID(),
-            ...(clientMessageId ? { clientMessageId } : {}),
-            text,
-            createdAt: new Date().toISOString(),
-            ...(session.provider === "codex"
-              ? { userMessageUuid: nextCodexUserTurnUuid(session) }
-              : {}),
-            ...(images.length > 0 ? { imageCount: images.length, images } : {}),
-            ...(imageRefs ? { imageRefs } : {}),
-            ...(codexSkills.length > 0 ? { skills: codexSkills } : {}),
-            ...(codexMentions.length > 0 ? { mentions: codexMentions } : {}),
-          };
-
-          let outcome: "steered" | "queued" | "rejected";
-          if (delivery === "steer" && !usageLimited) {
-            outcome = await this.sessionManager.steerInput(
-              session.id,
-              pendingInput,
-            );
-          } else if (session.queuedInput) {
-            outcome = "rejected";
-          } else {
-            outcome = this.sessionManager.queueInput(session.id, pendingInput)
-              ? "queued"
-              : "rejected";
-          }
-
-          if (outcome === "rejected") {
-            this.send(ws, {
-              type: "input_rejected",
-              sessionId: session.id,
-              ...(clientMessageId ? { clientMessageId } : {}),
-              reason: "Queue is full",
-            });
-            break;
-          }
-          if (images.length > 0 && this.galleryStore && session.projectPath) {
-            for (const img of images) {
-              this.galleryStore
-                .addImageFromBase64(
-                  img.base64,
-                  img.mimeType,
-                  session.projectPath,
-                  msg.sessionId,
-                )
-                .catch((err) => {
-                  console.warn(
-                    `[ws] Failed to persist queued image to gallery: ${err}`,
-                  );
-                });
-            }
-          }
-          this.send(ws, {
-            type: "input_ack",
-            sessionId: session.id,
-            ...(clientMessageId ? { clientMessageId } : {}),
-            acceptedSeq: session.historyRevision,
-            queued: outcome === "queued",
-          });
-          this.broadcastSessionList();
-          break;
-        }
-
-        const userEntry = this.sessionManager.appendHistory(session.id, {
-          type: "user_input",
-          text,
-          ...(session.provider === "codex"
-            ? { userMessageUuid: nextCodexUserTurnUuid(session) }
-            : {}),
-          ...(clientMessageId ? { clientMessageId } : {}),
-          timestamp: new Date().toISOString(),
-          ...(images.length > 0 ? { imageCount: images.length } : {}),
-          ...(imageRefs ? { images: imageRefs } : {}),
-        } as ServerMessage);
-        const acceptedSeq = userEntry?.seq ?? session.historyRevision;
-
-        if ((session.provider === "codex" || echoInput) && userEntry) {
-          this.send(ws, {
-            ...userEntry.message,
-            sessionId: session.id,
-            historySeq: acceptedSeq,
-          } as ServerMessage & { sessionId: string; historySeq: number });
-        }
-        if (userEntry) {
-          this.broadcastSessionMessage(
-            session.id,
-            {
-              ...userEntry.message,
-              historySeq: acceptedSeq,
-            } as ServerMessage & { historySeq: number },
-            ws,
-          );
-        }
-
-        // Persist images to Gallery Store asynchronously (fire-and-forget)
-        if (images.length > 0 && this.galleryStore && session.projectPath) {
-          for (const img of images) {
-            this.galleryStore
-              .addImageFromBase64(
-                img.base64,
-                img.mimeType,
-                session.projectPath,
-                msg.sessionId,
-              )
-              .catch((err) => {
-                console.warn(`[ws] Failed to persist image to gallery: ${err}`);
-              });
-          }
-        }
-
-        // Codex input path
-        if (session.provider === "codex") {
-          this.send(ws, {
-            type: "input_ack",
-            sessionId: session.id,
-            ...(clientMessageId ? { clientMessageId } : {}),
-            acceptedSeq,
-            queued: false,
-          });
-          const codexProc = session.process as CodexProcess;
-          if (images.length > 0) {
-            codexProc.sendInputStructured(text, {
-              images,
-              skills: codexSkills,
-              mentions: codexMentions,
-            });
-          } else if (msg.imageId && this.galleryStore) {
-            this.galleryStore
-              .getImageAsBase64(msg.imageId)
-              .then((imageData) => {
-                if (imageData) {
-                  codexProc.sendInputStructured(text, {
-                    images: [imageData],
-                    skills: codexSkills,
-                    mentions: codexMentions,
-                  });
-                } else {
-                  console.warn(`[ws] Image not found: ${msg.imageId}`);
-                  codexProc.sendInputStructured(text, {
-                    skills: codexSkills,
-                    mentions: codexMentions,
-                  });
-                }
-              })
-              .catch((err) => {
-                console.error(`[ws] Failed to load image: ${err}`);
-                codexProc.sendInputStructured(text, {
-                  skills: codexSkills,
-                  mentions: codexMentions,
-                });
-              });
-          } else if (codexSkills.length > 0 || codexMentions.length > 0) {
-            codexProc.sendInputStructured(text, {
-              skills: codexSkills,
-              mentions: codexMentions,
-            });
-          } else {
-            codexProc.sendInput(text);
-          }
-          break;
-        }
-
-        // Claude Code input path — enqueue first, then interrupt if busy
-        const claudeProc = session.process as SdkProcess;
-        let wasQueued = false;
-        let shouldInterrupt = false;
-        if (images.length > 0) {
-          console.log(
-            `[ws] Sending message with ${images.length} inline Base64 image(s)`,
-          );
-          if (typeof claudeProc.dispatchInputWithImages === "function") {
-            const result = claudeProc.dispatchInputWithImages(text, images);
-            wasQueued = result.queued;
-            shouldInterrupt = result.shouldInterrupt;
-          } else {
-            const result = claudeProc.sendInputWithImages(text, images);
-            wasQueued =
-              typeof result === "boolean" ? result : isAgentBusySnapshot;
-            shouldInterrupt = wasQueued;
-          }
-        }
-        // Legacy imageId mode (backward compatibility)
-        else if (msg.imageId && this.galleryStore) {
-          this.send(ws, {
-            type: "input_ack",
-            sessionId: session.id,
-            ...(clientMessageId ? { clientMessageId } : {}),
-            acceptedSeq,
-            queued: isAgentBusySnapshot,
-          });
-          this.galleryStore
-            .getImageAsBase64(msg.imageId)
-            .then((imageData) => {
-              let queuedAfterResolve = false;
-              if (imageData) {
-                if (typeof claudeProc.dispatchInputWithImages === "function") {
-                  const result = claudeProc.dispatchInputWithImages(text, [
-                    imageData,
-                  ]);
-                  queuedAfterResolve = result.queued;
-                  if (result.shouldInterrupt) claudeProc.interrupt();
-                } else {
-                  const result = claudeProc.sendInputWithImages(text, [
-                    imageData,
-                  ]);
-                  queuedAfterResolve =
-                    typeof result === "boolean"
-                      ? result
-                      : isAgentBusySnapshot;
-                  if (queuedAfterResolve) claudeProc.interrupt();
-                }
-              } else {
-                console.warn(`[ws] Image not found: ${msg.imageId}`);
-                if (typeof claudeProc.dispatchInput === "function") {
-                  const result = claudeProc.dispatchInput(text);
-                  queuedAfterResolve = result.queued;
-                  if (result.shouldInterrupt) claudeProc.interrupt();
-                } else {
-                  const result = session.process.sendInput(text);
-                  queuedAfterResolve =
-                    typeof result === "boolean"
-                      ? result
-                      : isAgentBusySnapshot;
-                  if (queuedAfterResolve) claudeProc.interrupt();
-                }
-              }
-            })
-            .catch((err) => {
-              console.error(`[ws] Failed to load image: ${err}`);
-              if (typeof claudeProc.dispatchInput === "function") {
-                const result = claudeProc.dispatchInput(text);
-                if (result.shouldInterrupt) claudeProc.interrupt();
-              } else {
-                const result = session.process.sendInput(text);
-                const queuedAfterResolve =
-                  typeof result === "boolean" ? result : isAgentBusySnapshot;
-                if (queuedAfterResolve) claudeProc.interrupt();
-              }
-            });
-          break;
-        }
-        // Text-only message
-        else {
-          if (typeof claudeProc.dispatchInput === "function") {
-            const result = claudeProc.dispatchInput(text);
-            wasQueued = result.queued;
-            shouldInterrupt = result.shouldInterrupt;
-          } else {
-            const result = session.process.sendInput(text);
-            wasQueued =
-              typeof result === "boolean" ? result : isAgentBusySnapshot;
-            shouldInterrupt = wasQueued;
-          }
-        }
-
-        // Acknowledge receipt so the client can mark the message state.
-        // queued=true means the input was enqueued instead of being consumed
-        // immediately by the SDK stream.
-        this.send(ws, {
-          type: "input_ack",
-          sessionId: session.id,
-          ...(clientMessageId ? { clientMessageId } : {}),
-          acceptedSeq,
-          queued: wasQueued,
-        });
-
-        if (shouldInterrupt) {
-          console.log(
-            `[ws] Agent is busy — will queue input and interrupt current turn`,
-          );
-          claudeProc.interrupt();
-        }
+      case "input":
+        await handleInput(this, msg, ws, echoInput);
         break;
-      }
 
-      case "update_queued_input": {
-        const session = this.resolveSession(msg.sessionId);
-        if (!session) {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: "No active session.",
-          });
-          return;
-        }
-        if (!msg.text.trim()) {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: "Queued message cannot be empty.",
-          });
-          return;
-        }
-        const success = this.sessionManager.updateQueuedInput(
-          session.id,
-          msg.itemId,
-          msg.text,
-          { skills: msg.skills ?? [], mentions: msg.mentions ?? [] },
-        );
-        if (!success) {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: "Queued message not found.",
-            errorCode: "queued_input_not_found",
-          });
-          return;
-        }
-        this.broadcastSessionList();
+      case "update_queued_input":
+        await handleUpdateQueuedInput(this, msg, ws);
         break;
-      }
 
-      case "cancel_queued_input": {
-        const session = this.resolveSession(msg.sessionId);
-        if (!session) {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: "No active session.",
-          });
-          return;
-        }
-        const success = this.sessionManager.cancelQueuedInput(
-          session.id,
-          msg.itemId,
-        );
-        if (!success) {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: "Queued message not found.",
-            errorCode: "queued_input_not_found",
-          });
-          return;
-        }
-        this.broadcastSessionList();
+      case "cancel_queued_input":
+        await handleCancelQueuedInput(this, msg, ws);
         break;
-      }
 
-      case "steer_queued_input": {
-        const session = this.resolveSession(msg.sessionId);
-        if (!session) {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: "No active session.",
-          });
-          return;
-        }
-        const result = await this.sessionManager.steerQueuedInput(
-          session.id,
-          msg.itemId,
-        );
-        if (!result.ok) {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: result.error,
-            errorCode:
-              result.error === "Queued message not found."
-                ? "queued_input_not_found"
-                : "queued_input_steer_failed",
-          });
-          return;
-        }
-        this.broadcastSessionList();
+      case "steer_queued_input":
+        await handleSteerQueuedInput(this, msg, ws);
         break;
-      }
 
-      case "push_register": {
-        const locale = normalizePushLocale(msg.locale);
-        const privacyMode = msg.privacyMode === true;
-        const supportsRegistrationResult =
-          this.clientSupportedServerMessages
-            .get(ws)
-            ?.has("push_registration_result") ?? false;
-        console.log(
-          `[ws] push_register received (platform: ${msg.platform}, locale: ${locale}, privacy: ${privacyMode}, configured: ${this.pushRelay.isConfigured})`,
-        );
-        const generation = this.beginPushTokenOperation(msg.token);
-        if (!this.pushRelay.isConfigured) {
-          const error = "Push relay is not configured on bridge";
-          this.send(
-            ws,
-            supportsRegistrationResult
-              ? {
-                  type: "push_registration_result",
-                  token: msg.token,
-                  requestId: msg.requestId ?? "",
-                  success: false,
-                  error,
-                }
-              : { type: "error", message: error },
-          );
-          return;
-        }
-        const operation = this.enqueuePushTokenOperation(msg.token, () =>
-          this.pushRelay.registerToken(msg.token, msg.platform, locale),
-        );
-        operation
-          .then(() => {
-            if (!this.isCurrentPushTokenOperation(msg.token, generation)) return;
-            console.log("[ws] push_register: token registered successfully");
-            if (supportsRegistrationResult) {
-              this.send(ws, {
-                type: "push_registration_result",
-                token: msg.token,
-                requestId: msg.requestId ?? "",
-                success: true,
-              });
-            }
-            // Enable delivery only after the acknowledgement has been queued
-            // on the WebSocket, keeping the app on local fallback until then.
-            this.tokenLocales.set(msg.token, locale);
-            this.tokenPrivacyMode.set(msg.token, privacyMode);
-          })
-          .catch((err) => {
-            if (!this.isCurrentPushTokenOperation(msg.token, generation)) return;
-            const detail = err instanceof Error ? err.message : String(err);
-            console.error(`[ws] push_register failed: ${detail}`);
-            const error = `Failed to register push token: ${detail}`;
-            this.send(
-              ws,
-              supportsRegistrationResult
-                ? {
-                    type: "push_registration_result",
-                    token: msg.token,
-                    requestId: msg.requestId ?? "",
-                    success: false,
-                    error,
-                  }
-                : { type: "error", message: error },
-            );
-          });
+      case "push_register":
+        await handlePushRegister(this, msg, ws);
         break;
-      }
 
-      case "push_unregister": {
-        console.log("[ws] push_unregister received");
-        const generation = this.beginPushTokenOperation(msg.token);
-        if (!this.pushRelay.isConfigured) {
-          this.send(ws, {
-            type: "error",
-            message: "Push relay is not configured on bridge",
-          });
-          return;
-        }
-        this.enqueuePushTokenOperation(msg.token, () =>
-          this.pushRelay.unregisterToken(msg.token),
-        )
-          .then(() => {
-            if (!this.isCurrentPushTokenOperation(msg.token, generation)) return;
-            console.log(
-              "[ws] push_unregister: token unregistered successfully",
-            );
-          })
-          .catch((err) => {
-            if (!this.isCurrentPushTokenOperation(msg.token, generation)) return;
-            const detail = err instanceof Error ? err.message : String(err);
-            console.error(`[ws] push_unregister failed: ${detail}`);
-            this.send(ws, {
-              type: "error",
-              message: `Failed to unregister push token: ${detail}`,
-            });
-          });
+      case "push_unregister":
+        await handlePushUnregister(this, msg, ws);
         break;
-      }
 
-      case "set_permission_mode": {
-        if (this.failSetPermissionMode) {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: "Failed to set permission mode: forced test failure",
-            errorCode: "set_permission_mode_rejected",
-          });
-          break;
-        }
-        const session = this.resolveSession(msg.sessionId);
-        if (!session) {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: "No active session.",
-          });
-          return;
-        }
-        if (session.provider === "codex") {
-          // Permission mode for Codex requires a session restart (like sandbox mode).
-          // approvalPolicy and collaborationMode are thread-level settings that
-          // only take effect reliably at thread/start or thread/resume time.
-          const normalizedCodexPermissionsMode =
-            normalizeCodexPermissionsMode(msg.codexPermissionsMode);
-          const requestedCodexPermissionsMode =
-            this.codexAutoReviewDisabled &&
-            normalizedCodexPermissionsMode === "autoReview"
-              ? "default"
-              : normalizedCodexPermissionsMode;
-          const requestedApprovalsReviewer =
-            this.codexAutoReviewDisabled &&
-            isCodexAutoReviewApprovalsReviewer(msg.approvalsReviewer)
-              ? "user"
-              : msg.approvalsReviewer;
-          const codexPermissionSettings = requestedCodexPermissionsMode
-            ? codexSettingsFromPermissionsMode(requestedCodexPermissionsMode)
-            : undefined;
-          const process = session.process as CodexProcess;
-          const currentApproval = normalizeCodexApprovalPolicy(
-            process.approvalPolicy,
-          );
-          const currentReviewer = process.approvalsReviewer;
-          const currentSandboxMode = session.codexSettings?.sandboxMode;
-          const currentPermissionsMode = normalizeCodexPermissionsMode(
-            session.codexSettings?.codexPermissionsMode,
-          );
-          const collaborationOnlyChange =
-            requestedCodexPermissionsMode === undefined &&
-            msg.approvalPolicy === undefined &&
-            msg.approvalsReviewer === undefined &&
-            (msg.planMode !== undefined || msg.mode === "plan");
-          const explicitApproval = requestedCodexPermissionsMode
-            ? codexPermissionSettings?.approvalPolicy
-            : collaborationOnlyChange
-              ? currentApproval
-            : normalizeCodexApprovalPolicy(
-                msg.approvalPolicy ??
-                  (msg.executionMode == null
-                    ? undefined
-                    : msg.executionMode === "fullAccess"
-                      ? "never"
-                      : "on-request"),
-              );
-          const executionMode = deriveExecutionMode({
-            provider: "codex",
-            permissionMode: msg.mode,
-            executionMode: msg.executionMode,
-            approvalPolicy: explicitApproval,
-          });
-          const planMode = derivePlanMode({
-            permissionMode: msg.mode,
-            planMode: msg.planMode,
-          });
-          const legacyPermissionMode = modesToLegacyPermissionMode(
-            "codex",
-            executionMode,
-            planMode,
-          );
-          const newApproval = explicitApproval;
-          const newSandboxMode = codexPermissionSettings
-            ? codexPermissionSettings.sandboxMode
-            : currentSandboxMode;
-          const configuredReviewer =
-            requestedCodexPermissionsMode === "custom"
-              ? undefined
-              : (codexPermissionSettings?.approvalsReviewer ??
-                requestedApprovalsReviewer ??
-                currentReviewer);
-          const newReviewer = this.codexAutoReviewDisabled
-            ? "user"
-            : configuredReviewer;
-          const derivedPermissionsMode =
-            codexPermissionSettings?.codexPermissionsMode ??
-            (collaborationOnlyChange ? currentPermissionsMode : undefined) ??
-            deriveCodexPermissionsMode({
-              approvalPolicy: newApproval,
-              approvalsReviewer: newReviewer,
-              sandboxMode: newSandboxMode,
-            });
-          const newPermissionsMode =
-            this.codexAutoReviewDisabled &&
-            derivedPermissionsMode === "autoReview"
-              ? "default"
-              : derivedPermissionsMode;
-          const newCollaboration: "plan" | "default" = planMode
-            ? "plan"
-            : "default";
-          const currentCollaboration = process.collaborationMode;
-          if (
-            newApproval === currentApproval &&
-            newReviewer === currentReviewer &&
-            newSandboxMode === currentSandboxMode &&
-            newPermissionsMode === currentPermissionsMode &&
-            newCollaboration === currentCollaboration
-          ) {
-            break; // No change needed
-          }
-          const canApplyModeInPlace =
-            session.status === "idle" &&
-            requestedCodexPermissionsMode !== "custom" &&
-            newSandboxMode === currentSandboxMode &&
-            (this.codexAutoReviewPolicyLoaded ||
-              !isCodexAutoReviewApprovalsReviewer(newReviewer));
-
-          if (canApplyModeInPlace) {
-            const process = session.process as CodexProcess;
-            if (newApproval && newApproval !== currentApproval) {
-              process.setApprovalPolicy(newApproval);
-            }
-            if (newReviewer && newReviewer !== currentReviewer) {
-              process.setApprovalsReviewer(newReviewer);
-            }
-            if (newCollaboration !== currentCollaboration) {
-              process.setCollaborationMode(newCollaboration);
-            }
-            session.codexSettings = {
-              ...(session.codexSettings ?? {}),
-              approvalPolicy: newApproval,
-              approvalsReviewer: newReviewer,
-              codexPermissionsMode: newPermissionsMode,
-              sandboxMode: newSandboxMode,
-            };
-            session.lastActivityAt = new Date();
-            this.broadcast({
-              type: "system",
-              subtype: "set_permission_mode",
-              sessionId: session.id,
-              permissionMode: legacyPermissionMode,
-              executionMode,
-              approvalPolicy: newApproval,
-              approvalsReviewer: newReviewer,
-              codexPermissionsMode: newPermissionsMode,
-              planMode,
-            });
-            this.broadcastSessionList();
-            this.recordDebugEvent(session.id, {
-              direction: "internal" as const,
-              channel: "bridge" as const,
-              type: "permission_mode_changed",
-              detail: `mode=${msg.mode} approval=${newApproval} reviewer=${newReviewer} collaboration=${newCollaboration} applied=in-place`,
-            });
-            console.log(
-              `[ws] set_permission_mode(codex): execution=${executionMode} plan=${planMode} → approval=${newApproval}, reviewer=${newReviewer}, collaboration=${newCollaboration} (in-place)`,
-            );
-            break;
-          }
-          console.log(
-            `[ws] set_permission_mode(codex): execution=${executionMode} plan=${planMode} → approval=${newApproval}, reviewer=${newReviewer}, collaboration=${newCollaboration} (restart)`,
-          );
-
-          const oldSessionId = session.id;
-          const threadId = session.claudeSessionId;
-          const projectPath = session.projectPath;
-          const oldSettings = session.codexSettings ?? {};
-          const worktreePath = session.worktreePath;
-          const worktreeBranch = session.worktreeBranch;
-          const sessionName = session.name;
-          const workspace = this.workspaceForRuntimeSession(session);
-
-          this.destroySession(oldSessionId);
-          console.log(
-            `[ws] Permission mode change: destroyed session ${oldSessionId}`,
-          );
-
-          const hasUserMessages =
-            session.history?.some(
-              (m: Record<string, unknown>) =>
-                m.type === "user_input" || m.type === "assistant",
-            ) ||
-            (session.pastMessages && session.pastMessages.length > 0);
-          if (!threadId || !hasUserMessages) {
-            const newId = this.sessionManager.create(
-              projectPath,
-              undefined,
-              undefined,
-              worktreePath
-                ? { existingWorktreePath: worktreePath, worktreeBranch }
-                : undefined,
-              "codex",
-              this.withCodexAutoReviewPolicy({
-                approvalPolicy: newApproval,
-                approvalsReviewer: newReviewer as
-                  | "user"
-                  | "auto_review"
-                  | "guardian_subagent",
-                codexPermissionsMode: newPermissionsMode,
-                sandboxMode: newSandboxMode as
-                  | "read-only"
-                  | "workspace-write"
-                  | "danger-full-access"
-                  | undefined,
-                model: oldSettings.model,
-                modelReasoningEffort:
-                  oldSettings.modelReasoningEffort as CodexStartOptions["modelReasoningEffort"],
-                serviceTier: oldSettings.serviceTier,
-                networkAccessEnabled: oldSettings.networkAccessEnabled as
-                  | boolean
-                  | undefined,
-                webSearchMode: oldSettings.webSearchMode as
-                  | "disabled"
-                  | "cached"
-                  | "live"
-                  | undefined,
-                additionalWritableRoots: oldSettings.additionalWritableRoots,
-                collaborationMode: newCollaboration,
-              }),
-            );
-            this.attachWorkspaceToRuntimeSession(newId, workspace);
-            const newSession = this.sessionManager.get(newId);
-            if (newSession && sessionName) newSession.name = sessionName;
-            this.broadcast(
-              this.buildSessionCreatedMessage({
-                sessionId: newId,
-                provider: "codex",
-                projectPath,
-                session: newSession,
-                permissionMode: legacyPermissionMode,
-                executionMode,
-                planMode,
-                sandboxMode: newSandboxMode
-                  ? sandboxModeToExternal(newSandboxMode)
-                  : undefined,
-                approvalsReviewer: newReviewer,
-                codexPermissionsMode: newPermissionsMode,
-                sourceSessionId: oldSessionId,
-              }),
-            );
-            this.broadcastSessionList();
-            console.log(
-              `[ws] Permission mode change (no thread): created new session ${newId} (mode=${msg.mode})`,
-            );
-            break;
-          }
-
-          // Worktree resolution
-          const wtMapping = this.worktreeStore.get(threadId);
-          const effectiveProjectPath = wtMapping?.projectPath ?? projectPath;
-          let worktreeOpts:
-            | {
-                useWorktree?: boolean;
-                worktreeBranch?: string;
-                existingWorktreePath?: string;
-              }
-            | undefined;
-          if (wtMapping) {
-            if (worktreeExists(wtMapping.worktreePath)) {
-              worktreeOpts = {
-                existingWorktreePath: wtMapping.worktreePath,
-                worktreeBranch: wtMapping.worktreeBranch,
-              };
-            } else {
-              worktreeOpts = {
-                useWorktree: true,
-                worktreeBranch: wtMapping.worktreeBranch,
-              };
-            }
-          } else if (worktreePath) {
-            worktreeOpts = {
-              existingWorktreePath: worktreePath,
-              worktreeBranch,
-            };
-          }
-
-          this.getCodexThreadHistory(threadId, effectiveProjectPath)
-            .then((pastMessages) => {
-              const newId = this.sessionManager.create(
-                effectiveProjectPath,
-                undefined,
-                pastMessages,
-                worktreeOpts,
-                "codex",
-                this.withCodexAutoReviewPolicy({
-                  threadId,
-                  approvalPolicy: newApproval,
-                  approvalsReviewer: newReviewer as
-                    | "user"
-                    | "auto_review"
-                    | "guardian_subagent",
-                  codexPermissionsMode: newPermissionsMode,
-                  sandboxMode: newSandboxMode as
-                    | "read-only"
-                    | "workspace-write"
-                    | "danger-full-access"
-                    | undefined,
-                  model: oldSettings.model,
-                  modelReasoningEffort:
-                    oldSettings.modelReasoningEffort as CodexStartOptions["modelReasoningEffort"],
-                  serviceTier: oldSettings.serviceTier,
-                  networkAccessEnabled: oldSettings.networkAccessEnabled as
-                    | boolean
-                    | undefined,
-                  webSearchMode: oldSettings.webSearchMode as
-                    | "disabled"
-                    | "cached"
-                    | "live"
-                    | undefined,
-                  additionalWritableRoots: oldSettings.additionalWritableRoots,
-                  collaborationMode: newCollaboration,
-                }),
-              );
-              this.attachWorkspaceToRuntimeSession(newId, workspace);
-
-              const newSession = this.sessionManager.get(newId);
-              if (newSession && sessionName) {
-                newSession.name = sessionName;
-              }
-
-              void this.loadAndSetSessionName(
-                newSession,
-                "codex",
-                effectiveProjectPath,
-                threadId,
-              ).then(() => {
-                this.broadcast(
-                  this.buildSessionCreatedMessage({
-                    sessionId: newId,
-                    provider: "codex",
-                    projectPath: effectiveProjectPath,
-                    session: newSession,
-                    permissionMode: legacyPermissionMode,
-                    executionMode,
-                    planMode,
-                    sandboxMode: newSandboxMode
-                      ? sandboxModeToExternal(newSandboxMode)
-                      : undefined,
-                    approvalsReviewer: newReviewer,
-                    codexPermissionsMode: newPermissionsMode,
-                    sourceSessionId: oldSessionId,
-                  }),
-                );
-                this.broadcastSessionList();
-              });
-
-              this.debugEvents.set(newId, []);
-              this.recordDebugEvent(newId, {
-                direction: "internal" as const,
-                channel: "bridge" as const,
-                type: "permission_mode_changed",
-                detail: `mode=${msg.mode} approval=${newApproval} reviewer=${newReviewer} collaboration=${newCollaboration} thread=${threadId} oldSession=${oldSessionId}`,
-              });
-              console.log(
-                `[ws] Permission mode change: created new session ${newId} (thread=${threadId}, mode=${msg.mode})`,
-              );
-            })
-            .catch((err) => {
-              this.send(ws, {
-                type: "error",
-                sessionId: msg.sessionId,
-                message: `Failed to restart session for permission mode change: ${err}`,
-              });
-            });
-          break;
-        }
-        (session.process as SdkProcess)
-          .setPermissionMode(msg.mode)
-          .catch((err) => {
-            if (
-              msg.mode === "auto" &&
-              isClaudeAutoModeUnavailableError(err)
-            ) {
-              this.send(ws, {
-                type: "error",
-                sessionId: msg.sessionId,
-                message:
-                  "Auto mode is unavailable in this environment. Keeping the current permission mode.",
-                errorCode: "auto_mode_unavailable",
-              });
-              return;
-            }
-            this.send(ws, {
-              type: "error",
-              sessionId: msg.sessionId,
-              message: `Failed to set permission mode: ${errorMessageOf(err)}`,
-            });
-          });
+      case "set_permission_mode":
+        await handleSetPermissionMode(this, msg, ws);
         break;
-      }
 
-      case "set_codex_model": {
-        const session = this.resolveSession(msg.sessionId);
-        if (!session) {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: "No active session.",
-          });
-          return;
-        }
-        if (session.provider !== "codex") {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: "Model switching is only supported for Codex sessions.",
-            errorCode: "set_codex_model_unsupported",
-          });
-          break;
-        }
-
-        const model = sanitizeCodexModel(msg.model);
-        if (!model) {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: `Invalid Codex model: ${msg.model}`,
-            errorCode: "set_codex_model_rejected",
-          });
-          break;
-        }
-
-        // Older clients send model first, then normalize Fast to Standard.
-        // Keep that sequence compatible; extended tiers must never downgrade.
-        const currentTier = normalizeCodexServiceTierForClient(session.codexSettings?.serviceTier);
-        const tierError = currentTier !== "standard" && currentTier !== "fast"
-          ? this.codexServiceTierError(model, currentTier) : undefined;
-        if (tierError) {
-          this.send(ws, { type: "error", sessionId: msg.sessionId,
-            errorCode: "set_codex_model_rejected", message: tierError });
-          break;
-        }
-        const currentModel = sanitizeCodexModel(session.codexSettings?.model);
-        const currentEffort = session.codexSettings?.modelReasoningEffort;
-        const modelReasoningEffort = normalizeCodexReasoningEffortForModel(
-          model,
-          (msg.modelReasoningEffort ??
-            currentEffort) as CodexStartOptions["modelReasoningEffort"],
-        );
-        if (model === currentModel && modelReasoningEffort === currentEffort) {
-          break;
-        }
-
-        const process = session.process as CodexProcess;
-        process.setModel(model, modelReasoningEffort);
-        session.codexSettings = {
-          ...(session.codexSettings ?? {}),
-          model,
-          ...(modelReasoningEffort !== undefined
-            ? { modelReasoningEffort }
-            : {}),
-        };
-        session.lastActivityAt = new Date();
-        this.broadcast({
-          type: "system",
-          subtype: "set_codex_model",
-          sessionId: session.id,
-          provider: "codex",
-          model,
-          ...(modelReasoningEffort !== undefined
-            ? { modelReasoningEffort }
-            : {}),
-        });
-        this.broadcastSessionList();
-        this.recordDebugEvent(session.id, {
-          direction: "internal" as const,
-          channel: "bridge",
-          type: "codex_model_changed",
-          detail: `model=${model} effort=${modelReasoningEffort ?? ""}`,
-        });
-        console.log(
-          `[ws] set_codex_model(codex): model=${model} effort=${modelReasoningEffort ?? ""}`,
-        );
+      case "set_antigravity_model":
+        await handleSetAntigravityModel(this, msg, ws);
         break;
-      }
 
-      case "set_codex_speed": {
-        const session = this.resolveSession(msg.sessionId);
-        if (!session || session.provider !== "codex") {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: "No active Codex session.",
-            errorCode: "set_codex_speed_unsupported",
-          });
-          return;
-        }
-
-        const process = session.process as CodexProcess;
-        const model = session.codexSettings?.model ?? process.model;
-        const tierError = this.codexServiceTierError(model, msg.serviceTier);
-        if (tierError) {
-          this.send(ws, { type: "error", sessionId: msg.sessionId,
-            errorCode: "set_codex_speed_rejected", message: tierError });
-          break;
-        }
-        const serviceTier = normalizeCodexServiceTierForClient(msg.serviceTier);
-        if (session.codexSettings?.serviceTier === serviceTier) break;
-
-        process.setServiceTier(serviceTier);
-        session.codexSettings = {
-          ...(session.codexSettings ?? {}),
-          serviceTier,
-        };
-        session.lastActivityAt = new Date();
-        this.broadcastSessionMessage(session.id, {
-          type: "system",
-          subtype: "set_codex_speed",
-          sessionId: session.id,
-          provider: "codex",
-          serviceTier,
-        });
-        this.broadcastSessionList();
-        console.log(
-          `[ws] set_codex_speed(codex): serviceTier=${serviceTier}`,
-        );
+      case "set_antigravity_settings":
+        await handleSetAntigravitySettings(this, msg, ws);
         break;
-      }
 
-      case "set_claude_settings": {
-        const session = this.resolveSession(msg.sessionId);
-        if (!session || session.provider !== "claude") {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: "No active Claude session.",
-            errorCode: "set_claude_settings_unsupported",
-          });
-          break;
-        }
-        const claudeProcess = session.process as SdkProcess;
-        try {
-          await claudeProcess.updateSettings({
-            ...(msg.model !== undefined ? { model: msg.model.trim() } : {}),
-            ...(msg.effort !== undefined ? { effort: msg.effort } : {}),
-            ...(msg.fastMode !== undefined ? { fastMode: msg.fastMode } : {}),
-            ...(msg.ultracode !== undefined
-              ? { ultracode: msg.ultracode }
-              : {}),
-          });
-        } catch (err) {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: `Failed to change Claude settings: ${err instanceof Error ? err.message : String(err)}`,
-            errorCode: "set_claude_settings_rejected",
-          });
-          // Re-sync the requester with the settings still in effect.
-          this.sendClaudeCurrentSettings(ws, session.id, session);
-          break;
-        }
-        session.lastActivityAt = new Date();
-        this.broadcastSessionMessage(
-          session.id,
-          this.claudeSettingsMessage(session.id, session),
-        );
-        this.broadcastSessionList();
-        const settings = claudeProcess.settings;
-        console.log(
-          `[ws] set_claude_settings: model=${settings.model ?? "default"} effort=${settings.effort ?? ""} fast=${settings.fastMode === true} ultracode=${settings.ultracode === true}`,
-        );
+      case "get_antigravity_catalog":
+        await handleGetAntigravityCatalog(this, msg, ws);
         break;
-      }
+
+      case "set_codex_model":
+        await handleSetCodexModel(this, msg, ws);
+        break;
+
+      case "set_codex_speed":
+        await handleSetCodexSpeed(this, msg, ws);
+        break;
+
+      case "set_claude_settings":
+        await handleSetClaudeSettings(this, msg, ws);
+        break;
 
       case "set_codex_recovery":
-      case "cancel_codex_recovery": {
-        const session = this.resolveSession(msg.sessionId);
-        if (!session || session.provider !== "codex") {
-          this.send(ws, { type: "error", sessionId: msg.sessionId, errorCode: "codex_recovery_unsupported", message: "Automatic recovery requires an active Codex session." });
-          break;
-        }
-        const process = session.process as CodexProcess;
-        if (msg.type === "set_codex_recovery") process.setRecoveryEnabled(msg.enabled);
-        else process.cancelRecovery();
-        this.send(ws, { type: "codex_recovery_state", sessionId: session.id, recovery: process.getRecoveryState() });
+      case "cancel_codex_recovery":
+        await handleSetCodexRecovery(this, msg, ws);
         break;
-      }
 
-      case "get_goal": {
-        const session = this.resolveSession(msg.sessionId);
-        if (!session || session.provider !== "codex") {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: "Goal lookup is only supported for active Codex sessions.",
-            errorCode: "goal_get_unsupported",
-          });
-          break;
-        }
-        try {
-          const goal = await (session.process as CodexProcess).getGoal();
-          session.codexGoal = goal;
-          this.send(ws, { type: "goal_state", sessionId: session.id, goal });
-        } catch (err) {
-          // An optional background refresh must not pollute the conversation or
-          // replace a known goal with null when its current state is unknown.
-          if (msg.background) {
-            console.warn(`[ws] Background goal lookup failed: ${errorMessageOf(err)}`);
-            break;
-          }
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: `Failed to get goal: ${errorMessageOf(err)}`,
-            errorCode: "goal_get_failed",
-          });
-        }
+      case "get_goal":
+        await handleGetGoal(this, msg, ws);
         break;
-      }
 
-      case "set_goal": {
-        const session = this.resolveSession(msg.sessionId);
-        if (!session || session.provider !== "codex") {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: "Goal updates are only supported for active Codex sessions.",
-            errorCode: "goal_set_unsupported",
-          });
-          break;
-        }
-        try {
-          const goal = await (session.process as CodexProcess).setGoal({
-            ...(msg.objective !== undefined
-              ? { objective: msg.objective }
-              : {}),
-            ...(msg.status !== undefined ? { status: msg.status } : {}),
-          });
-          session.codexGoal = goal;
-          this.broadcastSessionMessage(session.id, {
-            type: "goal_state",
-            goal,
-          });
-        } catch (err) {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: `Failed to set goal: ${errorMessageOf(err)}`,
-            errorCode: "goal_set_failed",
-          });
-        }
+      case "set_goal":
+        await handleSetGoal(this, msg, ws);
         break;
-      }
 
-      case "clear_goal": {
-        const session = this.resolveSession(msg.sessionId);
-        if (!session || session.provider !== "codex") {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: "Goal clearing is only supported for active Codex sessions.",
-            errorCode: "goal_clear_unsupported",
-          });
-          break;
-        }
-        try {
-          await (session.process as CodexProcess).clearGoal();
-          session.codexGoal = null;
-          this.broadcastSessionMessage(session.id, {
-            type: "goal_state",
-            goal: null,
-          });
-        } catch (err) {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: `Failed to clear goal: ${errorMessageOf(err)}`,
-            errorCode: "goal_clear_failed",
-          });
-        }
+      case "clear_goal":
+        await handleClearGoal(this, msg, ws);
         break;
-      }
 
-      case "set_sandbox_mode": {
-        if (this.failSetSandboxMode) {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: "Failed to set sandbox mode: forced test failure",
-            errorCode: "set_sandbox_mode_rejected",
-          });
-          break;
-        }
-        const session = this.resolveSession(msg.sessionId);
-        if (!session) {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: "No active session.",
-          });
-          return;
-        }
-        if (msg.sandboxMode !== "on" && msg.sandboxMode !== "off") {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: `Invalid sandbox mode: ${msg.sandboxMode}`,
-          });
-          return;
-        }
-
-        // ---- Claude sandbox toggle ----
-        if (session.provider === "claude") {
-          const newEnabled = msg.sandboxMode === "on";
-          if (session.sandboxEnabled === newEnabled) {
-            break; // No change needed
-          }
-
-          // Sandbox is a query-level setting — requires session restart.
-          const oldSessionId = session.id;
-          const claudeSessionId = session.claudeSessionId;
-          const projectPath = session.projectPath;
-          const worktreePath = session.worktreePath;
-          const worktreeBranch = session.worktreeBranch;
-          const sessionName = session.name;
-          const permissionMode = (session.process as SdkProcess).permissionMode;
-          // Use the user's selected settings (alias, effort, fast mode) rather
-          // than the resolved runtime model id, matching fork behavior.
-          const settings = (session.process as SdkProcess).settings ?? {};
-          const workspace = this.workspaceForRuntimeSession(session);
-
-          this.destroySession(oldSessionId);
-          console.log(
-            `[ws] Claude sandbox change: destroyed session ${oldSessionId}`,
-          );
-
-          const newId = this.sessionManager.create(
-            projectPath,
-            {
-              sessionId: claudeSessionId,
-              permissionMode,
-              ...(settings.model ? { model: settings.model } : {}),
-              ...(settings.effort ? { effort: settings.effort } : {}),
-              ...(settings.fastMode ? { fastMode: true } : {}),
-              ...(settings.ultracode ? { ultracode: true } : {}),
-              sandboxEnabled: newEnabled,
-              additionalDirectories: workspace?.rootPaths.slice(1),
-            },
-            undefined,
-            worktreePath
-              ? { existingWorktreePath: worktreePath, worktreeBranch }
-              : undefined,
-            "claude",
-          );
-          this.attachWorkspaceToRuntimeSession(newId, workspace);
-
-          const newSession = this.sessionManager.get(newId);
-          if (newSession && sessionName) newSession.name = sessionName;
-
-          void this.loadAndSetSessionName(
-            newSession,
-            "claude",
-            projectPath,
-            claudeSessionId,
-          ).then(() => {
-            this.broadcast(
-              this.buildSessionCreatedMessage({
-                sessionId: newId,
-                provider: "claude",
-                projectPath,
-                session: newSession,
-                sandboxMode: msg.sandboxMode,
-                sourceSessionId: oldSessionId,
-              }),
-            );
-            this.broadcastSessionList();
-          });
-
-          this.debugEvents.set(newId, []);
-          this.recordDebugEvent(newId, {
-            direction: "internal" as const,
-            channel: "bridge" as const,
-            type: "sandbox_mode_changed",
-            detail: `sandbox=${newEnabled} claude=${claudeSessionId} oldSession=${oldSessionId}`,
-          });
-          console.log(
-            `[ws] Claude sandbox change: created new session ${newId} (sandbox=${newEnabled})`,
-          );
-          break;
-        }
-
-        // ---- Codex sandbox toggle ----
-        const newSandboxMode = sandboxModeToInternal(msg.sandboxMode);
-        const currentSandboxMode =
-          session.codexSettings?.sandboxMode ?? "workspace-write";
-        if (newSandboxMode === currentSandboxMode) {
-          break; // No change needed
-        }
-
-        // Sandbox mode is a thread-level setting — it can only be applied at
-        // thread/start or thread/resume time, not per-turn. To apply the new
-        // mode we destroy the current session and resume the same Codex thread
-        // with the updated sandbox parameter (same pattern as clearContext).
-        const oldSessionId = session.id;
-        const threadId = session.claudeSessionId;
-        const projectPath = session.projectPath;
-        const oldSettings = session.codexSettings ?? {};
-        const worktreePath = session.worktreePath;
-        const worktreeBranch = session.worktreeBranch;
-        const sessionName = session.name;
-        const collaborationMode = (session.process as CodexProcess)
-          .collaborationMode;
-        const workspace = this.workspaceForRuntimeSession(session);
-        const executionMode =
-          oldSettings.approvalPolicy === "never" ? "fullAccess" : "default";
-        const planMode = collaborationMode === "plan";
-        const legacyPermissionMode = modesToLegacyPermissionMode(
-          "codex",
-          executionMode,
-          planMode,
-        );
-
-        this.destroySession(oldSessionId);
-        console.log(
-          `[ws] Sandbox mode change: destroyed session ${oldSessionId}`,
-        );
-
-        // Check if the user actually exchanged messages in this session.
-        // session.history always contains system events (init, status, etc.)
-        // even before the first user turn, so we check for user_input/assistant
-        // messages specifically.
-        const hasUserMessages =
-          session.history?.some(
-            (m: Record<string, unknown>) =>
-              m.type === "user_input" || m.type === "assistant",
-          ) ||
-          (session.pastMessages && session.pastMessages.length > 0);
-        if (!threadId || !hasUserMessages) {
-          // Session has no thread yet, or has a thread but no messages exchanged.
-          // Create a fresh session with the new sandbox — no resume needed.
-          // (A thread with no messages cannot be resumed — Codex returns
-          // "no rollout found for thread id".)
-          const newId = this.sessionManager.create(
-            projectPath,
-            undefined,
-            undefined,
-            worktreePath
-              ? { existingWorktreePath: worktreePath, worktreeBranch }
-              : undefined,
-            "codex",
-            this.withCodexAutoReviewPolicy({
-              approvalPolicy: oldSettings.approvalPolicy as
-                | "never"
-                | "on-request"
-                | undefined,
-              approvalsReviewer: oldSettings.approvalsReviewer as
-                | "user"
-                | "auto_review"
-                | "guardian_subagent"
-                | undefined,
-              codexPermissionsMode: oldSettings.codexPermissionsMode as
-                | "default"
-                | "autoReview"
-                | "fullAccess"
-                | "custom"
-                | undefined,
-              sandboxMode: newSandboxMode,
-              model: oldSettings.model,
-              modelReasoningEffort:
-                oldSettings.modelReasoningEffort as CodexStartOptions["modelReasoningEffort"],
-              serviceTier: oldSettings.serviceTier,
-              networkAccessEnabled: oldSettings.networkAccessEnabled as
-                | boolean
-                | undefined,
-              webSearchMode: oldSettings.webSearchMode as
-                | "disabled"
-                | "cached"
-                | "live"
-                | undefined,
-              additionalWritableRoots: oldSettings.additionalWritableRoots,
-              collaborationMode,
-            }),
-          );
-          this.attachWorkspaceToRuntimeSession(newId, workspace);
-          const newSession = this.sessionManager.get(newId);
-          if (newSession && sessionName) newSession.name = sessionName;
-          this.broadcast(
-            this.buildSessionCreatedMessage({
-              sessionId: newId,
-              provider: "codex",
-              projectPath,
-              session: newSession,
-              permissionMode: legacyPermissionMode,
-              executionMode,
-              planMode,
-              sandboxMode: sandboxModeToExternal(newSandboxMode),
-              sourceSessionId: oldSessionId,
-            }),
-          );
-          this.broadcastSessionList();
-          console.log(
-            `[ws] Sandbox mode change (no thread): created new session ${newId} (sandbox=${newSandboxMode})`,
-          );
-          break;
-        }
-
-        // Worktree resolution (same as resume_session)
-        const wtMapping = this.worktreeStore.get(threadId);
-        const effectiveProjectPath = wtMapping?.projectPath ?? projectPath;
-        let worktreeOpts:
-          | {
-              useWorktree?: boolean;
-              worktreeBranch?: string;
-              existingWorktreePath?: string;
-            }
-          | undefined;
-        if (wtMapping) {
-          if (worktreeExists(wtMapping.worktreePath)) {
-            worktreeOpts = {
-              existingWorktreePath: wtMapping.worktreePath,
-              worktreeBranch: wtMapping.worktreeBranch,
-            };
-          } else {
-            worktreeOpts = {
-              useWorktree: true,
-              worktreeBranch: wtMapping.worktreeBranch,
-            };
-          }
-        } else if (worktreePath) {
-          worktreeOpts = { existingWorktreePath: worktreePath, worktreeBranch };
-        }
-
-        this.getCodexThreadHistory(threadId, effectiveProjectPath)
-          .then((pastMessages) => {
-            const newId = this.sessionManager.create(
-              effectiveProjectPath,
-              undefined,
-              pastMessages,
-              worktreeOpts,
-              "codex",
-              this.withCodexAutoReviewPolicy({
-                threadId,
-                approvalPolicy: oldSettings.approvalPolicy as
-                  | "never"
-                  | "on-request"
-                  | undefined,
-                approvalsReviewer: oldSettings.approvalsReviewer as
-                  | "user"
-                  | "auto_review"
-                  | "guardian_subagent"
-                  | undefined,
-                codexPermissionsMode: oldSettings.codexPermissionsMode as
-                  | "default"
-                  | "autoReview"
-                  | "fullAccess"
-                  | "custom"
-                  | undefined,
-                sandboxMode: newSandboxMode,
-                model: oldSettings.model,
-                modelReasoningEffort:
-                  oldSettings.modelReasoningEffort as CodexStartOptions["modelReasoningEffort"],
-                serviceTier: oldSettings.serviceTier,
-                networkAccessEnabled: oldSettings.networkAccessEnabled as
-                  | boolean
-                  | undefined,
-                webSearchMode: oldSettings.webSearchMode as
-                  | "disabled"
-                  | "cached"
-                  | "live"
-                  | undefined,
-                additionalWritableRoots: oldSettings.additionalWritableRoots,
-                collaborationMode,
-              }),
-            );
-            this.attachWorkspaceToRuntimeSession(newId, workspace);
-
-            // Restore session name
-            const newSession = this.sessionManager.get(newId);
-            if (newSession && sessionName) {
-              newSession.name = sessionName;
-            }
-
-            void this.loadAndSetSessionName(
-              newSession,
-              "codex",
-              effectiveProjectPath,
-              threadId,
-            ).then(() => {
-              this.broadcast(
-                this.buildSessionCreatedMessage({
-                  sessionId: newId,
-                  provider: "codex",
-                  projectPath: effectiveProjectPath,
-                  session: newSession,
-                  permissionMode: legacyPermissionMode,
-                  executionMode,
-                  planMode,
-                  sandboxMode: sandboxModeToExternal(newSandboxMode),
-                  sourceSessionId: oldSessionId,
-                }),
-              );
-              this.broadcastSessionList();
-            });
-
-            this.debugEvents.set(newId, []);
-            this.recordDebugEvent(newId, {
-              direction: "internal" as const,
-              channel: "bridge" as const,
-              type: "sandbox_mode_changed",
-              detail: `sandbox=${newSandboxMode} thread=${threadId} oldSession=${oldSessionId}`,
-            });
-            console.log(
-              `[ws] Sandbox mode change: created new session ${newId} (thread=${threadId}, sandbox=${newSandboxMode})`,
-            );
-          })
-          .catch((err) => {
-            this.send(ws, {
-              type: "error",
-              sessionId: msg.sessionId,
-              message: `Failed to restart session for sandbox mode change: ${err}`,
-            });
-          });
+      case "set_sandbox_mode":
+        await handleSetSandboxMode(this, msg, ws);
         break;
-      }
 
-      case "approve": {
-        const session = this.resolveSession(msg.sessionId);
-        if (!session) {
-          this.sendToolActionError(ws, msg, "No active session.");
-          return;
-        }
-        if (session.provider === "codex") {
-          const handled = (session.process as CodexProcess).approve(msg.id);
-          if (handled === false) {
-            this.sendToolActionError(
-              ws,
-              msg,
-              "No matching pending tool action.",
-            );
-          }
-          break;
-        }
-        const sdkProc = session.process as SdkProcess;
-        if (msg.clearContext) {
-          // Clear & Accept: immediately destroy this runtime session and
-          // create a fresh one that continues the same Claude conversation.
-          // This guarantees chat history is cleared in the mobile UI without
-          // waiting for additional in-turn tool approvals.
-          const pending = sdkProc.getPendingPermission(msg.id);
-          const planText =
-            typeof pending?.input.plan === "string" ? pending.input.plan : "";
-
-          // Use session.id (always present) instead of msg.sessionId.
-          const sessionId = session.id;
-
-          // Capture session properties before destroy.
-          const claudeSessionId = session.claudeSessionId;
-          const projectPath = session.projectPath;
-          const permissionMode = sdkProc.permissionMode;
-          const settings = sdkProc.settings ?? {};
-          const sandboxEnabled = session.sandboxEnabled;
-          const worktreePath = session.worktreePath;
-          const worktreeBranch = session.worktreeBranch;
-          const workspace = this.workspaceForRuntimeSession(session);
-
-          this.destroySession(sessionId);
-          console.log(`[ws] Clear context: destroyed session ${sessionId}`);
-
-          const newId = this.sessionManager.create(
-            projectPath,
-            {
-              ...(claudeSessionId
-                ? {
-                    sessionId: claudeSessionId,
-                    continueMode: true,
-                  }
-                : {}),
-              permissionMode,
-              ...(settings.model ? { model: settings.model } : {}),
-              ...(settings.effort ? { effort: settings.effort } : {}),
-              ...(settings.fastMode ? { fastMode: true } : {}),
-              ...(settings.ultracode ? { ultracode: true } : {}),
-              ...(sandboxEnabled !== undefined ? { sandboxEnabled } : {}),
-              initialInput: planText || undefined,
-              additionalDirectories: workspace?.rootPaths.slice(1),
-            },
-            undefined,
-            worktreePath
-              ? { existingWorktreePath: worktreePath, worktreeBranch }
-            : undefined,
-          );
-          this.attachWorkspaceToRuntimeSession(newId, workspace);
-          console.log(
-            `[ws] Clear context: created new session ${newId} (CLI session: ${claudeSessionId ?? "new"})`,
-          );
-
-          // Notify all clients. Broadcast is used so reconnecting clients also receive it.
-          const newSession = this.sessionManager.get(newId);
-          const createdMsg = this.buildSessionCreatedMessage({
-            sessionId: newId,
-            provider: newSession?.provider ?? "claude",
-            projectPath,
-            session: newSession,
-            permissionMode,
-            sourceSessionId: sessionId,
-          });
-          this.broadcast({ ...createdMsg, clearContext: true });
-          this.broadcastSessionList();
-        } else {
-          const handled = sdkProc.approve(msg.id);
-          if (handled === false) {
-            this.sendToolActionError(
-              ws,
-              msg,
-              "No matching pending tool action.",
-            );
-          }
-        }
+      case "approve":
+        await handleApprove(this, msg, ws);
         break;
-      }
 
-      case "approve_always": {
-        const session = this.resolveSession(msg.sessionId);
-        if (!session) {
-          this.sendToolActionError(ws, msg, "No active session.");
-          return;
-        }
-        if (session.provider === "codex") {
-          const handled = (session.process as CodexProcess).approveAlways(
-            msg.id,
-          );
-          if (handled === false) {
-            this.sendToolActionError(
-              ws,
-              msg,
-              "No matching pending tool action.",
-            );
-          }
-          break;
-        }
-        const handled = (session.process as SdkProcess).approveAlways(msg.id);
-        if (handled === false) {
-          this.sendToolActionError(
-            ws,
-            msg,
-            "No matching pending tool action.",
-          );
-        }
+      case "approve_always":
+        await handleApproveAlways(this, msg, ws);
         break;
-      }
 
-      case "reject": {
-        const session = this.resolveSession(msg.sessionId);
-        if (!session) {
-          this.sendToolActionError(ws, msg, "No active session.");
-          return;
-        }
-        if (session.provider === "codex") {
-          const handled = (session.process as CodexProcess).reject(
-            msg.id,
-            msg.message,
-          );
-          if (handled === false) {
-            this.sendToolActionError(
-              ws,
-              msg,
-              "No matching pending tool action.",
-            );
-          }
-          break;
-        }
-        const handled = (session.process as SdkProcess).reject(
-          msg.id,
-          msg.message,
-        );
-        if (handled === false) {
-          this.sendToolActionError(
-            ws,
-            msg,
-            "No matching pending tool action.",
-          );
-        }
+      case "reject":
+        await handleReject(this, msg, ws);
         break;
-      }
 
-      case "answer": {
-        const session = this.resolveSession(msg.sessionId);
-        if (!session) {
-          this.sendToolActionError(ws, msg, "No active session.");
-          return;
-        }
-        if (session.provider === "codex") {
-          const handled = (session.process as CodexProcess).answer(
-            msg.toolUseId,
-            msg.result,
-          );
-          if (handled === false) {
-            this.sendToolActionError(
-              ws,
-              msg,
-              "No matching pending tool action.",
-            );
-          }
-          break;
-        }
-        const handled = (session.process as SdkProcess).answer(
-          msg.toolUseId,
-          msg.result,
-        );
-        if (handled === false) {
-          this.sendToolActionError(
-            ws,
-            msg,
-            "No matching pending tool action.",
-          );
-        }
+      case "answer":
+        await handleAnswer(this, msg, ws);
         break;
-      }
 
-      case "install_tool_suggestion": {
-        const session = this.resolveSession(msg.sessionId);
-        if (!session) {
-          this.sendToolActionError(ws, msg, "No active session.");
-          return;
-        }
-        if (session.provider !== "codex") {
-          this.sendToolActionError(
-            ws,
-            msg,
-            "Tool suggestions are only supported for Codex sessions.",
-          );
-          return;
-        }
-        try {
-          await (session.process as CodexProcess).installToolSuggestion(
-            msg.toolUseId,
-          );
-        } catch (err) {
-          this.sendToolActionError(
-            ws,
-            msg,
-            err instanceof Error ? err.message : String(err),
-          );
-        }
+      case "install_tool_suggestion":
+        await handleInstallToolSuggestion(this, msg, ws);
         break;
-      }
 
-      case "list_sessions": {
-        this.sendSessionList(ws);
+      case "list_sessions":
+        await handleListSessions(this, msg, ws);
         break;
-      }
 
-      case "stop_session": {
-        const session = this.sessionManager.get(msg.sessionId);
-        if (session) {
-          // Notify clients before destroying (destroy removes listeners)
-          this.broadcastSessionMessage(msg.sessionId, {
-            type: "result",
-            subtype: "stopped",
-            sessionId: session.claudeSessionId,
-          });
-          this.destroySession(msg.sessionId);
-          this.recordDebugEvent(msg.sessionId, {
-            direction: "internal",
-            channel: "bridge",
-            type: "session_stopped",
-          });
-          this.debugEvents.delete(msg.sessionId);
-          this.notifiedPermissionToolUses.delete(msg.sessionId);
-          this.broadcastSessionList();
-        } else {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: `Session ${msg.sessionId} not found`,
-          });
-        }
+      case "stop_session":
+        await handleStopSession(this, msg, ws);
         break;
-      }
 
-      case "get_history": {
-        const session = this.sessionManager.get(msg.sessionId);
-        if (session) {
-          if (session.provider === "codex") {
-            const handled = await this.sendCodexCanonicalLegacyHistory(
-              ws,
-              msg.sessionId,
-              session,
-            );
-            if (handled) {
-              break;
-            }
-          }
-
-          const splitPastHistory =
-            session.pastMessages && session.pastMessages.length > 0
-              ? await this.splitPastHistoryMessages(session)
-              : { pastMessages: [], historyMessages: [] };
-          // Send past conversation from disk (resume) before in-memory history
-          if (splitPastHistory.pastMessages.length > 0) {
-            this.send(ws, {
-              type: "past_history",
-              claudeSessionId: session.claudeSessionId ?? msg.sessionId,
-              sessionId: msg.sessionId,
-              messages: splitPastHistory.pastMessages,
-            } as Record<string, unknown>);
-          }
-          this.send(ws, {
-            type: "history",
-            messages: [...splitPastHistory.historyMessages, ...session.history],
-            sessionId: msg.sessionId,
-            ...(session.olderHistoryDropped
-              ? { olderHistoryAvailable: true }
-              : {}),
-          } as Record<string, unknown>);
-          if (session.provider === "codex") {
-            this.sendCodexCurrentSettings(ws, msg.sessionId, session);
-          } else {
-            this.sendClaudeCurrentSettings(ws, msg.sessionId, session);
-          }
-          this.send(ws, {
-            type: "status",
-            status: session.status,
-            sessionId: msg.sessionId,
-          } as Record<string, unknown>);
-          this.sendQueueState(ws, msg.sessionId, session);
-          this.sendBackgroundTasksState(ws, msg.sessionId, session);
-          if (session.provider === "codex") {
-            this.sendCodexGoalState(ws, msg.sessionId, session);
-          }
-
-          this.sendCachedCommands(ws, msg.sessionId, session);
-        } else {
-          this.send(ws, {
-            type: "error",
-            message: `Session ${msg.sessionId} not found`,
-            errorCode: "session_not_found",
-            sessionId: msg.sessionId,
-          });
-        }
+      case "get_history":
+        await handleGetHistory(this, msg, ws);
         break;
-      }
 
-      case "get_session_transcript": {
-        const session = this.sessionManager.get(msg.sessionId);
-        if (!session) {
-          this.send(ws, {
-            type: "error",
-            message: `Session ${msg.sessionId} not found`,
-            errorCode: "session_not_found",
-            sessionId: msg.sessionId,
-            requestId: msg.requestId,
-          });
-          break;
-        }
-        try {
-          const transcript = await this.sessionTranscriptMessages(session);
-          const { start, end } = transcriptPageRange(
-            transcript.map((message) => message.role),
-            msg,
-            TRANSCRIPT_PAGE_DEFAULT,
-            TRANSCRIPT_PAGE_MAX,
-          );
-          const { pastMessages } = await this.preparePastHistoryMessages(
-            session,
-            transcript.slice(start, end),
-          );
-          this.send(ws, {
-            type: "session_transcript",
-            sessionId: msg.sessionId,
-            requestId: msg.requestId,
-            provider: session.provider === "codex" ? "codex" : "claude",
-            startIndex: start,
-            endIndex: end,
-            total: transcript.length,
-            messages: pastMessages,
-          });
-        } catch (err) {
-          this.send(ws, {
-            type: "error",
-            message: `Failed to read session transcript: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-            errorCode: "session_transcript_failed",
-            sessionId: msg.sessionId,
-            requestId: msg.requestId,
-          });
-        }
+      case "get_session_transcript":
+        await handleGetSessionTranscript(this, msg, ws);
         break;
-      }
-
-      case "get_session_context": {
-        const context = this.sessionManager.summary(msg.sessionId);
-        if (context) {
-          this.send(ws, {
-            type: "session_context",
-            sessionId: msg.sessionId,
-            context: { ...this.runtimeSessionWithWorkspace(context) },
-          });
-        } else {
-          this.send(ws, {
-            type: "error",
-            message: `Session ${msg.sessionId} not found`,
-            errorCode: "session_not_found",
-            sessionId: msg.sessionId,
-          });
-        }
-        break;
-      }
-
-      case "resolve_session_link": {
-        const provider = msg.provider ?? "claude";
-        const activeSession = this.sessionManager
-          .list()
-          .find(
-            (session) =>
-              session.provider === provider &&
-              (session.id === msg.sessionId ||
-                session.claudeSessionId === msg.sessionId),
-          );
-        if (activeSession) {
-          this.send(ws, {
-            type: "session_link_resolution",
-            requestId: msg.requestId,
-            sourceSessionId: msg.sessionId,
-            status: "live",
-            bridgeSessionId: activeSession.id,
-            provider,
-          });
-          break;
-        }
-
-        try {
-          const { sessions } = await getAllRecentSessions({
-            limit: 1,
-            provider,
-            sessionId: msg.sessionId,
-            archivedSessionIds: this.archiveStore.archivedIds(),
-          });
-          const recentSession = sessions[0];
-          this.send(ws, {
-            type: "session_link_resolution",
-            requestId: msg.requestId,
-            sourceSessionId: msg.sessionId,
-            status: recentSession ? "recent" : "unavailable",
-            provider,
-            ...(recentSession ? { recentSession } : {}),
-          } as Record<string, unknown>);
-        } catch (err) {
-          console.error("[ws] Failed to resolve session link:", err);
-          this.send(ws, {
-            type: "session_link_resolution",
-            requestId: msg.requestId,
-            sourceSessionId: msg.sessionId,
-            status: "unavailable",
-            provider,
-          });
-        }
-        break;
-      }
-
-      case "get_history_delta": {
-        const session = this.sessionManager.get(msg.sessionId);
-        if (session?.provider === "codex") {
-          const result = this.sessionManager.getHistorySince(
-            msg.sessionId,
-            msg.sinceSeq,
-          );
-          if (!result) {
-            this.send(ws, {
-              type: "error",
-              sessionId: msg.sessionId,
-              message: `Session ${msg.sessionId} not found`,
-            });
-            break;
-          }
-
-          if (
-            this.shouldResetCodexHistoryDelta(
-              session,
-              msg.sinceSeq,
-              result.kind,
-            )
-          ) {
-            await this.sendCodexCanonicalHistorySnapshot(
-              ws,
-              msg.sessionId,
-              session,
-            );
-            break;
-          }
-
-          this.send(ws, {
-            type:
-              result.kind === "snapshot" ? "history_snapshot" : "history_delta",
-            sessionId: msg.sessionId,
-            fromSeq: result.fromSeq,
-            toSeq: result.toSeq,
-            messages: result.entries,
-            status: session.status,
-            ...(result.kind === "snapshot" ? { reason: result.reason } : {}),
-          } as ServerMessage);
-          this.sendCodexCurrentSettings(ws, msg.sessionId, session);
-          this.sendQueueState(ws, msg.sessionId, session);
-          this.sendBackgroundTasksState(ws, msg.sessionId, session);
-          this.sendCodexGoalState(ws, msg.sessionId, session);
-          break;
-        }
-
-        if (session) {
-          const result = this.sessionManager.getHistorySince(
-            msg.sessionId,
-            msg.sinceSeq,
-          );
-          if (!result) {
-            this.send(ws, {
-              type: "error",
-              sessionId: msg.sessionId,
-              message: `Session ${msg.sessionId} not found`,
-            });
-            break;
-          }
-          if (session.pastMessages && session.pastMessages.length > 0) {
-            const splitPastHistory =
-              await this.splitPastHistoryMessages(session);
-            if (splitPastHistory.pastMessages.length > 0) {
-              this.send(ws, {
-                type: "past_history",
-                claudeSessionId: session.claudeSessionId ?? msg.sessionId,
-                sessionId: msg.sessionId,
-                messages: splitPastHistory.pastMessages,
-              } as Record<string, unknown>);
-            }
-          }
-          this.send(ws, {
-            type:
-              result.kind === "snapshot"
-                ? "history_snapshot"
-                : "history_delta",
-            sessionId: msg.sessionId,
-            fromSeq: result.fromSeq,
-            toSeq: result.toSeq,
-            messages: result.entries,
-            status: session.status,
-            ...(result.kind === "snapshot" ? { reason: result.reason } : {}),
-            ...(result.kind === "snapshot" && session.olderHistoryDropped
-              ? { olderHistoryAvailable: true }
-              : {}),
-          } as ServerMessage);
-          this.sendClaudeCurrentSettings(ws, msg.sessionId, session);
-          this.sendQueueState(ws, msg.sessionId, session);
-          this.sendBackgroundTasksState(ws, msg.sessionId, session);
-        } else {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: `Session ${msg.sessionId} not found`,
-          });
-        }
-        break;
-      }
-
-      case "refresh_branch": {
-        const session = this.sessionManager.get(msg.sessionId);
-        if (session) {
-          const cwd = session.worktreePath ?? session.projectPath;
-          const branch = currentGitBranch(cwd);
-          // Update stored branch so future session_list responses are also current
-          session.gitBranch = branch;
-          this.send(ws, {
-            type: "branch_update",
-            sessionId: msg.sessionId,
-            branch,
-          });
-        } else {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: `Session ${msg.sessionId} not found`,
-          });
-        }
-        break;
-      }
-
-      case "get_debug_bundle": {
-        const session = this.sessionManager.get(msg.sessionId);
-        if (!session) {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: `Session ${msg.sessionId} not found`,
-          });
-          return;
-        }
-
-        const emitBundle = (diff: string, diffError?: string): void => {
-          const traceLimit =
-            msg.traceLimit ?? BridgeWebSocketServer.MAX_DEBUG_EVENTS;
-          const trace = this.getDebugEvents(msg.sessionId, traceLimit);
-          const generatedAt = new Date().toISOString();
-          const includeDiff = msg.includeDiff !== false;
-          const bundlePayload: Record<string, unknown> = {
-            type: "debug_bundle",
-            sessionId: msg.sessionId,
-            generatedAt,
-            session: {
-              id: session.id,
-              provider: session.provider,
-              status: session.status,
-              projectPath: session.projectPath,
-              worktreePath: session.worktreePath,
-              worktreeBranch: session.worktreeBranch,
-              claudeSessionId: session.claudeSessionId,
-              createdAt: session.createdAt.toISOString(),
-              lastActivityAt: session.lastActivityAt.toISOString(),
-            },
-            pastMessageCount: session.pastMessages?.length ?? 0,
-            historySummary: this.buildHistorySummary(session.history),
-            debugTrace: trace,
-            traceFilePath: this.debugTraceStore.getTraceFilePath(msg.sessionId),
-            reproRecipe: this.buildReproRecipe(
-              session,
-              traceLimit,
-              includeDiff,
-            ),
-            agentPrompt: this.buildAgentPrompt(session),
-            diff,
-            diffError,
-          };
-          const savedBundlePath = this.debugTraceStore.getBundleFilePath(
-            msg.sessionId,
-            generatedAt,
-          );
-          bundlePayload.savedBundlePath = savedBundlePath;
-          this.debugTraceStore.saveBundleAtPath(savedBundlePath, bundlePayload);
-          this.send(ws, bundlePayload);
-        };
-
-        if (msg.includeDiff === false) {
-          emitBundle("");
-          break;
-        }
-
-        const cwd = session.worktreePath ?? session.projectPath;
-        this.collectGitDiff(cwd, ({ diff, error }) => {
-          emitBundle(diff, error);
-        });
-        break;
-      }
-
-      case "get_usage": {
-        fetchAllUsage({ readClaudeLive: () => this.readClaudePlanUsage() })
-          .then((providers) => {
-            this.send(ws, { type: "usage_result", providers } as Record<
-              string,
-              unknown
-            >);
-          })
-          .catch((err) => {
-            this.send(ws, {
-              type: "error",
-              message: `Failed to fetch usage: ${err}`,
-            });
-          });
-        break;
-      }
 
       case "consume_usage_reset": {
         consumeCodexReset(msg.idempotencyKey, msg.creditId)
@@ -6272,2797 +1472,290 @@ export class BridgeWebSocketServer {
         break;
       }
 
-      case "list_recent_sessions": {
-        // Load the Codex thread snapshot ahead of the first search / filter.
-        if (msg.provider !== "claude") this.codexThreadSnapshot.warm();
-        const isProjectScopedRequest = msg.requestScope === "project";
-        const currentRequestId = this.recentSessionsRequestIds.get(ws) ?? 0;
-        const requestId = isProjectScopedRequest
-          ? currentRequestId
-          : currentRequestId + 1;
-        if (!isProjectScopedRequest) {
-          this.recentSessionsRequestIds.set(ws, requestId);
-        }
-        this.listRecentSessionsCoalesced(msg)
-          .then(({ sessions, hasMore, pinnedSessions }) => {
-            // List refreshes supersede older list responses. Project responses
-            // are correlated independently by requestId on the client.
-            if (
-              !isProjectScopedRequest &&
-              requestId !== (this.recentSessionsRequestIds.get(ws) ?? 0)
-            ) {
-              return;
-            }
-            this.send(ws, {
-              type: "recent_sessions",
-              sessions,
-              hasMore,
-              ...(pinnedSessions ? { pinnedSessions } : {}),
-              limit: msg.limit,
-              offset: msg.offset,
-              projectPath: msg.projectPath,
-              projectId: msg.projectId,
-              workspaceKind: msg.workspaceKind,
-              requestScope: msg.requestScope,
-              requestId: msg.requestId,
-            } as Record<string, unknown>);
-          })
-          .catch((err) => {
-            if (
-              !isProjectScopedRequest &&
-              requestId !== (this.recentSessionsRequestIds.get(ws) ?? 0)
-            ) {
-              return;
-            }
-            this.send(ws, {
-              type: "error",
-              message: `Failed to list recent sessions: ${err}`,
-              errorCode: "recent_sessions_failed",
-              path: msg.projectPath,
-              projectId: msg.projectId,
-              workspaceKind: msg.workspaceKind,
-              requestId: msg.requestId,
-              requestScope: msg.requestScope,
-              offset: msg.offset,
-            });
-          });
+      case "get_session_context":
+        await handleGetSessionContext(this, msg, ws);
         break;
-      }
 
-      case "archive_session": {
-        const { sessionId, provider, projectPath } = msg;
-        const archiveProjectPath = resolvePlatformPath(
-          projectPath,
-          this.platform,
-        );
-        if (!this.isPathAllowed(archiveProjectPath)) {
-          const pathError = this.buildPathNotAllowedError(projectPath);
-          this.send(ws, {
-            type: "archive_result",
-            sessionId,
-            success: false,
-            error: pathError.message,
-          } as Record<string, unknown>);
-          break;
-        }
-        void (async () => {
-          if (provider === "codex") {
-            const activeProcess = this.getActiveCodexProcess();
-            const codexProcess =
-              activeProcess ??
-              (await this.createStandaloneCodexProcess(archiveProjectPath));
-            try {
-              await codexProcess.archiveThread(sessionId);
-            } catch (err) {
-              if (!(err instanceof CodexRpcError && err.code === -32601)) {
-                throw err;
-              }
-              console.warn(
-                "[ws] thread/archive unsupported; using local archive marker",
-              );
-            } finally {
-              if (!activeProcess) codexProcess.stop();
-            }
-          }
-          await this.archiveStore.archive(
-            sessionId,
-            provider,
-            archiveProjectPath,
-          );
-        })()
-          .then(() => {
-            this.send(ws, {
-              type: "archive_result",
-              sessionId,
-              success: true,
-            } as Record<string, unknown>);
-          })
-          .catch((err) => {
-            this.send(ws, {
-              type: "archive_result",
-              sessionId,
-              success: false,
-              error: codexErrorMessage(err),
-            } as Record<string, unknown>);
-          });
+      case "resolve_session_link":
+        await handleResolveSessionLink(this, msg, ws);
         break;
-      }
 
-      case "resume_session": {
-        const resumeStartedAt = Date.now();
-        const provider = msg.provider ?? "claude";
-        const tierError = provider === "codex"
-          ? this.codexServiceTierError(msg.model, msg.serviceTier) : undefined;
-        if (tierError) {
-          this.sendResumeFailed(ws, { provider, sourceSessionId: msg.sessionId,
-            projectPath: msg.projectPath, resumeRequestId: msg.resumeRequestId });
-          this.send(ws, { type: "error", sessionId: msg.sessionId,
-            requestId: msg.resumeRequestId,
-            errorCode: "codex_service_tier_unavailable", message: tierError });
-          break;
-        }
-        const storedAssignment = this.workspaceStore?.getAssignment(
-          provider,
-          msg.sessionId,
-        );
-        const requestedProject =
-          !storedAssignment && msg.projectId
-            ? this.workspaceStore?.getProject(msg.projectId)
-            : undefined;
-        if (!storedAssignment && msg.projectId && !requestedProject) {
-          this.sendResumeFailed(ws, {
-            provider,
-            sourceSessionId: msg.sessionId,
-            projectPath: msg.projectPath,
-            resumeRequestId: msg.resumeRequestId,
-          });
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            requestId: msg.resumeRequestId,
-            errorCode: "project_not_found",
-            message: `Project not found: ${msg.projectId}`,
-          });
-          break;
-        }
-        const assignedProject = storedAssignment?.projectId
-          ? this.workspaceStore?.getProject(storedAssignment.projectId)
-          : undefined;
-        const resolvedResumeProjectName =
-          assignedProject?.name ?? storedAssignment?.projectName;
-        const resumeRoots =
-          storedAssignment?.rootPaths ?? requestedProject?.rootPaths;
-        console.log(
-          `[ws] resume_session: sessionId=${msg.sessionId} projectPath=${msg.projectPath} provider=${msg.provider ?? "claude"}`,
-        );
-        // A stored assignment supplies the root snapshot and secondary roots,
-        // while the recent-session path may be a worktree cwd that must win.
-        const resumeProjectPath = resolvePlatformPath(
-          storedAssignment
-            ? msg.projectPath
-            : (resumeRoots?.[0] ?? msg.projectPath),
-          this.platform,
-        );
-        const resumeAdditionalRoots =
-          resumeRoots?.slice(1) ?? msg.additionalWritableRoots;
-        const resolvedResumeWorkspace: ResolvedWorkspace | undefined =
-          storedAssignment
-            ? {
-                kind: storedAssignment.kind,
-                ...(storedAssignment.projectId
-                  ? { projectId: storedAssignment.projectId }
-                  : {}),
-                ...(resolvedResumeProjectName
-                  ? { projectName: resolvedResumeProjectName }
-                  : {}),
-                rootPaths: storedAssignment.rootPaths,
-              }
-            : requestedProject
-              ? {
-                  kind: "project",
-                  projectId: requestedProject.id,
-                  projectName: requestedProject.name,
-                  rootPaths: requestedProject.rootPaths,
-                }
-              : undefined;
-        if (!this.isPathAllowed(resumeProjectPath)) {
-          this.sendResumeFailed(ws, {
-            provider,
-            sourceSessionId: msg.sessionId,
-            projectPath: resumeProjectPath,
-            resumeRequestId: msg.resumeRequestId,
-          });
-          this.send(ws, {
-            ...this.buildPathNotAllowedError(
-              msg.projectPath,
-              msg.resumeRequestId,
-            ),
-            sessionId: msg.sessionId,
-          });
-          break;
-        }
-        if (
-          resolvedResumeWorkspace &&
-          !storedAssignment &&
-          this.workspaceStore
-        ) {
-          void this.workspaceStore.assignSession(
-            provider,
-            msg.sessionId,
-            resolvedResumeWorkspace,
-          ).catch((error) => {
-            console.error("[workspace] Failed to persist resume assignment:", error);
-          });
-        }
-        const normalizedCodexPermissionsMode =
-          provider === "codex"
-            ? normalizeCodexPermissionsMode(msg.codexPermissionsMode)
-            : undefined;
-        const requestedCodexPermissionsMode =
-          this.codexAutoReviewDisabled &&
-          normalizedCodexPermissionsMode === "autoReview"
-            ? "default"
-            : normalizedCodexPermissionsMode;
-        const codexPermissionSettings = requestedCodexPermissionsMode
-          ? codexSettingsFromPermissionsMode(requestedCodexPermissionsMode)
-          : undefined;
-        const codexApprovalPolicy =
-          provider === "codex"
-            ? requestedCodexPermissionsMode
-              ? codexPermissionSettings?.approvalPolicy
-              : normalizeCodexApprovalPolicy(
-                  msg.approvalPolicy ??
-                    (msg.executionMode == null
-                      ? undefined
-                      : msg.executionMode === "fullAccess"
-                        ? "never"
-                        : "on-request"),
-                )
-            : undefined;
-        const executionMode = deriveExecutionMode({
-          provider,
-          permissionMode: msg.permissionMode,
-          executionMode: msg.executionMode,
-          approvalPolicy: codexApprovalPolicy,
-        });
-        const planMode = derivePlanMode({
-          permissionMode: msg.permissionMode,
-          planMode: msg.planMode,
-        });
-        const legacyPermissionMode = modesToLegacyPermissionMode(
-          provider,
-          executionMode,
-          planMode,
-        );
-        const claudePermissionMode =
-          provider === "claude"
-            ? ((msg.permissionMode as
-                | "default"
-                | "auto"
-                | "acceptEdits"
-                | "bypassPermissions"
-                | "plan"
-                | undefined) ?? legacyPermissionMode)
-            : legacyPermissionMode;
-        const sessionRefId = msg.sessionId;
-        // Resume flow: keep past history in SessionInfo and deliver it only
-        // via get_history(sessionId) to avoid duplicate/missed replay races.
-        if (provider === "codex") {
-          const wtMapping = this.worktreeStore.get(sessionRefId);
-          const effectiveProjectPath =
-            resolvePlatformPath(
-              wtMapping?.projectPath ?? resumeProjectPath,
-              this.platform,
-            );
-          let effectiveProfile: string | undefined;
-          try {
-            effectiveProfile = msg.profile
-              ? await this.resolveCodexResumeProfile(
-                  msg.profile,
-                  sessionRefId,
-                  effectiveProjectPath,
-                )
-              : undefined;
-          } catch (err) {
-            console.error(
-              `[ws] Failed to resolve Codex profile on resume: ${err}`,
-            );
-            this.sendResumeFailed(ws, {
-              provider,
-              sourceSessionId: sessionRefId,
-              projectPath: effectiveProjectPath,
-              resumeRequestId: msg.resumeRequestId,
-            });
-            this.send(ws, {
-              type: "error",
-              sessionId: sessionRefId,
-              requestId: msg.resumeRequestId,
-              message: `Failed to resolve Codex profile: ${codexErrorMessage(err)}`,
-            });
-            break;
-          }
-          const additionalWritableRoots =
-            this.normalizeAdditionalWritableRoots(
-              resumeAdditionalRoots,
-              effectiveProjectPath,
-            );
-          if (additionalWritableRoots.deniedRoot) {
-            this.sendResumeFailed(ws, {
-              provider,
-              sourceSessionId: sessionRefId,
-              projectPath: effectiveProjectPath,
-              resumeRequestId: msg.resumeRequestId,
-            });
-            this.send(ws, {
-              ...this.buildPathNotAllowedError(
-                additionalWritableRoots.deniedRoot,
-                msg.resumeRequestId,
-              ),
-              sessionId: sessionRefId,
-            });
-            break;
-          }
-          let worktreeOpts:
-            | {
-                useWorktree?: boolean;
-                worktreeBranch?: string;
-                existingWorktreePath?: string;
-              }
-            | undefined;
-          if (wtMapping) {
-            if (worktreeExists(wtMapping.worktreePath)) {
-              worktreeOpts = {
-                existingWorktreePath: wtMapping.worktreePath,
-                worktreeBranch: wtMapping.worktreeBranch,
-              };
-            } else {
-              worktreeOpts = {
-                useWorktree: true,
-                worktreeBranch: wtMapping.worktreeBranch,
-              };
-            }
-          }
-
-          const resumeOperation = this.beginResumeOperation({
-            ws,
-            provider: "codex",
-            sourceSessionId: sessionRefId,
-            projectPath: effectiveProjectPath,
-            request: msg,
-          });
-          if (!resumeOperation.isOwner) break;
-
-          let historyMetrics = summarizeResumeHistory([]);
-          let historyLoadMs = 0;
-          let historyLoaded = false;
-          let sessionCreateMs = 0;
-          let nameLoadMs = 0;
-          const historyStartedAt = Date.now();
-          try {
-            const pastMessages = await this.getCodexThreadHistory(
-              sessionRefId,
-              effectiveProjectPath,
-            );
-            historyLoadMs = Date.now() - historyStartedAt;
-            historyLoaded = true;
-            historyMetrics = summarizeResumeHistory(pastMessages);
-            const createStartedAt = Date.now();
-            const sessionId = this.sessionManager.create(
-              effectiveProjectPath,
-              undefined,
-              pastMessages,
-              worktreeOpts,
-              "codex",
-              this.withCodexAutoReviewPolicy({
-                threadId: sessionRefId,
-                profile: effectiveProfile,
-                approvalPolicy: codexPermissionSettings
-                  ? codexPermissionSettings.approvalPolicy
-                  : (codexApprovalPolicy ??
-                    normalizeCodexApprovalPolicy(
-                      executionMode === "fullAccess" ? "never" : "on-request",
-                    )),
-                approvalsReviewer:
-                  codexPermissionSettings?.approvalsReviewer ??
-                  msg.approvalsReviewer,
-                codexPermissionsMode:
-                  codexPermissionSettings?.codexPermissionsMode,
-                sandboxMode: codexPermissionSettings
-                  ? codexPermissionSettings.sandboxMode
-                  : sandboxModeToInternal(msg.sandboxMode),
-                model: msg.model,
-                modelReasoningEffort:
-                  (msg.modelReasoningEffort as CodexStartOptions["modelReasoningEffort"]) ??
-                  undefined,
-                serviceTier: msg.serviceTier,
-                networkAccessEnabled: msg.networkAccessEnabled,
-                webSearchMode:
-                  (msg.webSearchMode as "disabled" | "cached" | "live") ??
-                  undefined,
-                additionalWritableRoots: additionalWritableRoots.roots,
-                collaborationMode: planMode
-                  ? ("plan" as const)
-                  : ("default" as const),
-              }),
-              { deferProcessMessages: true },
-            );
-            if (
-              !this.attachProvisionalResumeSession(
-                resumeOperation.key,
-                resumeOperation.operationId,
-                sessionId,
-              )
-            ) {
-              this.sessionManager.destroy(sessionId);
-              break;
-            }
-            sessionCreateMs = Date.now() - createStartedAt;
-            const createdSession = this.sessionManager.get(sessionId);
-            const waitUntilReady = (
-              createdSession?.process as
-                | { waitUntilReady?: () => Promise<void> }
-                | undefined
-            )?.waitUntilReady;
-            if (!waitUntilReady) {
-              throw new Error("Codex session readiness is unavailable");
-            }
-            await waitUntilReady.call(createdSession?.process);
-            if (createdSession) {
-              // get_history immediately follows session_created on the app.
-              // Reuse the canonical history loaded above instead of issuing a
-              // second thread/read for the same restored session.
-              createdSession.codexInitialHistoryPending = true;
-            }
-            const cached = this.sessionManager.getCachedCommands(
-              "codex",
-              createdSession?.worktreePath ?? effectiveProjectPath,
-            );
-            const nameStartedAt = Date.now();
-            await this.loadAndSetSessionName(
-              createdSession,
-              "codex",
-              effectiveProjectPath,
-              sessionRefId,
-            );
-            nameLoadMs = Date.now() - nameStartedAt;
-            const createdMessage = this.buildSessionCreatedMessage({
-              sessionId,
-              provider: "codex",
-              projectPath: effectiveProjectPath,
-              session: createdSession,
-              sandboxMode: createdSession?.codexSettings?.sandboxMode
-                ? sandboxModeToExternal(createdSession.codexSettings.sandboxMode)
-                : undefined,
-              approvalsReviewer:
-                createdSession?.codexSettings?.approvalsReviewer,
-              codexPermissionsMode:
-                createdSession?.codexSettings?.codexPermissionsMode,
-              permissionMode: legacyPermissionMode,
-              executionMode,
-              planMode,
-              resumeRequestId: msg.resumeRequestId,
-              ...(cached
-                ? {
-                    slashCommands: cached.slashCommands,
-                    skills: cached.skills,
-                    ...(cached.skillMetadata
-                      ? { skillMetadata: cached.skillMetadata }
-                      : {}),
-                    apps: cached.apps,
-                    ...(cached.appMetadata
-                      ? { appMetadata: cached.appMetadata }
-                      : {}),
-                    plugins: cached.plugins,
-                    ...(cached.pluginMetadata
-                      ? { pluginMetadata: cached.pluginMetadata }
-                      : {}),
-                  }
-                : {}),
-            });
-            if (
-              !this.completeResumeOperation(
-                resumeOperation.key,
-                resumeOperation.operationId,
-                sessionId,
-                createdMessage,
-              )
-            ) {
-              this.sessionManager.destroy(sessionId);
-              break;
-            }
-            this.sessionManager.releaseDeferredProcessMessages(sessionId);
-            this.broadcastSessionList();
-            this.debugEvents.set(sessionId, []);
-            this.recordDebugEvent(sessionId, {
-              direction: "internal",
-              channel: "bridge",
-              type: "session_resumed",
-              detail: `provider=codex thread=${sessionRefId}`,
-            });
-            if (!resolvedResumeWorkspace) {
-              this.projectHistory?.addProject(effectiveProjectPath);
-            }
-            console.info(
-              formatResumePerformanceLog({
-                provider: "codex",
-                sourceSessionId: sessionRefId,
-                outcome: "success",
-                ...historyMetrics,
-                historyLoadMs,
-                sessionCreateMs,
-                nameLoadMs,
-                totalMs: Date.now() - resumeStartedAt,
-              }),
-            );
-          } catch (err) {
-            if (!historyLoaded) {
-              historyLoadMs = Date.now() - historyStartedAt;
-            }
-            console.info(
-              formatResumePerformanceLog({
-                provider: "codex",
-                sourceSessionId: sessionRefId,
-                outcome: "failed",
-                ...historyMetrics,
-                historyLoadMs,
-                sessionCreateMs,
-                nameLoadMs,
-                totalMs: Date.now() - resumeStartedAt,
-              }),
-            );
-            const activeWriterConflict = isCodexThreadWriterConflict(err);
-            this.failResumeOperation(
-              resumeOperation.key,
-              resumeOperation.operationId,
-              activeWriterConflict
-                ? codexErrorMessage(err)
-                : historyLoaded
-                  ? `Failed to restore Codex session: ${err}`
-                  : `Failed to load Codex session history: ${err}`,
-              activeWriterConflict
-                ? "codex_thread_writer_conflict"
-                : undefined,
-            );
-          }
-          break;
-        }
-
-        const claudeSessionId = sessionRefId;
-        const additionalDirectories = this.normalizeAdditionalWritableRoots(
-          resumeAdditionalRoots,
-          resumeProjectPath,
-        );
-        if (additionalDirectories.deniedRoot) {
-          this.sendResumeFailed(ws, {
-            provider,
-            sourceSessionId: sessionRefId,
-            projectPath: resumeProjectPath,
-            resumeRequestId: msg.resumeRequestId,
-          });
-          this.send(ws, {
-            ...this.buildPathNotAllowedError(
-              additionalDirectories.deniedRoot,
-              msg.resumeRequestId,
-            ),
-            sessionId: sessionRefId,
-          });
-          break;
-        }
-        // Look up worktree mapping for this Claude session
-        const wtMapping = this.worktreeStore.get(claudeSessionId);
-        let worktreeOpts:
-          | {
-              useWorktree?: boolean;
-              worktreeBranch?: string;
-              existingWorktreePath?: string;
-            }
-          | undefined;
-        if (wtMapping) {
-          if (worktreeExists(wtMapping.worktreePath)) {
-            // Worktree exists — reuse it directly
-            worktreeOpts = {
-              existingWorktreePath: wtMapping.worktreePath,
-              worktreeBranch: wtMapping.worktreeBranch,
-            };
-          } else {
-            // Worktree was deleted — recreate on the same branch
-            worktreeOpts = {
-              useWorktree: true,
-              worktreeBranch: wtMapping.worktreeBranch,
-            };
-          }
-        }
-
-        const resumeOperation = this.beginResumeOperation({
-          ws,
-          provider: "claude",
-          sourceSessionId: claudeSessionId,
-          projectPath: resumeProjectPath,
-          request: msg,
-        });
-        if (!resumeOperation.isOwner) break;
-
-        const historyStartedAt = Date.now();
-        let historyMetrics = summarizeResumeHistory([]);
-        let historyLoadMs = 0;
-        let historyLoaded = false;
-        let sessionCreateMs = 0;
-        getSessionHistory(claudeSessionId)
-          .then((pastMessages) => {
-            historyLoadMs = Date.now() - historyStartedAt;
-            historyLoaded = true;
-            historyMetrics = summarizeResumeHistory(pastMessages);
-            const createStartedAt = Date.now();
-            const {
-              sessionId,
-              permissionMode: effectivePermissionMode,
-              executionMode: effectiveExecutionMode,
-              planMode: effectivePlanMode,
-              usedFallback: autoFallbackUsed,
-            } = this.createClaudeSessionWithFallback({
-              projectPath: resumeProjectPath,
-              options: {
-                sessionId: claudeSessionId,
-                permissionMode: claudePermissionMode,
-                model: msg.model,
-                effort: msg.effort,
-                fastMode: msg.claudeFastMode,
-                ultracode: msg.claudeUltracode,
-                maxTurns: msg.maxTurns,
-                maxBudgetUsd: msg.maxBudgetUsd,
-                fallbackModel: msg.fallbackModel,
-                forkSession: msg.forkSession,
-                persistSession: msg.persistSession,
-                ...(msg.sandboxMode
-                  ? { sandboxEnabled: msg.sandboxMode === "on" }
-                  : {}),
-                additionalDirectories: additionalDirectories.roots,
-              },
-              pastMessages,
-              worktreeOptions: worktreeOpts,
-            });
-            sessionCreateMs = Date.now() - createStartedAt;
-            const createdSession = this.sessionManager.get(sessionId);
-            const cached = this.sessionManager.getCachedCommands(
-              "claude",
-              createdSession?.worktreePath ?? resumeProjectPath,
-            );
-            const nameStartedAt = Date.now();
-            const finishResume = () => {
-              const createdMessage = {
-                ...this.buildSessionCreatedMessage({
-                  sessionId,
-                  provider: "claude",
-                  projectPath: resumeProjectPath,
-                  session: createdSession,
-                  permissionMode: effectivePermissionMode,
-                  executionMode: effectiveExecutionMode,
-                  planMode: effectivePlanMode,
-                  sandboxMode: msg.sandboxMode,
-                  resumeRequestId: msg.resumeRequestId,
-                  ...(cached
-                    ? {
-                        slashCommands: cached.slashCommands,
-                        skills: cached.skills,
-                        ...(cached.skillMetadata
-                          ? { skillMetadata: cached.skillMetadata }
-                          : {}),
-                        apps: cached.apps,
-                        ...(cached.appMetadata
-                          ? { appMetadata: cached.appMetadata }
-                          : {}),
-                        plugins: cached.plugins,
-                        ...(cached.pluginMetadata
-                          ? { pluginMetadata: cached.pluginMetadata }
-                          : {}),
-                      }
-                    : {}),
-                }),
-                claudeSessionId,
-              } as SystemServerMessage;
-              if (
-                !this.completeResumeOperation(
-                  resumeOperation.key,
-                  resumeOperation.operationId,
-                  sessionId,
-                  createdMessage,
-                )
-              ) {
-                this.sessionManager.destroy(sessionId);
-                return;
-              }
-              this.broadcastSessionList();
-              if (autoFallbackUsed) {
-                this.sendTip(
-                  ws,
-                  sessionId,
-                  "auto_mode_fallback_default",
-                  createdSession,
-                );
-              }
-              console.info(
-                formatResumePerformanceLog({
-                  provider: "claude",
-                  sourceSessionId: claudeSessionId,
-                  outcome: "success",
-                  ...historyMetrics,
-                  historyLoadMs,
-                  sessionCreateMs,
-                  nameLoadMs: Date.now() - nameStartedAt,
-                  totalMs: Date.now() - resumeStartedAt,
-                }),
-              );
-            };
-            void this.loadAndSetSessionName(
-              createdSession,
-              "claude",
-              resumeProjectPath,
-              claudeSessionId,
-            ).then(finishResume, (err) => {
-              console.error("[ws] Failed to load resumed session name:", err);
-              finishResume();
-            });
-            this.debugEvents.set(sessionId, []);
-            this.recordDebugEvent(sessionId, {
-              direction: "internal",
-              channel: "bridge",
-              type: "session_resumed",
-              detail: `provider=claude session=${claudeSessionId}`,
-            });
-            if (!resolvedResumeWorkspace) {
-              this.projectHistory?.addProject(resumeProjectPath);
-            }
-          })
-          .catch((err) => {
-            if (!historyLoaded) {
-              historyLoadMs = Date.now() - historyStartedAt;
-            }
-            console.info(
-              formatResumePerformanceLog({
-                provider: "claude",
-                sourceSessionId: claudeSessionId,
-                outcome: "failed",
-                ...historyMetrics,
-                historyLoadMs,
-                sessionCreateMs,
-                nameLoadMs: 0,
-                totalMs: Date.now() - resumeStartedAt,
-              }),
-            );
-            this.failResumeOperation(
-              resumeOperation.key,
-              resumeOperation.operationId,
-              `Failed to load session history: ${err}`,
-            );
-          });
+      case "get_history_delta":
+        await handleGetHistoryDelta(this, msg, ws);
         break;
-      }
 
-      case "list_gallery": {
-        const projectPath = msg.projectPath ?? msg.project;
-        if (this.galleryStore) {
-          const images = this.galleryStore.list({
-            projectPath,
-            sessionId: msg.sessionId,
-          });
-          this.send(ws, {
-            type: "gallery_list",
-            images,
-            projectPath,
-            sessionId: msg.sessionId,
-            requestId: msg.requestId,
-          });
-        } else {
-          this.send(ws, {
-            type: "gallery_list",
-            images: [],
-            projectPath,
-            sessionId: msg.sessionId,
-            requestId: msg.requestId,
-          });
-        }
+      case "refresh_branch":
+        await handleRefreshBranch(this, msg, ws);
         break;
-      }
 
-      case "get_message_images": {
-        void extractMessageImages(msg.claudeSessionId, msg.messageUuid)
-          .then((images) => {
-            const refs: Array<{ id: string; url: string; mimeType: string }> =
-              [];
-            if (this.imageStore) {
-              for (const img of images) {
-                const ref = this.imageStore.registerFromBase64(
-                  img.base64,
-                  img.mimeType,
-                );
-                if (ref) refs.push(ref);
-              }
-            }
-            this.send(ws, {
-              type: "message_images_result",
-              messageUuid: msg.messageUuid,
-              images: refs,
-            });
-          })
-          .catch((err) => {
-            console.error("[ws] Failed to extract message images:", err);
-            this.send(ws, {
-              type: "message_images_result",
-              messageUuid: msg.messageUuid,
-              images: [],
-            });
-          });
+      case "get_debug_bundle":
+        await handleGetDebugBundle(this, msg, ws);
         break;
-      }
 
-      case "interrupt": {
-        const session = this.resolveSession(msg.sessionId);
-        if (!session) {
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: "No active session.",
-          });
-          return;
-        }
-        if (msg.retract === true) {
-          this.interruptAndRetract(ws, session).catch((err) => {
-            console.warn(
-              `[ws] Failed to retract interrupted prompt: ${err instanceof Error ? err.message : String(err)}`,
-            );
-          });
-          break;
-        }
-        session.process.interrupt();
+      case "get_usage":
+        await handleGetUsage(this, msg, ws);
         break;
-      }
 
-      case "edit_message": {
-        await this.editUserMessage(ws, msg);
+      case "list_recent_sessions":
+        await handleListRecentSessions(this, msg, ws);
         break;
-      }
 
-      case "list_project_history": {
-        const projects = this.legacyProjectHistoryProjects();
-        this.send(ws, { type: "project_history", projects });
+      case "archive_session":
+        await handleArchiveSession(this, msg, ws);
         break;
-      }
 
-      case "remove_project_history": {
-        this.projectHistory?.removeProject(msg.projectPath);
-        const projects = this.legacyProjectHistoryProjects();
-        this.send(ws, { type: "project_history", projects });
+      case "get_pins":
+        await handleGetPins(this, msg, ws);
         break;
-      }
 
-      case "list_projects": {
-        this.send(ws, this.projectsMessage(msg.requestId));
+      case "get_shared_state":
+        await handleGetSharedState(this, ws);
         break;
-      }
 
-      case "bootstrap_project": {
-        try {
-          const result = await bootstrapProject({ ...msg,
-            isAllowed: (path) => this.isCanonicalPathAllowed(path),
-          });
-          this.projectHistory?.addProject(result.projectPath);
-          this.send(ws, { type: "project_setup_result", requestId: msg.requestId, ...result });
-        } catch (error) {
-          this.send(ws, { type: "project_setup_result", requestId: msg.requestId, error: (error as Error).message });
-        }
+      case "set_shared_state":
+        await handleSetSharedState(this, msg);
         break;
-      }
+
+      case "seed_shared_state":
+        await handleSeedSharedState(this, msg, ws);
+        break;
+
+      case "set_session_pin":
+        await handleSetSessionPin(this, msg);
+        break;
+
+      case "set_project_pin":
+        await handleSetProjectPin(this, msg);
+        break;
+
+      case "resume_session":
+        await handleResumeSession(this, msg, ws);
+        break;
+
+      case "list_gallery":
+        await handleListGallery(this, msg, ws);
+        break;
+
+      case "get_message_images":
+        await handleGetMessageImages(this, msg, ws);
+        break;
+
+      case "interrupt":
+        await handleInterrupt(this, msg, ws);
+        break;
+
+      case "edit_message":
+        await handleEditMessage(this, msg, ws);
+        break;
+
+      case "list_project_history":
+        await handleListProjectHistory(this, msg, ws);
+        break;
+
+      case "remove_project_history":
+        await handleRemoveProjectHistory(this, msg, ws);
+        break;
+
+      case "list_projects":
+        await handleListProjects(this, msg, ws);
+        break;
+
+      case "bootstrap_project":
+        await handleBootstrapProject(this, msg, ws);
+        break;
       case "trust_project":
-      case "initialize_git": {
-        try {
-          const projectPath = await realpath(msg.projectPath);
-          if (!await this.isCanonicalPathAllowed(projectPath)) throw new Error("Project directory is not allowed");
-          if (msg.type === "trust_project") {
-            if (msg.sessionId) {
-              const session = this.sessionManager.get(msg.sessionId);
-              if (!session || session.provider !== "codex" || session.queuedInput ||
-                  await realpath(session.worktreePath ?? session.projectPath) !== projectPath) {
-                throw new Error("Session is unavailable or has queued input");
-              }
-              await (session.process as CodexProcess).trustProjectAndReload(projectPath);
-            } else {
-              const proc = new CodexProcess();
-              try {
-                await proc.initializeOnly(projectPath, 10_000);
-                await proc.trustProject(projectPath);
-              } finally { proc.stop(); }
-            }
-          } else {
-            // Do not silently turn a subdirectory of another repository into a nested repo.
-            let inside = false;
-            try { inside = execFileSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: projectPath, encoding: "utf8", stdio: "pipe" }).trim() === "true"; } catch { /* not initialized */ }
-            if (!inside) execFileSync("git", ["init", "-b", "main"], { cwd: projectPath, timeout: 10_000, stdio: "pipe" });
-          }
-          this.send(ws, { type: "project_setup_result", requestId: msg.requestId, projectPath });
-        } catch (error) {
-          this.send(ws, { type: "project_setup_result", requestId: msg.requestId, error: (error as Error).message });
-        }
+      case "initialize_git":
+        await handleTrustProject(this, msg, ws);
         break;
-      }
-      case "create_project": {
-        if (!this.workspaceStore) {
-          this.send(ws, {
-            type: "error",
-            requestId: msg.requestId,
-            errorCode: "projects_unavailable",
-            message: "Project storage is unavailable",
-          });
-          break;
-        }
-        const normalized = this.normalizeWorkspaceRoots(msg.rootPaths);
-        if (normalized.deniedRoot || !normalized.roots) {
-          this.send(
-            ws,
-            this.buildPathNotAllowedError(
-              normalized.deniedRoot ?? msg.rootPaths[0],
-            ),
-          );
-          break;
-        }
-        try {
-          await this.workspaceStore.createProject(msg.name, normalized.roots);
-          this.broadcast(this.projectsMessage(msg.requestId));
-        } catch (error) {
-          this.sendWorkspaceMutationError(ws, msg.requestId, "create Project", error);
-        }
+      case "create_project":
+        await handleCreateProject(this, msg, ws);
         break;
-      }
 
-      case "update_project": {
-        if (!this.workspaceStore) {
-          this.send(ws, {
-            type: "error",
-            requestId: msg.requestId,
-            errorCode: "projects_unavailable",
-            message: "Project storage is unavailable",
-          });
-          break;
-        }
-        const normalized = this.normalizeWorkspaceRoots(msg.rootPaths);
-        if (normalized.deniedRoot || !normalized.roots) {
-          this.send(
-            ws,
-            this.buildPathNotAllowedError(
-              normalized.deniedRoot ?? msg.rootPaths[0],
-            ),
-          );
-          break;
-        }
-        let updated;
-        try {
-          updated = await this.workspaceStore.updateProject(
-            msg.projectId,
-            msg.name,
-            normalized.roots,
-          );
-        } catch (error) {
-          this.sendWorkspaceMutationError(ws, msg.requestId, "update Project", error);
-          break;
-        }
-        if (!updated) {
-          this.send(ws, {
-            type: "error",
-            requestId: msg.requestId,
-            errorCode: "project_not_found",
-            message: `Project not found: ${msg.projectId}`,
-          });
-          break;
-        }
-        this.broadcast(this.projectsMessage(msg.requestId));
+      case "update_project":
+        await handleUpdateProject(this, msg, ws);
         break;
-      }
 
-      case "remove_project": {
-        if (!this.workspaceStore) {
-          this.sendWorkspaceMutationError(
-            ws,
-            msg.requestId,
-            "remove Project",
-            new Error("Project storage is unavailable"),
-          );
-          break;
-        }
-        let removed;
-        try {
-          removed = await this.workspaceStore.removeProject(msg.projectId);
-        } catch (error) {
-          this.sendWorkspaceMutationError(ws, msg.requestId, "remove Project", error);
-          break;
-        }
-        if (!removed) {
-          this.send(ws, {
-            type: "error",
-            requestId: msg.requestId,
-            errorCode: "project_not_found",
-            message: `Project not found: ${msg.projectId}`,
-          });
-          break;
-        }
-        this.broadcast(this.projectsMessage(msg.requestId));
+      case "remove_project":
+        await handleRemoveProject(this, msg, ws);
         break;
-      }
 
-      case "list_directory": {
-        try {
-          const listing = await listAllowedDirectories(
-            msg.path,
-            this.allowedDirs,
-            this.platform,
-            msg.includeHidden ?? false,
-            msg.includeFiles ?? false,
-          );
-          this.send(ws, {
-            type: "directory_listing",
-            path: listing.path,
-            directories: listing.directories,
-            ...(listing.files ? { files: listing.files } : {}),
-            requestId: msg.requestId,
-          });
-        } catch (error) {
-          const listingError =
-            error instanceof DirectoryListingError
-              ? error
-              : new DirectoryListingError(
-                  "directory_read_failed",
-                  "Unable to read directory",
-                );
-          this.send(ws, {
-            type: "error",
-            errorCode: listingError.code,
-            message: listingError.message,
-            path: msg.path,
-            requestId: msg.requestId,
-          });
-        }
+      case "list_directory":
+        await handleListDirectory(this, msg, ws);
         break;
-      }
 
-      case "prepare_file_download": {
-        void this.prepareFileDownload(ws, msg);
+      case "prepare_file_download":
+        await handlePrepareFileDownload(this, msg, ws);
         break;
-      }
 
-      case "prepare_file_upload": {
-        void this.prepareFileUpload(ws, msg);
+      case "prepare_file_upload":
+        await handlePrepareFileUpload(this, msg, ws);
         break;
-      }
 
-      case "finalize_file_upload": {
-        void this.finalizeFileUpload(ws, msg);
+      case "finalize_file_upload":
+        await handleFinalizeFileUpload(this, msg, ws);
         break;
-      }
 
-      case "cancel_file_upload": {
-        if (this.uploadStore) void this.uploadStore.cancel(msg.uploadToken);
+      case "cancel_file_upload":
+        await handleCancelFileUpload(this, msg, ws);
         break;
-      }
 
       case "reveal_file_local":
-      case "reveal_file": {
-        void (async () => {
-          const reply = (
-            errorCode?: "not_local_mac" | "path_not_allowed" | "reveal_failed",
-          ) => this.send(ws, {
-            type: "reveal_file_result",
-            requestId: msg.requestId,
-            ...(errorCode ? { errorCode } : {}),
-          });
-          if (
-            this.platform !== "darwin" ||
-            !(await (msg.type === "reveal_file_local"
-              ? verifyFinderSocketProof(msg.proofPort, msg.proofToken)
-              : consumeFinderProof(msg.proofPath, msg.proofToken)))
-          ) {
-            reply("not_local_mac");
-            return;
-          }
-          try {
-            const path = resolve(msg.projectPath, msg.filePath);
-            if (!this.isPathReadable(path)) {
-              reply("path_not_allowed");
-              return;
-            }
-            const canonicalPath = await realpath(path);
-            if (!(await this.isCanonicalPathReadable(canonicalPath))) {
-              reply("path_not_allowed");
-              return;
-            }
-            await revealInFinder(canonicalPath);
-            reply();
-          } catch {
-            reply("reveal_failed");
-          }
-        })();
+      case "reveal_file":
+        await handleRevealFileLocal(this, msg, ws);
         break;
-      }
 
       case "read_file":
       case "read_media_file":
-      case "read_model_file": {
-        const responseMetadata = {
-          ...projectRequestMetadata(msg),
-          filePath: msg.filePath,
-        };
-        const absPath = resolve(msg.projectPath, msg.filePath);
-        if (!this.isPathReadable(absPath)) {
-          this.send(ws, {
-            type: "file_content",
-            ...responseMetadata,
-            content: "",
-            error: "Path not allowed",
-          });
-          break;
-        }
-        void (async () => {
-          try {
-            if (!existsSync(absPath)) {
-              this.send(ws, {
-                type: "file_content",
-                ...responseMetadata,
-                content: "",
-                error: "File not found",
-              });
-              return;
-            }
-            const fileStat = await lstat(absPath);
-            if (fileStat.isSymbolicLink()) {
-              let targetPath = "";
-              try {
-                targetPath = await readlink(absPath);
-              } catch {
-                // Best effort only; the user-facing error still works without it.
-              }
-              let resolvedTargetStat;
-              try {
-                resolvedTargetStat = await stat(absPath);
-              } catch {
-                this.send(ws, {
-                  type: "file_content",
-                  ...responseMetadata,
-                  content: "",
-                  error:
-                    targetPath.length > 0
-                      ? `This symbolic link points to a missing target: ${targetPath}`
-                      : "This symbolic link points to a missing target.",
-                });
-                return;
-              }
-              if (resolvedTargetStat.isDirectory()) {
-                this.send(ws, {
-                  type: "file_content",
-                  ...responseMetadata,
-                  content: "",
-                  error:
-                    targetPath.length > 0
-                      ? `This symbolic link points to a directory (${targetPath}). Open the target directory instead.`
-                      : "This symbolic link points to a directory. Open the target directory instead.",
-                });
-                return;
-              }
-            } else if (fileStat.isDirectory()) {
-              this.send(ws, {
-                type: "file_content",
-                ...responseMetadata,
-                content: "",
-                error: "This path is a directory. Open a file instead.",
-              });
-              return;
-            }
-            const resolvedFileStat = fileStat.isSymbolicLink()
-              ? await stat(absPath)
-              : fileStat;
-            const canonicalPath = await realpath(absPath);
-            if (!(await this.isCanonicalPathReadable(canonicalPath))) {
-              this.send(ws, {
-                type: "file_content",
-                ...responseMetadata,
-                content: "",
-                error: "Path not allowed",
-              });
-              return;
-            }
-            const ext = extname(absPath).toLowerCase();
-            if (msg.type === "read_model_file") {
-              const error =
-                ext !== ".glb"
-                  ? "Unsupported 3D file type. Use a GLB file."
-                  : resolvedFileStat.size > 50 * 1024 * 1024
-                    ? "model_too_large"
-                    : !this.mediaStore
-                      ? "3D preview is unavailable on this Bridge."
-                      : undefined;
-              if (error) {
-                this.send(ws, {
-                  type: "file_content",
-                  ...responseMetadata,
-                  kind: "model",
-                  content: "",
-                  error,
-                });
-                return;
-              }
-              const ref = await this.mediaStore!.register(
-                canonicalPath,
-                "model/gltf-binary",
-                resolvedFileStat.size,
-              );
-              this.send(ws, {
-                type: "file_content",
-                ...responseMetadata,
-                kind: "model",
-                content: "",
-                mimeType: ref.mimeType,
-                sizeBytes: ref.sizeBytes,
-                mediaUrl: ref.url,
-              });
-              return;
-            }
-            const mediaType =
-              ext === ".pdf"
-                ? { kind: "pdf" as const, mimeType: "application/pdf" }
-                : FILE_PEEK_MEDIA_TYPES[ext];
-            if (mediaType) {
-              if (!this.mediaStore) {
-                this.send(ws, {
-                  type: "file_content",
-                  ...responseMetadata,
-                  kind: mediaType.kind,
-                  content: "",
-                  mimeType: mediaType.mimeType,
-                  sizeBytes: resolvedFileStat.size,
-                  error: "Media preview is unavailable on this Bridge.",
-                });
-                return;
-              }
-              const ref = await this.mediaStore.register(
-                canonicalPath,
-                mediaType.mimeType,
-                resolvedFileStat.size,
-              );
-              this.send(ws, {
-                type: "file_content",
-                ...responseMetadata,
-                kind: mediaType.kind,
-                content: "",
-                mimeType: ref.mimeType,
-                sizeBytes: ref.sizeBytes,
-                mediaUrl: ref.url,
-              });
-              return;
-            }
-            if (msg.type === "read_media_file") {
-              this.send(ws, {
-                type: "file_content",
-                ...responseMetadata,
-                content: "",
-                error: "Unsupported media file type.",
-              });
-              return;
-            }
-            if (BridgeWebSocketServer.FILE_PEEK_IMAGE_EXTENSIONS.has(ext)) {
-              const mimeType = BridgeWebSocketServer.mimeTypeForExt(ext);
-              if (resolvedFileStat.size > BridgeWebSocketServer.MAX_IMAGE_SIZE) {
-                this.send(ws, {
-                  type: "file_content",
-                  ...responseMetadata,
-                  kind: "image",
-                  content: "",
-                  mimeType,
-                  sizeBytes: resolvedFileStat.size,
-                  error: "Image too large to preview. Maximum size is 5 MB.",
-                });
-                return;
-              }
-              const buf = await readFile(absPath);
-              this.send(ws, {
-                type: "file_content",
-                ...responseMetadata,
-                kind: "image",
-                content: "",
-                base64: buf.toString("base64"),
-                mimeType,
-                sizeBytes: buf.length,
-              });
-              return;
-            }
-            const maxLines =
-              typeof msg.maxLines === "number" && msg.maxLines > 0
-                ? msg.maxLines
-                : 5000;
-            const raw = await readFile(absPath, "utf-8");
-            const textExt = ext.replace(/^\./, "").toLowerCase();
-            const languageMap: Record<string, string> = {
-              ts: "typescript",
-              tsx: "typescript",
-              js: "javascript",
-              jsx: "javascript",
-              py: "python",
-              rb: "ruby",
-              rs: "rust",
-              go: "go",
-              java: "java",
-              kt: "kotlin",
-              swift: "swift",
-              dart: "dart",
-              c: "c",
-              cpp: "cpp",
-              h: "c",
-              hpp: "cpp",
-              cs: "csharp",
-              sh: "bash",
-              zsh: "bash",
-              yml: "yaml",
-              yaml: "yaml",
-              json: "json",
-              toml: "toml",
-              md: "markdown",
-              html: "html",
-              css: "css",
-              scss: "css",
-              sql: "sql",
-              xml: "xml",
-              dockerfile: "dockerfile",
-              makefile: "makefile",
-              gradle: "groovy",
-            };
-            const language = languageMap[textExt] ?? (textExt || undefined);
-            const preview = textPreview(raw, maxLines);
-            this.send(ws, {
-              type: "file_content",
-              ...responseMetadata,
-              kind: "text",
-              content: preview.content,
-              language,
-              totalLines: preview.totalLines,
-              truncated: preview.truncated,
-            });
-          } catch (err) {
-            this.send(ws, {
-              type: "file_content",
-              ...responseMetadata,
-              content: "",
-              error: `Failed to read file: ${err}`,
-            });
-          }
-        })();
+      case "read_model_file":
+        await handleReadFile(this, msg, ws);
         break;
-      }
 
-      case "list_files": {
-        if (!this.isPathAllowed(msg.projectPath)) {
-          this.send(ws, {
-            type: "file_list",
-            ...projectRequestMetadata(msg),
-            files: [],
-            error: this.buildPathNotAllowedError(msg.projectPath, msg.requestId).message,
-          });
-          break;
-        }
-        void (async () => {
-          try {
-            const result = await listProjectFilesAndDirectoriesForClient(
-              msg.projectPath,
-              {
-                maxEntries: this.fileListMaxEntries,
-                maxBytes: this.fileListMaxBytes,
-              },
-            );
-            this.send(ws, {
-              type: "file_list",
-              ...projectRequestMetadata(msg),
-              files: result.files,
-              ignored: result.ignored,
-              modifiedAt: result.modifiedAt,
-              totalFiles: result.totalFiles,
-              truncated: result.truncated,
-            } as Record<string, unknown>);
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            this.send(ws, {
-              type: "file_list",
-              ...projectRequestMetadata(msg),
-              files: [],
-              error: `Failed to list files: ${message}`,
-            });
-          }
-        })();
+      case "list_files":
+        await handleListFiles(this, msg, ws);
         break;
-      }
 
-      case "list_recordings": {
-        if (!this.recordingStore) {
-          this.send(ws, { type: "recording_list", recordings: [] } as Record<
-            string,
-            unknown
-          >);
-          break;
-        }
-        const store = this.recordingStore;
-        void store.listRecordings().then(async (recordings) => {
-          // First pass: extract info from JSONL for recordings missing firstPrompt
-          // This covers both meta-less legacy recordings and new ones where sessions-index hasn't indexed yet
-          await Promise.all(
-            recordings.map(async (rec) => {
-              const info = await store.extractInfoFromJsonl(rec.name);
-              if (info.firstPrompt && !rec.firstPrompt)
-                rec.firstPrompt = info.firstPrompt;
-              if (info.lastPrompt && !rec.lastPrompt)
-                rec.lastPrompt = info.lastPrompt;
-              // Backfill meta for legacy recordings
-              if (!rec.meta && (info.claudeSessionId || info.projectPath)) {
-                rec.meta = {
-                  bridgeSessionId: rec.name,
-                  claudeSessionId: info.claudeSessionId,
-                  projectPath: info.projectPath ?? "",
-                  createdAt: rec.modified,
-                };
-              }
-            }),
-          );
-
-          // Second pass: look up sessions-index for summaries (if claudeSessionIds available)
-          const claudeIds = new Set<string>();
-          const idToIdx = new Map<string, number[]>();
-          for (let i = 0; i < recordings.length; i++) {
-            const cid = recordings[i].meta?.claudeSessionId;
-            if (cid) {
-              claudeIds.add(cid);
-              const arr = idToIdx.get(cid) ?? [];
-              arr.push(i);
-              idToIdx.set(cid, arr);
-            }
-          }
-
-          if (claudeIds.size > 0) {
-            const sessionInfo = await findSessionsByClaudeIds(claudeIds);
-            for (const [cid, info] of sessionInfo) {
-              const indices = idToIdx.get(cid) ?? [];
-              for (const idx of indices) {
-                if (info.summary) recordings[idx].summary = info.summary;
-                if (info.firstPrompt)
-                  recordings[idx].firstPrompt = info.firstPrompt;
-                if (info.lastPrompt)
-                  recordings[idx].lastPrompt = info.lastPrompt;
-              }
-            }
-          }
-
-          // A recording keeps its name snapshot after Project deletion, but a
-          // live Project rename should be reflected when the list is read.
-          for (const recording of recordings) {
-            const projectId = recording.meta?.projectId;
-            if (!projectId) continue;
-            const project = this.workspaceStore?.getProject(projectId);
-            if (project && recording.meta) {
-              recording.meta = {
-                ...recording.meta,
-                projectName: project.name,
-              };
-            }
-          }
-
-          this.send(ws, { type: "recording_list", recordings } as Record<
-            string,
-            unknown
-          >);
-        });
+      case "list_recordings":
+        await handleListRecordings(this, msg, ws);
         break;
-      }
 
-      case "get_recording": {
-        if (!this.recordingStore) {
-          this.send(ws, {
-            type: "error",
-            message: "Recording is not enabled on this server",
-          });
-          break;
-        }
-        void this.recordingStore
-          .getRecordingContent(msg.sessionId)
-          .then((content) => {
-            if (content !== null) {
-              this.send(ws, {
-                type: "recording_content",
-                sessionId: msg.sessionId,
-                content,
-              } as Record<string, unknown>);
-            } else {
-              this.send(ws, {
-                type: "error",
-                message: `Recording ${msg.sessionId} not found`,
-              });
-            }
-          });
+      case "get_recording":
+        await handleGetRecording(this, msg, ws);
         break;
-      }
 
-      case "get_diff": {
-        if (!this.isPathAllowed(msg.projectPath)) {
-          this.send(ws, {
-            type: "diff_result",
-            ...projectRequestMetadata(msg),
-            staged: msg.staged === true,
-            diff: "",
-            error: this.buildPathNotAllowedError(msg.projectPath, msg.requestId)
-              .message,
-            errorCode: "path_not_allowed",
-          });
-          break;
-        }
-        this.collectGitDiff(
-          msg.projectPath,
-          ({ diff, error }) => {
-            if (error) {
-              if (/not a git repository/i.test(error)) {
-                this.send(ws, {
-                  type: "diff_result",
-                  ...projectRequestMetadata(msg),
-                  staged: msg.staged === true,
-                  diff: "",
-                  error: "This project is not a git repository",
-                  errorCode: "git_not_available",
-                });
-              } else {
-                this.send(ws, {
-                  type: "diff_result",
-                  ...projectRequestMetadata(msg),
-                  staged: msg.staged === true,
-                  diff: "",
-                  error: `Failed to get diff: ${error}`,
-                });
-              }
-              return;
-            }
-            void this.collectImageChanges(msg.projectPath, diff).then(
-              (imageChanges) => {
-                if (imageChanges.length > 0) {
-                  this.send(ws, {
-                    type: "diff_result",
-                    ...projectRequestMetadata(msg),
-                    staged: msg.staged === true,
-                    diff,
-                    hasCommits: hasGitHead(msg.projectPath),
-                    imageChanges,
-                  });
-                } else {
-                  this.send(ws, {
-                    type: "diff_result",
-                    ...projectRequestMetadata(msg),
-                    staged: msg.staged === true,
-                    diff,
-                    hasCommits: hasGitHead(msg.projectPath),
-                  });
-                }
-              },
-            );
-          },
-          msg.staged === true
-            ? { staged: true }
-            : msg.staged === false
-              ? { unstaged: true }
-              : undefined,
-        );
+      case "get_diff":
+        await handleGetDiff(this, msg, ws);
         break;
-      }
 
-      case "get_diff_image": {
-        if (
-          !this.isPathAllowed(msg.projectPath) ||
-          !this.isPathAllowed(resolve(msg.projectPath, msg.filePath))
-        ) {
-          this.send(ws, {
-            type: "diff_image_result",
-            ...projectRequestMetadata(msg),
-            filePath: msg.filePath,
-            version: msg.version,
-            error: "Path not allowed",
-          });
-          break;
-        }
-        if (msg.version === "both") {
-          void (async () => {
-            try {
-              const [oldResult, newResult] = await Promise.all([
-                this.loadDiffImageAsync(msg.projectPath, msg.filePath, "old"),
-                this.loadDiffImageAsync(msg.projectPath, msg.filePath, "new"),
-              ]);
-              const errors = [oldResult.error, newResult.error].filter(Boolean);
-              this.send(ws, {
-                type: "diff_image_result",
-                ...projectRequestMetadata(msg),
-                filePath: msg.filePath,
-                version: "both" as const,
-                oldBase64: oldResult.base64,
-                newBase64: newResult.base64,
-                mimeType: oldResult.mimeType ?? newResult.mimeType,
-                ...(errors.length > 0 ? { error: errors.join("; ") } : {}),
-              });
-            } catch {
-              // WebSocket may have closed; ignore send errors.
-            }
-          })();
-        } else {
-          const version = msg.version as "old" | "new";
-          void (async () => {
-            try {
-              const result = await this.loadDiffImageAsync(
-                msg.projectPath,
-                msg.filePath,
-                version,
-              );
-              this.send(ws, {
-                type: "diff_image_result",
-                ...projectRequestMetadata(msg),
-                filePath: msg.filePath,
-                version,
-                ...result,
-              });
-            } catch {
-              // WebSocket may have closed; ignore send errors.
-            }
-          })();
-        }
+      case "get_diff_image":
+        await handleGetDiffImage(this, msg, ws);
         break;
-      }
 
-      case "list_worktrees": {
-        if (!this.isPathAllowed(msg.projectPath)) {
-          this.send(ws, {
-            type: "worktree_list",
-            ...projectRequestMetadata(msg),
-            worktrees: [],
-            error: this.buildPathNotAllowedError(msg.projectPath, msg.requestId).message,
-          });
-          break;
-        }
-        try {
-          const worktrees = listWorktrees(msg.projectPath);
-          const mainBranch = getMainBranch(msg.projectPath);
-          this.send(ws, {
-            type: "worktree_list",
-            ...projectRequestMetadata(msg),
-            worktrees,
-            mainBranch,
-          });
-        } catch (err) {
-          this.send(ws, {
-            type: "worktree_list",
-            ...projectRequestMetadata(msg),
-            worktrees: [],
-            error: `Failed to list worktrees: ${err}`,
-          });
-        }
+      case "list_worktrees":
+        await handleListWorktrees(this, msg, ws);
         break;
-      }
 
-      case "remove_worktree": {
-        if (!this.isPathAllowed(msg.projectPath)) {
-          this.send(ws, {
-            type: "worktree_removed",
-            ...projectRequestMetadata(msg),
-            worktreePath: msg.worktreePath,
-            error: this.buildPathNotAllowedError(msg.projectPath, msg.requestId).message,
-          });
-          break;
-        }
-        try {
-          removeWorktree(msg.projectPath, msg.worktreePath);
-          this.worktreeStore.deleteByWorktreePath(msg.worktreePath);
-          this.send(ws, {
-            type: "worktree_removed",
-            ...projectRequestMetadata(msg),
-            worktreePath: msg.worktreePath,
-          });
-        } catch (err) {
-          this.send(ws, {
-            type: "worktree_removed",
-            ...projectRequestMetadata(msg),
-            worktreePath: msg.worktreePath,
-            error: `Failed to remove worktree: ${err}`,
-          });
-        }
+      case "remove_worktree":
+        await handleRemoveWorktree(this, msg, ws);
         break;
-      }
 
       // ---- Git Operations (Phase 1-3) ----
 
-      case "git_stage": {
-        if (!this.isPathAllowed(msg.projectPath)) {
-          this.send(ws, {
-            type: "git_stage_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: this.buildPathNotAllowedError(msg.projectPath, msg.requestId).message,
-          });
-          break;
-        }
-        try {
-          if (msg.files?.length) stageFiles(msg.projectPath, msg.files);
-          if (msg.hunks?.length) stageHunks(msg.projectPath, msg.hunks);
-          this.send(ws, {
-            type: "git_stage_result",
-            ...projectRequestMetadata(msg),
-            success: true,
-          });
-        } catch (err) {
-          this.send(ws, {
-            type: "git_stage_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: String(err),
-          });
-        }
+      case "git_stage":
+        await handleGitStage(this, msg, ws);
         break;
-      }
 
-      case "git_unstage": {
-        if (!this.isPathAllowed(msg.projectPath)) {
-          this.send(ws, {
-            type: "git_unstage_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: this.buildPathNotAllowedError(msg.projectPath, msg.requestId).message,
-          });
-          break;
-        }
-        try {
-          unstageFiles(msg.projectPath, msg.files ?? []);
-          this.send(ws, {
-            type: "git_unstage_result",
-            ...projectRequestMetadata(msg),
-            success: true,
-          });
-        } catch (err) {
-          this.send(ws, {
-            type: "git_unstage_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: String(err),
-          });
-        }
+      case "git_unstage":
+        await handleGitUnstage(this, msg, ws);
         break;
-      }
 
-      case "git_unstage_hunks": {
-        if (!this.isPathAllowed(msg.projectPath)) {
-          this.send(ws, {
-            type: "git_unstage_hunks_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: this.buildPathNotAllowedError(msg.projectPath, msg.requestId).message,
-          });
-          break;
-        }
-        try {
-          unstageHunks(msg.projectPath, msg.hunks);
-          this.send(ws, {
-            type: "git_unstage_hunks_result",
-            ...projectRequestMetadata(msg),
-            success: true,
-          });
-        } catch (err) {
-          this.send(ws, {
-            type: "git_unstage_hunks_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: String(err),
-          });
-        }
+      case "git_unstage_hunks":
+        await handleGitUnstageHunks(this, msg, ws);
         break;
-      }
 
-      case "git_commit": {
-        if (!this.isPathAllowed(msg.projectPath)) {
-          this.send(ws, {
-            type: "git_commit_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: this.buildPathNotAllowedError(msg.projectPath, msg.requestId).message,
-          });
-          break;
-        }
-        const session = msg.sessionId
-          ? this.sessionManager.get(msg.sessionId)
-          : undefined;
-        try {
-          const message =
-            msg.autoGenerate === true
-              ? (() => {
-                  if (!msg.sessionId) {
-                    throw new Error(
-                      "git_commit with autoGenerate=true requires sessionId",
-                    );
-                  }
-                  if (!session) {
-                    throw new Error(`Session ${msg.sessionId} not found`);
-                  }
-                  const expectedPath = resolve(
-                    session.worktreePath ?? session.projectPath,
-                  );
-                  const requestedPath = resolve(msg.projectPath);
-                  if (requestedPath !== expectedPath) {
-                    throw new Error(
-                      "git_commit projectPath must match the active session cwd",
-                    );
-                  }
-                  return generateCommitMessage({
-                    provider: session.provider,
-                    projectPath: msg.projectPath,
-                    model:
-                      session.provider === "claude"
-                        ? session.process instanceof SdkProcess
-                          ? session.process.model
-                          : undefined
-                        : session.codexSettings?.model,
-                  });
-                })()
-              : msg.message ?? "";
-          const result = gitCommit(msg.projectPath, message);
-          this.send(ws, {
-            type: "git_commit_result",
-            ...projectRequestMetadata(msg),
-            success: true,
-            commitHash: result.hash,
-            message: result.message,
-          });
-        } catch (err) {
-          this.send(ws, {
-            type: "git_commit_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
+      case "git_commit":
+        await handleGitCommit(this, msg, ws);
         break;
-      }
 
-      case "git_push": {
-        if (!this.isPathAllowed(msg.projectPath)) {
-          this.send(ws, {
-            type: "git_push_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: this.buildPathNotAllowedError(msg.projectPath, msg.requestId).message,
-          });
-          break;
-        }
-        try {
-          gitPush(msg.projectPath);
-          this.send(ws, {
-            type: "git_push_result",
-            ...projectRequestMetadata(msg),
-            success: true,
-          });
-        } catch (err) {
-          this.send(ws, {
-            type: "git_push_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: String(err),
-          });
-        }
+      case "git_push":
+        await handleGitPush(this, msg, ws);
         break;
-      }
 
-      case "git_branches": {
-        if (!this.isPathAllowed(msg.projectPath)) {
-          this.send(ws, {
-            type: "git_branches_result",
-            ...projectRequestMetadata(msg),
-            current: "",
-            branches: [],
-            checkedOutBranches: [],
-            remoteStatusByBranch: {},
-            error: this.buildPathNotAllowedError(msg.projectPath, msg.requestId).message,
-          });
-          break;
-        }
-        try {
-          const result = listBranches(msg.projectPath);
-          this.send(ws, {
-            type: "git_branches_result",
-            ...projectRequestMetadata(msg),
-            current: result.current,
-            branches: result.branches,
-            checkedOutBranches: result.checkedOutBranches,
-            remoteStatusByBranch: result.remoteStatusByBranch,
-          });
-        } catch (err) {
-          this.send(ws, {
-            type: "git_branches_result",
-            ...projectRequestMetadata(msg),
-            current: "",
-            branches: [],
-            remoteStatusByBranch: {},
-            error: String(err),
-          });
-        }
+      case "git_branches":
+        await handleGitBranches(this, msg, ws);
         break;
-      }
 
-      case "git_create_branch": {
-        if (!this.isPathAllowed(msg.projectPath)) {
-          this.send(ws, {
-            type: "git_create_branch_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: this.buildPathNotAllowedError(msg.projectPath, msg.requestId).message,
-          });
-          break;
-        }
-        try {
-          createBranch(msg.projectPath, msg.name, msg.checkout);
-          this.send(ws, {
-            type: "git_create_branch_result",
-            ...projectRequestMetadata(msg),
-            success: true,
-          });
-        } catch (err) {
-          this.send(ws, {
-            type: "git_create_branch_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: String(err),
-          });
-        }
+      case "git_create_branch":
+        await handleGitCreateBranch(this, msg, ws);
         break;
-      }
 
-      case "git_checkout_branch": {
-        if (!this.isPathAllowed(msg.projectPath)) {
-          this.send(ws, {
-            type: "git_checkout_branch_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: this.buildPathNotAllowedError(msg.projectPath, msg.requestId).message,
-          });
-          break;
-        }
-        try {
-          checkoutBranch(msg.projectPath, msg.branch);
-          this.send(ws, {
-            type: "git_checkout_branch_result",
-            ...projectRequestMetadata(msg),
-            success: true,
-          });
-        } catch (err) {
-          this.send(ws, {
-            type: "git_checkout_branch_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: String(err),
-          });
-        }
+      case "git_checkout_branch":
+        await handleGitCheckoutBranch(this, msg, ws);
         break;
-      }
 
-      case "git_revert_file": {
-        if (!this.isPathAllowed(msg.projectPath)) {
-          this.send(ws, {
-            type: "git_revert_file_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: this.buildPathNotAllowedError(msg.projectPath, msg.requestId).message,
-          });
-          break;
-        }
-        try {
-          revertFiles(msg.projectPath, msg.files);
-          this.send(ws, {
-            type: "git_revert_file_result",
-            ...projectRequestMetadata(msg),
-            success: true,
-          });
-        } catch (err) {
-          this.send(ws, {
-            type: "git_revert_file_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: String(err),
-          });
-        }
+      case "git_revert_file":
+        await handleGitRevertFile(this, msg, ws);
         break;
-      }
 
-      case "git_revert_hunks": {
-        if (!this.isPathAllowed(msg.projectPath)) {
-          this.send(ws, {
-            type: "git_revert_hunks_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: this.buildPathNotAllowedError(msg.projectPath, msg.requestId).message,
-          });
-          break;
-        }
-        try {
-          revertHunks(msg.projectPath, msg.hunks);
-          this.send(ws, {
-            type: "git_revert_hunks_result",
-            ...projectRequestMetadata(msg),
-            success: true,
-          });
-        } catch (err) {
-          this.send(ws, {
-            type: "git_revert_hunks_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: String(err),
-          });
-        }
+      case "git_revert_hunks":
+        await handleGitRevertHunks(this, msg, ws);
         break;
-      }
 
-      case "git_fetch": {
-        if (!this.isPathAllowed(msg.projectPath)) {
-          this.send(ws, {
-            type: "git_fetch_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: this.buildPathNotAllowedError(msg.projectPath, msg.requestId).message,
-          });
-          break;
-        }
-        try {
-          gitFetch(msg.projectPath);
-          this.send(ws, {
-            type: "git_fetch_result",
-            ...projectRequestMetadata(msg),
-            success: true,
-          });
-        } catch (err) {
-          this.send(ws, {
-            type: "git_fetch_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: String(err),
-          });
-        }
+      case "git_fetch":
+        await handleGitFetch(this, msg, ws);
         break;
-      }
 
-      case "git_pull": {
-        if (!this.isPathAllowed(msg.projectPath)) {
-          this.send(ws, {
-            type: "git_pull_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: this.buildPathNotAllowedError(msg.projectPath, msg.requestId).message,
-          });
-          break;
-        }
-        try {
-          const result = gitPull(msg.projectPath);
-          if (result.success) {
-            this.send(ws, {
-              type: "git_pull_result",
-              ...projectRequestMetadata(msg),
-              success: true,
-              message: result.message,
-            });
-          } else {
-            this.send(ws, {
-              type: "git_pull_result",
-              ...projectRequestMetadata(msg),
-              success: false,
-              error: result.message,
-            });
-          }
-        } catch (err) {
-          this.send(ws, {
-            type: "git_pull_result",
-            ...projectRequestMetadata(msg),
-            success: false,
-            error: String(err),
-          });
-        }
+      case "git_pull":
+        await handleGitPull(this, msg, ws);
         break;
-      }
 
-      case "git_status": {
-        if (!this.isPathAllowed(msg.projectPath)) {
-          this.send(ws, {
-            type: "git_status_result",
-            requestId: msg.requestId,
-            sessionId: msg.sessionId,
-            projectPath: msg.projectPath,
-            hasUncommittedChanges: false,
-            stagedCount: 0,
-            unstagedCount: 0,
-            untrackedCount: 0,
-            remoteStatusIncluded: false,
-            hasRemoteChanges: false,
-            commitsAhead: 0,
-            commitsBehind: 0,
-            hasUpstream: false,
-            error: `Path not allowed: ${msg.projectPath}`,
-          });
-          break;
-        }
-        try {
-          const result = gitStatus(msg.projectPath, {
-            includeRemote: msg.includeRemote,
-          });
-          this.send(ws, {
-            type: "git_status_result",
-            requestId: msg.requestId,
-            sessionId: msg.sessionId,
-            projectPath: msg.projectPath,
-            hasUncommittedChanges: result.hasUncommittedChanges,
-            stagedCount: result.stagedCount,
-            unstagedCount: result.unstagedCount,
-            untrackedCount: result.untrackedCount,
-            remoteStatusIncluded: result.remoteStatusIncluded,
-            hasRemoteChanges: result.hasRemoteChanges,
-            commitsAhead: result.commitsAhead,
-            commitsBehind: result.commitsBehind,
-            hasUpstream: result.hasUpstream,
-            branch: result.branch,
-            remoteError: result.remoteError,
-          });
-        } catch (err) {
-          this.send(ws, {
-            type: "git_status_result",
-            requestId: msg.requestId,
-            sessionId: msg.sessionId,
-            projectPath: msg.projectPath,
-            hasUncommittedChanges: false,
-            stagedCount: 0,
-            unstagedCount: 0,
-            untrackedCount: 0,
-            remoteStatusIncluded: false,
-            hasRemoteChanges: false,
-            commitsAhead: 0,
-            commitsBehind: 0,
-            hasUpstream: false,
-            error: String(err),
-          });
-        }
+      case "git_status":
+        await handleGitStatus(this, msg, ws);
         break;
-      }
 
-      case "git_remote_status": {
-        if (!this.isPathAllowed(msg.projectPath)) {
-          this.send(ws, {
-            type: "git_remote_status_result",
-            ...projectRequestMetadata(msg),
-            ahead: 0,
-            behind: 0,
-            branch: "",
-            hasUpstream: false,
-            error: this.buildPathNotAllowedError(msg.projectPath, msg.requestId).message,
-          });
-          break;
-        }
-        try {
-          const result = gitRemoteStatus(msg.projectPath);
-          this.send(ws, {
-            type: "git_remote_status_result",
-            ...projectRequestMetadata(msg),
-            ahead: result.ahead,
-            behind: result.behind,
-            branch: result.branch,
-            hasUpstream: result.hasUpstream,
-          });
-        } catch (err) {
-          this.send(ws, {
-            type: "git_remote_status_result",
-            ...projectRequestMetadata(msg),
-            ahead: 0,
-            behind: 0,
-            branch: "",
-            hasUpstream: false,
-          });
-        }
+      case "git_remote_status":
+        await handleGitRemoteStatus(this, msg, ws);
         break;
-      }
 
       case "github_list":
-      case "github_item": {
-        // The gh CLI runs asynchronously; every outcome answers with the
-        // operation-specific result so the client's pending request clears.
-        const request = msg;
-        const correlation =
-          request.type === "github_list"
-            ? {
-                type: "github_list_result" as const,
-                requestId: request.requestId,
-                projectPath: request.projectPath,
-                kind: request.kind,
-              }
-            : {
-                type: "github_item_result" as const,
-                requestId: request.requestId,
-                projectPath: request.projectPath,
-                kind: request.kind,
-                number: request.number,
-              };
-        if (!this.isPathAllowed(request.projectPath)) {
-          this.send(ws, {
-            ...correlation,
-            error: {
-              code: "failed",
-              message: this.buildPathNotAllowedError(
-                request.projectPath,
-                request.requestId,
-              ).message,
-            },
-          });
-          break;
-        }
-        void (async () => {
-          try {
-            if (request.type === "github_list") {
-              const result = await listGitHubItems(
-                request.projectPath,
-                request.kind,
-              );
-              this.send(ws, {
-                ...correlation,
-                repository: result.repository,
-                items: result.items,
-              });
-            } else {
-              const result = await getGitHubItem(
-                request.projectPath,
-                request.kind,
-                request.number,
-              );
-              this.send(ws, { ...correlation, item: result.item });
-            }
-          } catch (err) {
-            this.send(ws, { ...correlation, error: toGitHubError(err) });
-          }
-        })();
+      case "github_item":
+        await handleGithubList(this, msg, ws);
         break;
-      }
 
-      case "rewind_dry_run": {
-        const session = this.sessionManager.get(msg.sessionId);
-        if (!session) {
-          this.send(ws, {
-            type: "rewind_preview",
-            sessionId: msg.sessionId,
-            canRewind: false,
-            error: `Session ${msg.sessionId} not found`,
-          });
-          return;
-        }
-        if (session.provider === "codex") {
-          this.send(ws, {
-            type: "rewind_preview",
-            sessionId: msg.sessionId,
-            canRewind: false,
-            error: "Codex rewind does not restore files",
-          });
-          return;
-        }
-        this.sessionManager
-          .rewindFiles(msg.sessionId, msg.targetUuid, true)
-          .then((result) => {
-            this.send(ws, {
-              type: "rewind_preview",
-              sessionId: msg.sessionId,
-              canRewind: result.canRewind,
-              filesChanged: result.filesChanged,
-              insertions: result.insertions,
-              deletions: result.deletions,
-              error: result.error,
-            });
-          })
-          .catch((err) => {
-            this.send(ws, {
-              type: "rewind_preview",
-              sessionId: msg.sessionId,
-              canRewind: false,
-              error: `Dry run failed: ${err}`,
-            });
-          });
+      case "rewind_dry_run":
+        await handleRewindDryRun(this, msg, ws);
         break;
-      }
 
-      case "rewind": {
-        const session = this.sessionManager.get(msg.sessionId);
-        if (!session) {
-          this.send(ws, {
-            type: "rewind_result",
-            sessionId: msg.sessionId,
-            success: false,
-            mode: msg.mode,
-            error: `Session ${msg.sessionId} not found`,
-          });
-          return;
-        }
-
-        const handleError = (err: unknown) => {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          this.send(ws, {
-            type: "rewind_result",
-            sessionId: msg.sessionId,
-            success: false,
-            mode: msg.mode,
-            error: errMsg,
-          });
-        };
-
-        if (session.provider === "codex") {
-          this.rewindCodexConversation(ws, msg.sessionId, msg.targetUuid, msg.mode)
-            .catch(handleError);
-          break;
-        }
-
-        if (msg.mode === "code") {
-          // Code-only rewind: rewind files without restarting the conversation
-          this.sessionManager
-            .rewindFiles(msg.sessionId, msg.targetUuid)
-            .then((result) => {
-              if (result.canRewind) {
-                this.send(ws, {
-                  type: "rewind_result",
-                  sessionId: msg.sessionId,
-                  success: true,
-                  mode: "code",
-                });
-              } else {
-                this.send(ws, {
-                  type: "rewind_result",
-                  sessionId: msg.sessionId,
-                  success: false,
-                  mode: "code",
-                  error: result.error ?? "Cannot rewind files",
-                });
-              }
-            })
-            .catch(handleError);
-        } else if (msg.mode === "conversation") {
-          // Conversation-only rewind: restart session at the target UUID
-          try {
-            this.flushSessionDeltaBatches(msg.sessionId);
-            this.sessionManager.rewindConversation(
-              msg.sessionId,
-              msg.targetUuid,
-              (newSessionId) => {
-                this.send(ws, {
-                  type: "rewind_result",
-                  sessionId: msg.sessionId,
-                  success: true,
-                  mode: "conversation",
-                });
-                // Notify the new session ID
-                const newSession = this.sessionManager.get(newSessionId);
-                const rewindPermMode =
-                  newSession?.process instanceof SdkProcess
-                    ? newSession.process.permissionMode
-                    : undefined;
-                this.send(
-                  ws,
-                  this.buildSessionCreatedMessage({
-                    sessionId: newSessionId,
-                    provider: newSession?.provider ?? "claude",
-                    projectPath: newSession?.projectPath ?? "",
-                    session: newSession,
-                    permissionMode: rewindPermMode,
-                    sourceSessionId: msg.sessionId,
-                  }),
-                );
-                this.sendSessionList(ws);
-              },
-            );
-          } catch (err) {
-            handleError(err);
-          }
-        } else {
-          // Both: rewind files first, then rewind conversation
-          this.sessionManager
-            .rewindFiles(msg.sessionId, msg.targetUuid)
-            .then((result) => {
-              if (!result.canRewind) {
-                this.send(ws, {
-                  type: "rewind_result",
-                  sessionId: msg.sessionId,
-                  success: false,
-                  mode: "both",
-                  error: result.error ?? "Cannot rewind files",
-                });
-                return;
-              }
-              try {
-                this.flushSessionDeltaBatches(msg.sessionId);
-                this.sessionManager.rewindConversation(
-                  msg.sessionId,
-                  msg.targetUuid,
-                  (newSessionId) => {
-                    this.send(ws, {
-                      type: "rewind_result",
-                      sessionId: msg.sessionId,
-                      success: true,
-                      mode: "both",
-                    });
-                    const newSession = this.sessionManager.get(newSessionId);
-                    const rewindPermMode2 =
-                      newSession?.process instanceof SdkProcess
-                        ? newSession.process.permissionMode
-                        : undefined;
-                    this.send(
-                      ws,
-                      this.buildSessionCreatedMessage({
-                        sessionId: newSessionId,
-                        provider: newSession?.provider ?? "claude",
-                        projectPath: newSession?.projectPath ?? "",
-                        session: newSession,
-                        permissionMode: rewindPermMode2,
-                        sourceSessionId: msg.sessionId,
-                      }),
-                    );
-                    this.sendSessionList(ws);
-                  },
-                );
-              } catch (err) {
-                handleError(err);
-              }
-            })
-            .catch(handleError);
-        }
+      case "rewind":
+        await handleRewind(this, msg, ws);
         break;
-      }
 
-      case "fork": {
-        const forkSource = this.sessionManager.get(msg.sessionId);
-        const fork =
-          forkSource?.provider === "claude"
-            ? this.forkClaudeSession(ws, msg.sessionId, msg.targetUuid)
-            : this.forkCodexSession(ws, msg.sessionId, msg.targetUuid);
-        fork.catch((err) => {
-          const errMsg = err instanceof Error ? err.message : String(err);
-          this.send(ws, {
-            type: "error",
-            sessionId: msg.sessionId,
-            message: errMsg,
-            errorCode: "fork_failed",
-          });
-        });
+      case "fork":
+        await handleFork(this, msg, ws);
         break;
-      }
 
-      case "list_windows": {
-        listWindows()
-          .then((windows) => {
-            this.send(ws, { type: "window_list", windows });
-          })
-          .catch((err) => {
-            this.send(ws, {
-              type: "error",
-              message: `Failed to list windows: ${err instanceof Error ? err.message : String(err)}`,
-            });
-          });
+      case "handoff_session":
+        await handleHandoffSession(this, msg, ws);
         break;
-      }
 
-      case "take_screenshot": {
-        // For window mode, verify the window ID is still valid.
-        // The user may have fetched the window list minutes ago and the
-        // window could have been closed since then.
-        const doCapture = async (): Promise<{
-          mode: "fullscreen" | "window";
-          windowId?: number;
-        }> => {
-          if (msg.mode !== "window" || msg.windowId == null) {
-            return { mode: msg.mode };
-          }
-          const current = await listWindows();
-          if (current.some((w) => w.windowId === msg.windowId)) {
-            return { mode: "window", windowId: msg.windowId };
-          }
-          // Window ID is stale — fall back to fullscreen and notify
-          console.warn(
-            `[screenshot] Window ID ${msg.windowId} no longer exists, falling back to fullscreen`,
-          );
-          return { mode: "fullscreen" };
-        };
-        doCapture()
-          .then((opts) => takeScreenshot(opts))
-          .then(async (result) => {
-            try {
-              if (this.galleryStore) {
-                const meta = await this.galleryStore.addImage(
-                  result.filePath,
-                  msg.projectPath,
-                  msg.sessionId,
-                );
-                if (meta) {
-                  const info = this.galleryStore.metaToInfo(meta);
-                  this.send(ws, {
-                    type: "screenshot_result",
-                    ...projectRequestMetadata(msg),
-                    sessionId: msg.sessionId,
-                    success: true,
-                    image: info,
-                  });
-                  this.broadcast({ type: "gallery_new_image", image: info });
-                  return;
-                }
-              }
-              this.send(ws, {
-                type: "screenshot_result",
-                ...projectRequestMetadata(msg),
-                sessionId: msg.sessionId,
-                success: false,
-                error: "Failed to save screenshot to gallery",
-              });
-            } finally {
-              // Always clean up temp file
-              unlink(result.filePath).catch(() => {});
-            }
-          })
-          .catch((err) => {
-            this.send(ws, {
-              type: "screenshot_result",
-              ...projectRequestMetadata(msg),
-              sessionId: msg.sessionId,
-              success: false,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          });
+      case "list_windows":
+        await handleListWindows(this, msg, ws);
         break;
-      }
 
-      case "backup_prompt_history": {
-        if (!this.promptHistoryBackup) {
-          this.send(ws, {
-            type: "prompt_history_backup_result",
-            success: false,
-            error: "Backup store not available",
-          });
-          break;
-        }
-        const buf = Buffer.from(msg.data, "base64");
-        this.promptHistoryBackup
-          .save(buf, msg.appVersion, msg.dbVersion)
-          .then((meta) => {
-            this.send(ws, {
-              type: "prompt_history_backup_result",
-              success: true,
-              backedUpAt: meta.backedUpAt,
-            });
-          })
-          .catch((err) => {
-            this.send(ws, {
-              type: "prompt_history_backup_result",
-              success: false,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          });
+      case "take_screenshot":
+        await handleTakeScreenshot(this, msg, ws);
         break;
-      }
 
-      case "restore_prompt_history": {
-        if (!this.promptHistoryBackup) {
-          this.send(ws, {
-            type: "prompt_history_restore_result",
-            success: false,
-            error: "Backup store not available",
-          });
-          break;
-        }
-        this.promptHistoryBackup
-          .load()
-          .then((result) => {
-            if (result) {
-              this.send(ws, {
-                type: "prompt_history_restore_result",
-                success: true,
-                data: result.data.toString("base64"),
-                appVersion: result.meta.appVersion,
-                dbVersion: result.meta.dbVersion,
-                backedUpAt: result.meta.backedUpAt,
-              });
-            } else {
-              this.send(ws, {
-                type: "prompt_history_restore_result",
-                success: false,
-                error: "No backup found",
-              });
-            }
-          })
-          .catch((err) => {
-            this.send(ws, {
-              type: "prompt_history_restore_result",
-              success: false,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          });
+      case "backup_prompt_history":
+        await handleBackupPromptHistory(this, msg, ws);
         break;
-      }
 
-      case "get_prompt_history_backup_info": {
-        if (!this.promptHistoryBackup) {
-          this.send(ws, { type: "prompt_history_backup_info", exists: false });
-          break;
-        }
-        this.promptHistoryBackup
-          .getMeta()
-          .then((meta) => {
-            if (meta) {
-              this.send(ws, {
-                type: "prompt_history_backup_info",
-                exists: true,
-                ...meta,
-              });
-            } else {
-              this.send(ws, {
-                type: "prompt_history_backup_info",
-                exists: false,
-              });
-            }
-          })
-          .catch(() => {
-            this.send(ws, {
-              type: "prompt_history_backup_info",
-              exists: false,
-            });
-          });
+      case "restore_prompt_history":
+        await handleRestorePromptHistory(this, msg, ws);
         break;
-      }
 
-      case "record_prompt_history": {
-        if (!this.promptHistoryStore) {
-          this.send(ws, {
-            type: "prompt_history_mutation_result",
-            success: false,
-            error: "Prompt history store not available",
-          });
-          break;
-        }
-        try {
-          const runtimeSession = msg.sessionId
-            ? this.resolveSession(msg.sessionId)
-            : undefined;
-          const workspace = runtimeSession
-            ? this.workspaceForRuntimeSession(runtimeSession)
-            : undefined;
-          const entry = await this.promptHistoryStore.record({
-            text: msg.text,
-            projectPath: msg.projectPath,
-            projectId: workspace?.projectId ?? msg.projectId,
-            projectName: workspace?.projectName ?? msg.projectName,
-            clientId: msg.clientId,
-            clientName: msg.clientName,
-            sessionId: msg.sessionId,
-            usedAt: msg.usedAt,
-          });
-          this.send(ws, {
-            type: "prompt_history_mutation_result",
-            success: true,
-            bridgeInstanceId: this.promptHistoryStore.bridgeInstanceId,
-            revision: this.promptHistoryStore.revision,
-            entry,
-          });
-          this.broadcastPromptHistoryStatus();
-        } catch (err) {
-          this.send(ws, {
-            type: "prompt_history_mutation_result",
-            success: false,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
+      case "get_prompt_history_backup_info":
+        await handleGetPromptHistoryBackupInfo(this, msg, ws);
         break;
-      }
 
-      case "sync_prompt_history": {
-        if (!this.promptHistoryStore) {
-          this.send(ws, {
-            type: "prompt_history_sync_result",
-            success: false,
-            error: "Prompt history store not available",
-          });
-          break;
-        }
-        try {
-          if (msg.entries?.length) {
-            await this.promptHistoryStore.mergeClientEntries(msg.entries);
-          }
-          this.send(ws, {
-            type: "prompt_history_sync_result",
-            success: true,
-            bridgeInstanceId: this.promptHistoryStore.bridgeInstanceId,
-            revision: this.promptHistoryStore.revision,
-            syncedAt: new Date().toISOString(),
-            fullSnapshot: true,
-            entries: this.promptHistoryStore.list(msg.includeDeleted ?? true),
-          });
-          this.broadcastPromptHistoryStatus();
-        } catch (err) {
-          this.send(ws, {
-            type: "prompt_history_sync_result",
-            success: false,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
+      case "record_prompt_history":
+        await handleRecordPromptHistory(this, msg, ws);
         break;
-      }
 
-      case "mutate_prompt_history": {
-        if (!this.promptHistoryStore) {
-          this.send(ws, {
-            type: "prompt_history_mutation_result",
-            success: false,
-            error: "Prompt history store not available",
-          });
-          break;
-        }
-        try {
-          const entry = await this.promptHistoryStore.mutate({
-            id: msg.id,
-            text: msg.text,
-            projectPath: msg.projectPath,
-            projectId: msg.projectId,
-            action: msg.action,
-            isFavorite: msg.isFavorite,
-            updatedAt: msg.updatedAt,
-          });
-          this.send(ws, {
-            type: "prompt_history_mutation_result",
-            success: entry != null,
-            bridgeInstanceId: this.promptHistoryStore.bridgeInstanceId,
-            revision: this.promptHistoryStore.revision,
-            entry: entry ?? undefined,
-            error: entry == null ? "Prompt not found" : undefined,
-          });
-          if (entry) this.broadcastPromptHistoryStatus();
-        } catch (err) {
-          this.send(ws, {
-            type: "prompt_history_mutation_result",
-            success: false,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
+      case "sync_prompt_history":
+        await handleSyncPromptHistory(this, msg, ws);
         break;
-      }
 
-      case "import_prompt_history_v1": {
-        if (!this.promptHistoryStore) {
-          this.send(ws, {
-            type: "prompt_history_sync_result",
-            success: false,
-            error: "Prompt history store not available",
-          });
-          break;
-        }
-        try {
-          const result = await this.promptHistoryStore.importEntries(
-            msg.entries,
-            msg.clientId,
-            msg.clientName,
-          );
-          this.send(ws, {
-            type: "prompt_history_sync_result",
-            success: true,
-            bridgeInstanceId: this.promptHistoryStore.bridgeInstanceId,
-            revision: this.promptHistoryStore.revision,
-            syncedAt: new Date().toISOString(),
-            fullSnapshot: true,
-            entries: result.entries,
-          });
-          this.broadcastPromptHistoryStatus();
-        } catch (err) {
-          this.send(ws, {
-            type: "prompt_history_sync_result",
-            success: false,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
+      case "mutate_prompt_history":
+        await handleMutatePromptHistory(this, msg, ws);
         break;
-      }
 
-      case "rename_session": {
-        const name = (msg.name as string | null) || null;
-        await this.handleRenameSession(ws, msg.sessionId, name, msg);
+      case "import_prompt_history_v1":
+        await handleImportPromptHistoryV1(this, msg, ws);
         break;
-      }
+
+      case "rename_session":
+        await handleRenameSession(this, msg, ws);
+        break;
     }
   }
 
@@ -9133,7 +1826,7 @@ export class BridgeWebSocketServer {
     }
   }
 
-  private beginResumeOperation(params: {
+  beginResumeOperation(params: {
     ws: WebSocket;
     provider: Provider;
     sourceSessionId: string;
@@ -9231,7 +1924,7 @@ export class BridgeWebSocketServer {
     return { key, operationId, isOwner: true };
   }
 
-  private completeResumeOperation(
+  completeResumeOperation(
     key: string,
     operationId: string,
     sessionId: string,
@@ -9264,7 +1957,7 @@ export class BridgeWebSocketServer {
     return true;
   }
 
-  private failResumeOperation(
+  failResumeOperation(
     key: string,
     operationId: string,
     message: string,
@@ -9295,7 +1988,7 @@ export class BridgeWebSocketServer {
     }
   }
 
-  private attachProvisionalResumeSession(
+  attachProvisionalResumeSession(
     key: string,
     operationId: string,
     sessionId: string,
@@ -9308,7 +2001,7 @@ export class BridgeWebSocketServer {
     return true;
   }
 
-  private sendResumeFailed(
+  sendResumeFailed(
     ws: WebSocket,
     resume: {
       provider: Provider;
@@ -9378,73 +2071,12 @@ export class BridgeWebSocketServer {
   }
 
   /**
-   * Load the saved session name from CLI storage and set it on the SessionInfo.
-   * Called after SessionManager.create() so that session_created carries the name.
-   */
-  /**
-   * Rewrite skills in a new session's first prompt to the agent's trigger
-   * (`/` for Claude, `$` for Codex). The app converts later messages itself,
-   * but it cannot know the skills before the session starts. When the prompt
-   * contains a candidate and the skills are not cached yet, wait briefly for
-   * the provider to report them; on timeout the prompt is sent unchanged.
-   */
-  private async prepareInitialPrompt(
-    provider: "claude" | "codex",
-    effectiveCwd: string,
-    sessionId: string,
-    text: string,
-  ): Promise<{ text: string; skills: Array<{ name: string; path: string }> }> {
-    if (!hasForeignSkillTrigger(text, provider)) return { text, skills: [] };
-    const deadline = Date.now() + INITIAL_PROMPT_SKILL_WAIT_MS;
-    let catalog = catalogFromCachedCommands(
-      provider,
-      this.sessionManager.getCachedCommands(provider, effectiveCwd),
-    );
-    while (
-      !catalog &&
-      Date.now() < deadline &&
-      this.sessionManager.get(sessionId)
-    ) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, INITIAL_PROMPT_SKILL_POLL_MS),
-      );
-      catalog = catalogFromCachedCommands(
-        provider,
-        this.sessionManager.getCachedCommands(provider, effectiveCwd),
-      );
-    }
-    if (!catalog) return { text, skills: [] };
-    return convertSkillTriggers(text, catalog);
-  }
-
-  private async loadAndSetSessionName(
-    session: SessionInfo | undefined,
-    provider: string,
-    projectPath: string,
-    cliSessionId?: string,
-  ): Promise<void> {
-    if (!session || !cliSessionId) return;
-    try {
-      if (provider === "claude") {
-        const name = await getClaudeSessionName(projectPath, cliSessionId);
-        if (name) session.name = name;
-      } else if (provider === "codex") {
-        const names = await loadCodexSessionNames();
-        const name = names.get(cliSessionId);
-        if (name) session.name = name;
-      }
-    } catch {
-      // Non-critical: session works without name
-    }
-  }
-
-  /**
    * Handle rename_session: update in-memory name and persist to CLI storage.
    *
    * Supports both running sessions (by bridge session id) and recent sessions
    * (by provider session id, i.e. claudeSessionId or codex threadId).
    */
-  private async handleRenameSession(
+  async handleRenameSession(
     ws: WebSocket,
     sessionId: string,
     name: string | null,
@@ -9476,6 +2108,13 @@ export class BridgeWebSocketServer {
         } catch (err) {
           console.warn(`[websocket] Failed to rename Codex thread:`, err);
         }
+      } else if (
+        runningSession.provider === "antigravity" &&
+        runningSession.claudeSessionId
+      ) {
+        // `agy` cannot rename a conversation, so the Bridge keeps the name.
+        await this.antigravityStore.setName(runningSession.claudeSessionId, name);
+        this.antigravitySessionsCache = undefined;
       }
 
       this.broadcastSessionList();
@@ -9506,25 +2145,25 @@ export class BridgeWebSocketServer {
       return;
     }
 
+    if (provider === "antigravity" && providerSessionId) {
+      await this.antigravityStore.setName(providerSessionId, name);
+      this.send(ws, { type: "rename_result", sessionId, name, success: true });
+      return;
+    }
+
     this.send(ws, { type: "rename_result", sessionId, name, success: false });
   }
 
-  private resolveSession(
+  resolveSession(
     sessionId: string | undefined,
   ): SessionInfo | undefined {
     if (sessionId) return this.sessionManager.get(sessionId);
-    return this.getFirstSession();
+    return getFirstSession(this);
   }
 
-  private getFirstSession() {
-    const sessions = this.sessionManager.list();
-    if (sessions.length === 0) return undefined;
-    return this.sessionManager.get(sessions[sessions.length - 1].id);
-  }
-
-  private sendSessionList(ws: WebSocket): void {
-    this.pruneDebugEvents();
-    const sessions = this.runtimeSessionsWithWorkspaces();
+  sendSessionList(ws: WebSocket): void {
+    pruneDebugEvents(this);
+    const sessions = runtimeSessionsWithWorkspaces(this);
     this.send(ws, {
       type: "session_list",
       sessions,
@@ -9543,31 +2182,14 @@ export class BridgeWebSocketServer {
       bridgeInstanceId: this.promptHistoryStore?.bridgeInstanceId,
       protocolVersion: BRIDGE_PROTOCOL_MAX_VERSION,
       minimumProtocolVersion: BRIDGE_PROTOCOL_MIN_VERSION,
-      protocolCapabilities: BRIDGE_PROTOCOL_CAPABILITIES,
-    });
-  }
-
-  private sendPromptHistoryStatus(ws: WebSocket): void {
-    if (!this.promptHistoryStore) return;
-    const entries = this.promptHistoryStore.list(true);
-    const updatedAt = entries.reduce<string | undefined>(
-      (latest, entry) =>
-        !latest || entry.updatedAt > latest ? entry.updatedAt : latest,
-      undefined,
-    );
-    this.send(ws, {
-      type: "prompt_history_status",
-      bridgeInstanceId: this.promptHistoryStore.bridgeInstanceId,
-      revision: this.promptHistoryStore.revision,
-      entryCount: entries.filter((entry) => !entry.deletedAt).length,
-      updatedAt,
+      protocolCapabilities: this.protocolCapabilities(),
     });
   }
 
   /** Broadcast session list to all connected clients. */
-  private broadcastSessionList(): void {
-    this.pruneDebugEvents();
-    const sessions = this.runtimeSessionsWithWorkspaces();
+  broadcastSessionList(): void {
+    pruneDebugEvents(this);
+    const sessions = runtimeSessionsWithWorkspaces(this);
     this.broadcast({
       type: "session_list",
       sessions,
@@ -9586,60 +2208,57 @@ export class BridgeWebSocketServer {
       bridgeInstanceId: this.promptHistoryStore?.bridgeInstanceId,
       protocolVersion: BRIDGE_PROTOCOL_MAX_VERSION,
       minimumProtocolVersion: BRIDGE_PROTOCOL_MIN_VERSION,
-      protocolCapabilities: BRIDGE_PROTOCOL_CAPABILITIES,
+      protocolCapabilities: this.protocolCapabilities(),
     });
   }
 
-  private runtimeSessionsWithWorkspaces(): Array<
-    SessionSummary & { workspace?: ResolvedWorkspace }
-  > {
-    return this.sessionManager
-      .list()
-      .map((summary) => this.runtimeSessionWithWorkspace(summary));
-  }
-
-  private runtimeSessionWithWorkspace(
-    summary: SessionSummary,
-  ): SessionSummary & { workspace?: ResolvedWorkspace } {
-    const session = this.sessionManager.get(summary.id);
-    const workspace = session
-      ? this.workspaceForRuntimeSession(session)
-      : undefined;
-    return workspace ? { ...summary, workspace } : summary;
-  }
-
-  private broadcastPromptHistoryStatus(): void {
-    if (!this.promptHistoryStore) return;
-    const entries = this.promptHistoryStore.list(true);
-    const updatedAt = entries.reduce<string | undefined>(
-      (latest, entry) =>
-        !latest || entry.updatedAt > latest ? entry.updatedAt : latest,
-      undefined,
-    );
-    this.broadcast({
-      type: "prompt_history_status",
-      bridgeInstanceId: this.promptHistoryStore.bridgeInstanceId,
-      revision: this.promptHistoryStore.revision,
-      entryCount: entries.filter((entry) => !entry.deletedAt).length,
-      updatedAt,
-    });
-  }
-
-  private broadcastSessionMessage(
+  broadcastSessionMessage(
     sessionId: string,
     msg: ServerMessage,
     exclude?: WebSocket,
   ): void {
+    if (
+      msg.type === "system" &&
+      (msg.provider === "antigravity" || msg.antigravity !== undefined)
+    ) {
+      const session = this.sessionManager.get(sessionId);
+      const agyProcess =
+        session?.process instanceof AntigravityProcess
+          ? session.process
+          : undefined;
+      if (session?.claudeSessionId) {
+        const model = msg.antigravity?.model ?? msg.model;
+        if (model) {
+          void this.antigravityStore.setModel(
+            session.claudeSessionId,
+            model,
+          );
+        }
+        const permissionMode = msg.antigravity?.permissionMode ?? msg.permissionMode;
+        if (
+          permissionMode &&
+          (msg.subtype === "init" ||
+            msg.subtype === "antigravity_settings" ||
+            msg.subtype === "set_permission_mode")
+        ) {
+          void this.antigravityStore.setPermissionMode(
+            session.claudeSessionId,
+            permissionMode,
+            agyProcess?.currentModeBeforePlan,
+          );
+        }
+      }
+      // Each session start is a free, fresh reading of the catalog.
+      if (msg.subtype === "init" && agyProcess) {
+        void this.antigravityStore.setCatalog(agyProcess.catalog);
+      }
+    }
     if (this.shouldBatchDelta(msg, exclude)) {
       this.trackSessionMessage(sessionId, msg);
       let chunks: DeltaTextChunk[] | undefined;
       for (const client of this.wss.clients) {
         if (client.readyState !== WebSocket.OPEN) continue;
         if (!this.shouldSendToClient(client, msg)) continue;
-        if (msg.type === "thinking_delta" && this.performanceEnabled(client, { sessionId })) {
-          this.send(client, { ...msg, sessionId } as Record<string, unknown>);
-          continue;
-        }
         chunks ??= this.splitDeltaText(msg.text);
         this.queueDeltaForClient(client, sessionId, msg.type, chunks);
       }
@@ -9724,7 +2343,7 @@ export class BridgeWebSocketServer {
     return chunks;
   }
 
-  private flushSessionDeltaBatches(sessionId: string): void {
+  flushSessionDeltaBatches(sessionId: string): void {
     for (const client of Array.from(this.deltaBatches.keys())) {
       this.flushClientDeltaBatch(client, sessionId);
     }
@@ -9760,7 +2379,7 @@ export class BridgeWebSocketServer {
     this.deltaBatches.delete(client);
   }
 
-  private destroySession(sessionId: string): void {
+  destroySession(sessionId: string): void {
     this.flushSessionDeltaBatches(sessionId);
     this.completionGate.discard(sessionId);
     this.pendingSessionWorkspaces.delete(sessionId);
@@ -9768,12 +2387,12 @@ export class BridgeWebSocketServer {
   }
 
   private trackSessionMessage(sessionId: string, msg: ServerMessage): void {
-    this.maybeSendPushNotification(sessionId, msg);
-    this.recordDebugEvent(sessionId, {
+    maybeSendPushNotification(this, sessionId, msg);
+    recordDebugEvent(this, sessionId, {
       direction: "outgoing",
       channel: "session",
       type: msg.type,
-      detail: this.summarizeServerMessage(msg),
+      detail: summarizeServerMessage(msg),
     });
     this.recordingStore?.record(sessionId, "outgoing", msg);
 
@@ -9785,7 +2404,7 @@ export class BridgeWebSocketServer {
     ) {
       const session = this.sessionManager.get(sessionId);
       if (session) {
-        const workspace = this.workspaceForRuntimeSession(session);
+        const workspace = workspaceForRuntimeSession(this, session);
         this.recordingStore?.saveMeta(sessionId, {
           bridgeSessionId: sessionId,
           claudeSessionId: msg.sessionId as string,
@@ -9825,6 +2444,57 @@ export class BridgeWebSocketServer {
   private async listRecentSessions(
     msg: Extract<ClientMessage, { type: "list_recent_sessions" }>,
   ): Promise<RecentSessionsListing> {
+    if (msg.provider === "antigravity") {
+      const pinnedOnlyExtras =
+        msg.pinnedOnly === true &&
+        msg.requestScope !== "project" &&
+        (msg.offset ?? 0) === 0 &&
+        (msg.pinnedSessions?.length ?? 0) > 0
+          ? { pinnedSessions: [] as unknown[] }
+          : {};
+      const limit = msg.limit ?? 20;
+      const offset = msg.offset ?? 0;
+      const filtered = await listFilteredAntigravitySessions(this, msg);
+      return {
+        sessions: filtered.sessions.slice(offset, offset + limit),
+        hasMore: filtered.sessions.length > offset + limit,
+        ...(filtered.pinnedSessions
+          ? { pinnedSessions: filtered.pinnedSessions }
+          : pinnedOnlyExtras),
+      };
+    }
+    const listing = await this.listRecentClaudeAndCodexSessions(msg);
+    // Antigravity rows join the first page: its list is small and the
+    // other providers page on their own offsets.
+    if (
+      msg.provider !== undefined ||
+      !msg.includeAntigravity ||
+      !this.antigravityAvailable ||
+      (msg.offset ?? 0) > 0
+    ) {
+      return listing;
+    }
+    const antigravity = await listFilteredAntigravitySessions(this, msg);
+    const mergedPinned =
+      listing.pinnedSessions || antigravity.pinnedSessions
+        ? mergeRecentSessionPages([
+            ...(listing.pinnedSessions ?? []),
+            ...(antigravity.pinnedSessions ?? []),
+          ])
+        : undefined;
+    return {
+      ...listing,
+      sessions: mergeRecentSessionPages([
+        ...listing.sessions,
+        ...antigravity.sessions.slice(0, msg.limit ?? 20),
+      ]),
+      ...(mergedPinned ? { pinnedSessions: mergedPinned } : {}),
+    };
+  }
+
+  private async listRecentClaudeAndCodexSessions(
+    msg: Extract<ClientMessage, { type: "list_recent_sessions" }>,
+  ): Promise<RecentSessionsListing> {
     const pinnedKeys = pinnedSessionKeysForRecentRequest(msg);
     const listProjects = () => this.workspaceStore?.listProjects() ?? [];
     const primaryProjectIds = new Set(
@@ -9847,9 +2517,9 @@ export class BridgeWebSocketServer {
       !filtersRequested &&
       !this.codexThreadSnapshot.isReady
     ) {
-      const rawResult = await this.listRecentSessionsRaw(msg, pinnedKeys);
+      const rawResult = await listRecentSessionsRaw(this, msg, pinnedKeys);
       const enriched = rawResult.sessions.map((session) =>
-        this.enrichRecentSessionWorkspace(session),
+        enrichRecentSessionWorkspace(this, session),
       );
       return {
         sessions: enriched,
@@ -9857,7 +2527,7 @@ export class BridgeWebSocketServer {
         ...(rawResult.pinnedSessions
           ? {
               pinnedSessions: rawResult.pinnedSessions.map((session) =>
-                this.enrichRecentSessionWorkspace(session),
+                enrichRecentSessionWorkspace(this, session),
               ),
             }
           : {}),
@@ -9900,7 +2570,8 @@ export class BridgeWebSocketServer {
     const maxFiles = depthKey
       ? this.contentSearchMaxFiles(depthKey, offset)
       : undefined;
-    const indexed = await this.listWorkspaceFilteredIndexedSessions(
+    const indexed = await listWorkspaceFilteredIndexedSessions(
+      this,
       msg,
       matchesWorkspace,
       requiredMatches,
@@ -9913,7 +2584,8 @@ export class BridgeWebSocketServer {
         at: Date.now(),
       });
     }
-    const archived = await this.listSnapshotOnlyCodexSessions(
+    const archived = await listSnapshotOnlyCodexSessions(
+      this,
       msg,
       matchesWorkspace,
       requiredMatches,
@@ -9936,100 +2608,6 @@ export class BridgeWebSocketServer {
       hasMore: filtered.length > offset + limit || incomplete,
       ...(pinnedSessions ? { pinnedSessions } : pinnedOnlyExtras),
     };
-  }
-
-  /**
-   * Resolve pinned Codex threads for a listing backed by app-server
-   * `thread/list`. Parses only the pinned rollout files instead of paging the
-   * whole thread list, and never fails the page itself.
-   */
-  private async listPinnedCodexSessions(
-    msg: ListRecentSessionsMessage,
-    pinnedKeys: ReadonlySet<string>,
-    matchesWorkspace?: (session: unknown) => boolean,
-  ): Promise<unknown[]> {
-    const threadIds = (msg.pinnedSessions ?? [])
-      .filter(
-        (pin) =>
-          pin.provider === "codex" &&
-          pinnedKeys.has(recentSessionIdentityKey(pin.provider, pin.sessionId)),
-      )
-      .map((pin) => pin.sessionId);
-    if (threadIds.length === 0) return [];
-    try {
-      const entries = await getPinnedCodexSessions({
-        threadIds,
-        // The workspace-filtered listing does not pre-filter thread/list by cwd.
-        projectPath: matchesWorkspace ? undefined : msg.projectPath,
-        namedOnly: msg.namedOnly,
-        searchQuery: msg.searchQuery,
-        archivedSessionIds: this.archiveStore.archivedIds(),
-        sessionFilter: matchesWorkspace
-          ? (session) =>
-              matchesWorkspace(this.enrichRecentSessionWorkspace(session))
-          : undefined,
-      });
-      return entries.map((entry) => this.enrichRecentSessionWorkspace(entry));
-    } catch (err) {
-      console.warn(`[ws] Failed to resolve pinned Codex sessions: ${err}`);
-      return [];
-    }
-  }
-
-  /**
-   * Codex threads from the app-server snapshot that the index cannot see
-   * (only compressed `.jsonl.zst` rollouts), filtered like index entries.
-   * Their search covers metadata only (name, preview, folder, branch).
-   * `pinnedSessions` lists matching pinned threads regardless of [limit].
-   */
-  private async listSnapshotOnlyCodexSessions(
-    msg: ListRecentSessionsMessage,
-    matchesWorkspace: (session: unknown) => boolean,
-    limit: number,
-    pinnedKeys?: ReadonlySet<string>,
-  ): Promise<{ sessions: unknown[]; pinnedSessions: unknown[] }> {
-    if (msg.provider === "claude") return { sessions: [], pinnedSessions: [] };
-    // Never wait for the first snapshot load (10-20 s on large histories,
-    // longer than the app's request timeout): answer from the index alone
-    // until it is ready.
-    if (!this.codexThreadSnapshot.isReady) {
-      this.codexThreadSnapshot.warm();
-      return { sessions: [], pinnedSessions: [] };
-    }
-    const [threads, indexedIds, names] = await Promise.all([
-      this.codexThreadSnapshot.get(),
-      listIndexedCodexThreadIds(),
-      loadCodexSessionNames(),
-    ]);
-    const archivedIds = this.archiveStore.archivedIds();
-    const query = msg.searchQuery?.trim() ? msg.searchQuery : undefined;
-    const sessions: unknown[] = [];
-    const pinnedSessions: unknown[] = [];
-    for (const thread of threads) {
-      if (indexedIds.has(thread.id.toLowerCase())) continue;
-      if (archivedIds.has(thread.id)) continue;
-      const name = names.get(thread.id) ?? thread.name ?? undefined;
-      if (msg.namedOnly && !name) continue;
-      let entry: Record<string, unknown> = {
-        ...codexThreadToRecentSession(thread),
-        ...(name ? { name } : {}),
-      };
-      if (query) {
-        const field = recentSessionMetadataSearchField(
-          entry as Parameters<typeof recentSessionMetadataSearchField>[0],
-          query,
-        );
-        if (!field) continue;
-        entry = { ...entry, searchMatch: { field } };
-      }
-      const enriched = this.enrichRecentSessionWorkspace(entry);
-      if (!matchesWorkspace(enriched)) continue;
-      if (pinnedKeys?.has(recentSessionIdentityKey("codex", thread.id))) {
-        pinnedSessions.push(enriched);
-      }
-      if (sessions.length < limit) sessions.push(enriched);
-    }
-    return { sessions, pinnedSessions };
   }
 
   /** Page through every Codex thread with one standalone app-server. */
@@ -10071,200 +2649,119 @@ export class BridgeWebSocketServer {
     return previous + CONTENT_SEARCH_MAX_FILES;
   }
 
-  private async listWorkspaceFilteredIndexedSessions(
+  /** Antigravity conversations matching the request filters, newest first. */
+  async listRecentAntigravitySessions(
     msg: Extract<ClientMessage, { type: "list_recent_sessions" }>,
-    matchesWorkspace: (session: unknown) => boolean,
-    limit: number,
-    pinnedKeys?: ReadonlySet<string>,
-    contentSearchMaxFiles?: number,
-  ): Promise<{
-    sessions: unknown[];
-    pinnedSessions?: unknown[];
-    incomplete: boolean;
-    filesRead?: number;
-  }> {
-    const result = await getAllRecentSessions({
-      limit,
-      offset: 0,
-      // Project identity is authoritative. Do not pre-filter by the current
-      // primary root: assignments may retain an older snapshot or worktree cwd.
-      provider: msg.provider,
-      namedOnly: msg.namedOnly,
-      searchQuery: msg.searchQuery,
-      ...(isRecentContentSearch(msg) ? { searchContent: true } : {}),
-      ...(contentSearchMaxFiles !== undefined
-        ? { contentSearchLimits: { maxFiles: contentSearchMaxFiles } }
-        : {}),
-      archivedSessionIds: this.archiveStore.archivedIds(),
-      sessionFilter: (session) =>
-        matchesWorkspace(this.enrichRecentSessionWorkspace(session)),
-      pinnedSessionKeys: pinnedKeys,
-    });
-    const pinnedSessions = pinnedIndexEntriesAsListingShape(
-      result.pinnedSessions,
-    );
-    return {
-      sessions: result.sessions.map((session) =>
-        this.enrichRecentSessionWorkspace(session),
-      ),
-      ...(pinnedSessions
-        ? {
-            pinnedSessions: pinnedSessions.map((session) =>
-              this.enrichRecentSessionWorkspace(session),
-            ),
-          }
-        : {}),
-      incomplete: result.contentSearchIncomplete === true,
-      ...(result.contentSearchFilesRead !== undefined
-        ? { filesRead: result.contentSearchFilesRead }
-        : {}),
-    };
-  }
-
-  private async listRecentSessionsRaw(
-    msg: Extract<ClientMessage, { type: "list_recent_sessions" }>,
-    pinnedKeys?: ReadonlySet<string>,
-  ): Promise<RecentSessionsListing> {
-    if (msg.provider === "codex") {
-      return this.listRecentCodexSessions(msg, pinnedKeys);
-    }
-
-    if (!msg.provider) {
-      return this.listRecentAllProviderSessions(msg, pinnedKeys);
-    }
-
-    return getAllRecentSessions({
-      limit: msg.limit,
-      offset: msg.offset,
-      projectPath: msg.projectPath,
-      provider: msg.provider,
-      namedOnly: msg.namedOnly,
-      searchQuery: msg.searchQuery,
-      archivedSessionIds: this.archiveStore.archivedIds(),
-      pinnedSessionKeys: pinnedKeys,
-    });
-  }
-
-  private enrichRecentSessionWorkspace(session: unknown): unknown {
-    if (!session || typeof session !== "object") return session;
-    const value = session as Record<string, unknown>;
-    const provider = value.provider;
-    const providerSessionId = value.sessionId;
-    const projectPath = value.projectPath;
+  ): Promise<AntigravityRecentSession[]> {
+    if (!this.antigravityAvailable) return [];
+    const now = Date.now();
     if (
-      (provider !== "claude" && provider !== "codex") ||
-      typeof providerSessionId !== "string" ||
-      typeof projectPath !== "string"
+      !this.antigravitySessionsCache ||
+      now - this.antigravitySessionsCache.at > 15_000
     ) {
-      return session;
+      this.antigravitySessionsCache = {
+        at: now,
+        entries: listAntigravitySessions().catch((err) => {
+          console.warn(
+            `[ws] Failed to list Antigravity sessions: ${errorMessageOf(err)}`,
+          );
+          return [];
+        }),
+      };
     }
-    const workspace = this.workspaceStore?.resolveRecentWorkspace(
-      provider,
-      providerSessionId,
-    );
-    return {
-      ...value,
-      workspace: workspace ?? {
-        kind: "unassigned",
-        rootPaths: projectPath ? [projectPath] : [],
+    return antigravityRecentSessions(
+      await this.antigravitySessionsCache.entries,
+      {
+        searchQuery: msg.searchQuery,
+        namedOnly: msg.namedOnly,
+        archivedSessionIds: this.archiveStore.archivedIds(),
+        records: this.antigravityStore.records(),
+        worktrees: this.worktreeStore.getAll(),
       },
-    };
+    );
   }
 
-  private normalizeWorkspaceRoots(rootPaths: string[]): {
-    roots?: string[];
-    deniedRoot?: string;
-  } {
-    const roots: string[] = [];
-    const seen = new Set<string>();
-    for (const rawPath of rootPaths) {
-      const path = resolvePlatformPath(rawPath, this.platform);
-      if (!this.isPathAllowed(path)) return { deniedRoot: rawPath };
-      if (!seen.has(path)) {
-        seen.add(path);
-        roots.push(path);
+  /**
+   * Antigravity's plan quota. The CLI is asked when a client requests usage
+   * and the last reading is older than fifteen minutes, or a minute when
+   * [refresh] is set (a person tapped refresh). Nothing runs on a timer: no
+   * client asking means no read. Never read with an API key (it has no plan)
+   * or on a Bridge that must not touch the Google login.
+   */
+  async antigravityUsage(refresh: boolean): Promise<UsageInfo[]> {
+    const config = this.antigravityConfigOverride ?? getAntigravityConfig();
+    if (!this.antigravityAvailable || config.apiKey || config.requireApiKey) {
+      return [];
+    }
+    const cached = this.antigravityUsageCache;
+    const maxAge = refresh ? 60_000 : 15 * 60_000;
+    if (cached && Date.now() - cached.at < maxAge) return cached.usage;
+    // Several clients asking at once share one read.
+    this.antigravityUsageRead ??= this.loadAntigravityUsage(config.bin)
+      .then(
+        (usage) => {
+          this.antigravityUsageCache = { at: Date.now(), usage };
+          return usage;
+        },
+        (err) => {
+          console.warn(
+            `[ws] Failed to read Antigravity usage: ${errorMessageOf(err)}`,
+          );
+          // Keep the last reading, and do not ask again right away.
+          const usage = cached?.usage ?? [];
+          this.antigravityUsageCache = { at: Date.now(), usage };
+          return usage;
+        },
+      )
+      .finally(() => {
+        this.antigravityUsageRead = undefined;
+      });
+    return this.antigravityUsageRead;
+  }
+
+  /** What a new Antigravity session offers; read without sending a prompt. */
+  antigravityCatalog(): Promise<AntigravityCatalog> {
+    // A running session already knows, and is fresher than the cache.
+    for (const summary of this.sessionManager.list()) {
+      const process = this.sessionManager.get(summary.id)?.process;
+      if (process instanceof AntigravityProcess && process.isRunning) {
+        const catalog = process.catalog;
+        if (catalog.models.length > 0) return Promise.resolve(catalog);
       }
     }
-    return roots.length > 0 ? { roots } : {};
-  }
-
-  private async persistPendingSessionWorkspace(sessionId: string): Promise<void> {
-    const workspace = this.pendingSessionWorkspaces.get(sessionId);
-    const session = this.sessionManager.get(sessionId);
-    if (!workspace || !session?.claudeSessionId || !this.workspaceStore) return;
-    try {
-      await this.workspaceStore.assignSession(
-        session.provider,
-        session.claudeSessionId,
-        workspace,
-      );
-      this.pendingSessionWorkspaces.delete(sessionId);
-    } catch (error) {
-      console.error("[workspace] Failed to persist session assignment:", error);
+    const authMode = getAntigravityConfig().apiKey ? "api_key" : "login";
+    const stored = this.antigravityStore.catalog(authMode, ANTIGRAVITY_CATALOG_TTL_MS);
+    if (stored) return Promise.resolve(stored);
+    if (!this.antigravityCatalogRead) {
+      const read = this.loadAntigravityCatalog().then((catalog) => {
+        void this.antigravityStore.setCatalog(catalog);
+        return catalog;
+      });
+      this.antigravityCatalogRead = read;
+      const done = () => {
+        if (this.antigravityCatalogRead === read) {
+          this.antigravityCatalogRead = undefined;
+        }
+      };
+      read.then(done, done);
     }
+    return this.antigravityCatalogRead;
   }
 
-  private workspaceForRuntimeSession(
-    session: SessionInfo,
-  ): ResolvedWorkspace | undefined {
-    const pending = this.pendingSessionWorkspaces.get(session.id);
-    if (pending) {
-      return { ...pending, rootPaths: [...pending.rootPaths] };
-    }
-    if (!session.claudeSessionId || !this.workspaceStore) return undefined;
-    const assignment = this.workspaceStore.getAssignment(
-      session.provider,
-      session.claudeSessionId,
-    );
-    if (!assignment) return undefined;
-    const project = assignment.projectId
-      ? this.workspaceStore.getProject(assignment.projectId)
-      : undefined;
-    const projectName = project?.name ?? assignment.projectName;
-    return {
-      kind: assignment.kind,
-      ...(assignment.projectId ? { projectId: assignment.projectId } : {}),
-      ...(projectName ? { projectName } : {}),
-      rootPaths: [...assignment.rootPaths],
-    };
+  private async refreshAntigravityAvailability(): Promise<void> {
+    const available = (await this.detectAntigravity?.().catch(() => false)) ?? false;
+    if (available === this.antigravityAvailable) return;
+    this.antigravityAvailable = available;
+    this.broadcastSessionList();
   }
 
-  private attachWorkspaceToRuntimeSession(
-    sessionId: string,
-    workspace: ResolvedWorkspace | undefined,
-  ): void {
-    if (!workspace) return;
-    this.pendingSessionWorkspaces.set(sessionId, workspace);
-    void this.persistPendingSessionWorkspace(sessionId);
+  private protocolCapabilities(): string[] {
+    return this.antigravityAvailable
+      ? [...BRIDGE_PROTOCOL_CAPABILITIES, ...ANTIGRAVITY_PROTOCOL_CAPABILITIES]
+      : BRIDGE_PROTOCOL_CAPABILITIES;
   }
 
-  private projectsMessage(requestId?: string): ServerMessage {
-    return {
-      type: "projects",
-      projects: this.workspaceStore?.listProjects() ?? [],
-      ...(requestId ? { requestId } : {}),
-    };
-  }
-
-  private sendWorkspaceMutationError(
-    ws: WebSocket,
-    requestId: string | undefined,
-    action: string,
-    error: unknown,
-  ): void {
-    this.send(ws, {
-      type: "error",
-      requestId,
-      errorCode: "workspace_write_failed",
-      message: `Failed to ${action}: ${error instanceof Error ? error.message : String(error)}`,
-    });
-  }
-
-  private legacyProjectHistoryProjects(): string[] {
-    return this.projectHistory?.getProjects() ?? [];
-  }
-
-  private listRecentSessionsCoalesced(
+  listRecentSessionsCoalesced(
     msg: Extract<ClientMessage, { type: "list_recent_sessions" }>,
   ): Promise<RecentSessionsListing> {
     const key = recentSessionsCoalescingKey(msg);
@@ -10282,60 +2779,14 @@ export class BridgeWebSocketServer {
     return request;
   }
 
-  private async listRecentAllProviderSessions(
-    msg: Extract<ClientMessage, { type: "list_recent_sessions" }>,
-    pinnedKeys?: ReadonlySet<string>,
-  ): Promise<RecentSessionsListing> {
-    const limit = msg.limit ?? 20;
-    const offset = msg.offset ?? 0;
-    const sourceLimit = offset + limit;
-
-    const [scanResult, codexResult] = await Promise.all([
-      getAllRecentSessions({
-        limit: sourceLimit,
-        offset: 0,
-        projectPath: msg.projectPath,
-        namedOnly: msg.namedOnly,
-        searchQuery: msg.searchQuery,
-        archivedSessionIds: this.archiveStore.archivedIds(),
-        // Both providers are already scanned here, so pinned Codex threads
-        // come from the same pass (no extra lookup).
-        pinnedSessionKeys: pinnedKeys,
-      }),
-      this.listRecentCodexSessions({
-        ...msg,
-        provider: "codex",
-        limit: sourceLimit,
-        offset: 0,
-      }),
-    ]);
-
-    const merged = mergeRecentSessionPages([
-      ...codexResult.sessions,
-      ...scanResult.sessions,
-    ]);
-
-    const pinnedSessions = pinnedIndexEntriesAsListingShape(
-      scanResult.pinnedSessions,
-    );
-    return {
-      sessions: merged.slice(offset, offset + limit),
-      hasMore:
-        merged.length > offset + limit ||
-        scanResult.hasMore ||
-        codexResult.hasMore,
-      ...(pinnedSessions ? { pinnedSessions } : {}),
-    };
-  }
-
-  private async listRecentCodexSessions(
+  async listRecentCodexSessions(
     msg: Extract<ClientMessage, { type: "list_recent_sessions" }>,
     pinnedKeys?: ReadonlySet<string>,
   ): Promise<RecentSessionsListing> {
     try {
       const [page, pinnedSessions] = await Promise.all([
         this.listRecentCodexThreads(msg),
-        pinnedKeys ? this.listPinnedCodexSessions(msg, pinnedKeys) : undefined,
+        pinnedKeys ? listPinnedCodexSessions(this, msg, pinnedKeys) : undefined,
       ]);
       return { ...page, ...(pinnedSessions ? { pinnedSessions } : {}) };
     } catch (err) {
@@ -10355,7 +2806,7 @@ export class BridgeWebSocketServer {
     }
   }
 
-  private async refreshCodexMetadata(projectPath?: string): Promise<void> {
+  async refreshCodexMetadata(projectPath?: string): Promise<void> {
     if (this.codexMetadataRequest) {
       if (projectPath) {
         return this.codexMetadataRequest.then(() =>
@@ -10370,7 +2821,7 @@ export class BridgeWebSocketServer {
         this.codexProfiles = [];
         this.defaultCodexProfile = undefined;
         this.codexAutoReviewPolicyLoaded = false;
-        this.applyFallbackCodexModels();
+        applyFallbackCodexModels(this);
         this.broadcastSessionList();
       })
       .finally(() => {
@@ -10389,8 +2840,8 @@ export class BridgeWebSocketServer {
       const [profileResult, modelResult, requirementsResult] =
         await Promise.allSettled([
           codexProcess.readProfileConfig(projectPath),
-          this.readCodexModels(codexProcess),
-          this.readCodexAutoReviewDisabled(codexProcess),
+          readCodexModels(codexProcess),
+          readCodexAutoReviewDisabled(codexProcess),
         ]);
 
       if (profileResult.status === "fulfilled") {
@@ -10410,7 +2861,7 @@ export class BridgeWebSocketServer {
         if (modelResult.status === "rejected") {
           console.warn(`[ws] Failed to load Codex models: ${modelResult.reason}`);
         }
-        this.applyFallbackCodexModels();
+        applyFallbackCodexModels(this);
       }
 
       if (requirementsResult.status === "fulfilled") {
@@ -10428,38 +2879,26 @@ export class BridgeWebSocketServer {
     }
   }
 
-  private async refreshClaudeModels(projectPath?: string): Promise<void> {
+  async refreshClaudeModels(projectPath?: string): Promise<void> {
     if (this.claudeModelsRequest) return this.claudeModelsRequest;
-    this.claudeModelsRequest = this.loadClaudeModels(projectPath)
+    this.claudeModelsRequest = loadClaudeModels(this, projectPath)
       .then((models) => {
         if (models.length > 0) {
           this.applyClaudeModels(models);
         } else {
-          this.applyFallbackClaudeModels();
+          applyFallbackClaudeModels(this);
         }
         this.broadcastSessionList();
       })
       .catch((err) => {
         console.warn(`[ws] Failed to load Claude models: ${err}`);
-        this.applyFallbackClaudeModels();
+        applyFallbackClaudeModels(this);
         this.broadcastSessionList();
       })
       .finally(() => {
         this.claudeModelsRequest = null;
       });
     return this.claudeModelsRequest;
-  }
-
-  private async loadClaudeModels(
-    projectPath?: string,
-  ): Promise<ClaudeModelMetadata[]> {
-    const activeProcess = this.getActiveClaudeProcess();
-    if (activeProcess) {
-      const models = await activeProcess.listAvailableModels();
-      if (models.length > 0) return models;
-    }
-    if (process.env.NODE_ENV === "test") return [];
-    return listAvailableClaudeModels(projectPath);
   }
 
   private applyClaudeModels(models: ClaudeModelMetadata[]): void {
@@ -10473,47 +2912,6 @@ export class BridgeWebSocketServer {
     this.claudeModelEfforts = Object.fromEntries(
       models.map((model) => [model.model, model.effortLevels]),
     );
-  }
-
-  private applyFallbackClaudeModels(): void {
-    this.claudeModels = FALLBACK_CLAUDE_MODELS;
-    this.claudeModelOptions = FALLBACK_CLAUDE_MODEL_OPTIONS;
-    this.claudeModelEfforts = { ...FALLBACK_CLAUDE_MODEL_EFFORTS };
-  }
-
-  private async readCodexModels(
-    codexProcess: CodexProcess,
-  ): Promise<CodexModelMetadata[]> {
-    const modelSource = codexProcess as CodexProcess & {
-      listAvailableModelMetadata?: () => Promise<CodexModelMetadata[]>;
-      listAvailableModels?: () => Promise<string[]>;
-    };
-    if (typeof modelSource.listAvailableModelMetadata === "function") {
-      return modelSource.listAvailableModelMetadata();
-    }
-    const models = typeof modelSource.listAvailableModels === "function"
-      ? await modelSource.listAvailableModels()
-      : [];
-    return models.map((model) => ({
-      model,
-      supportedReasoningEfforts: fallbackCodexReasoningEfforts(model),
-      supportedServiceTiers: fallbackCodexServiceTiers(model),
-    }));
-  }
-
-  private async readCodexAutoReviewDisabled(
-    codexProcess: CodexProcess,
-  ): Promise<boolean> {
-    const requirementsSource = codexProcess as CodexProcess & {
-      readConfigRequirements?: () => Promise<{
-        autoReviewDisabled: boolean;
-      }>;
-    };
-    if (typeof requirementsSource.readConfigRequirements !== "function") {
-      return false;
-    }
-    return (await requirementsSource.readConfigRequirements())
-      .autoReviewDisabled;
   }
 
   private applyCodexModels(models: CodexModelMetadata[]): void {
@@ -10537,42 +2935,7 @@ export class BridgeWebSocketServer {
     );
   }
 
-  /** Validate candidates only. Codex still enforces account entitlement. */
-  private codexServiceTierError(
-    model: string | undefined,
-    value: string | undefined,
-  ): string | undefined {
-    if (value === undefined) return undefined;
-    // A profile or a resumed thread may supply the model. CodexProcess validates
-    // its resolved model/tier before emitting init or accepting the first turn.
-    if (model === undefined) return undefined;
-    const tier = normalizeCodexServiceTierForClient(value);
-    // Standard/Fast are legacy settings; older clients normalize Fast after
-    // changing models. Strict catalog validation applies to extended tiers.
-    if (tier === "standard" || tier === "fast") return undefined;
-    const supported = this.codexModelServiceTiers[model ?? ""];
-    if (isCodexServiceTierSupported(tier, supported ?? [])) return undefined;
-    return `Codex speed "${value}" is not available for model "${model ?? "unknown"}". Choose a supported speed.`;
-  }
-
-  private applyFallbackCodexModels(): void {
-    this.codexModelServiceTierMetadata = {};
-    this.codexModels = FALLBACK_CODEX_MODELS;
-    this.codexModelReasoningEfforts = Object.fromEntries(
-      FALLBACK_CODEX_MODELS.map((model) => [
-        model,
-        fallbackCodexReasoningEfforts(model),
-      ]),
-    );
-    this.codexModelServiceTiers = Object.fromEntries(
-      FALLBACK_CODEX_MODELS.map((model) => [
-        model,
-        fallbackCodexServiceTiers(model),
-      ]),
-    );
-  }
-
-  private async loadCodexProfiles(
+  async loadCodexProfiles(
     projectPath?: string,
   ): Promise<{ profiles: string[]; defaultProfile?: string }> {
     const process =
@@ -10588,7 +2951,7 @@ export class BridgeWebSocketServer {
     }
   }
 
-  private async validateCodexProfile(
+  async validateCodexProfile(
     profile: string | undefined,
     projectPath?: string,
   ): Promise<boolean> {
@@ -10599,36 +2962,7 @@ export class BridgeWebSocketServer {
     return snapshot.profiles.includes(profile);
   }
 
-  private async resolveCodexResumeProfile(
-    requestedProfile: string,
-    threadId: string,
-    projectPath?: string,
-  ): Promise<string | undefined> {
-    const snapshot = await this.loadCodexProfiles(projectPath);
-    this.codexProfiles = snapshot.profiles;
-    this.defaultCodexProfile = snapshot.defaultProfile;
-    if (snapshot.profiles.includes(requestedProfile)) {
-      return requestedProfile;
-    }
-
-    const fallbackProfile =
-      snapshot.defaultProfile &&
-      snapshot.profiles.includes(snapshot.defaultProfile)
-        ? snapshot.defaultProfile
-        : undefined;
-    console.warn(
-      `[ws] Codex profile not found on resume: ${requestedProfile}; ` +
-        (fallbackProfile
-          ? `falling back to default profile: ${fallbackProfile}`
-          : "falling back to Codex config default"),
-    );
-    saveCodexSessionProfile(threadId, fallbackProfile ?? null).catch((err) => {
-      console.warn(`[ws] Failed to update Codex session profile cache: ${err}`);
-    });
-    return fallbackProfile;
-  }
-
-  private getActiveCodexProcess(): CodexProcess | null {
+  getActiveCodexProcess(): CodexProcess | null {
     // SessionManager retains idle sessions after their process exits.
     // Skip those entries so auxiliary RPCs can use a healthy process or
     // create a temporary standalone app-server.
@@ -10640,33 +2974,6 @@ export class BridgeWebSocketServer {
       if (process.isRunning) return process;
     }
     return null;
-  }
-
-  private withCodexAutoReviewPolicy(
-    options: CodexStartOptions,
-  ): CodexStartOptions {
-    const disableAutoReview = this.codexAutoReviewDisabled;
-    return {
-      ...options,
-      ...(disableAutoReview ? { approvalsReviewer: "user" as const } : {}),
-      ...(disableAutoReview && options.codexPermissionsMode === "autoReview"
-        ? { codexPermissionsMode: "default" as const }
-        : {}),
-      autoReviewDisabledByPolicy: this.codexAutoReviewPolicyLoaded
-        ? disableAutoReview
-        : null,
-    };
-  }
-
-  private getActiveClaudeProcess(): SdkProcess | null {
-    const summary = this.sessionManager
-      .list()
-      .find((session) => session.provider === "claude");
-    if (!summary) return null;
-    const session = this.sessionManager.get(summary.id);
-    return session?.provider === "claude"
-      ? (session.process as SdkProcess)
-      : null;
   }
 
   private async listRecentCodexThreads(
@@ -10732,7 +3039,7 @@ export class BridgeWebSocketServer {
     }
   }
 
-  private async createStandaloneCodexProcess(
+  async createStandaloneCodexProcess(
     projectPath?: string,
   ): Promise<CodexProcess> {
     const proc = new CodexProcess();
@@ -10745,307 +3052,7 @@ export class BridgeWebSocketServer {
     }
   }
 
-  /** Resolve a user-facing Project label, falling back to the cwd basename. */
-  private projectLabel(sessionId: string): string {
-    const session = this.sessionManager.get(sessionId);
-    if (!session?.projectPath) return "";
-    const workspace = this.workspaceForRuntimeSession(session);
-    if (workspace?.projectName) return workspace.projectName;
-    const parts = session.projectPath.replace(/\/+$/, "").split("/");
-    return parts[parts.length - 1] || "";
-  }
-
-  private beginPushTokenOperation(token: string): number {
-    const generation = ++this.nextPushTokenGeneration;
-    this.pushTokenGeneration.set(token, generation);
-    // Local delivery is disabled synchronously while the relay operation is
-    // pending. The app stays on local fallback until a successful ACK.
-    this.tokenLocales.delete(token);
-    this.tokenPrivacyMode.delete(token);
-    return generation;
-  }
-
-  private enqueuePushTokenOperation(
-    token: string,
-    operation: () => Promise<void>,
-  ): Promise<void> {
-    const previous = this.pushTokenOperations.get(token);
-    const pending = (previous?.catch(() => {}) ?? Promise.resolve()).then(
-      operation,
-    );
-    this.pushTokenOperations.set(token, pending);
-    const cleanup = () => {
-      if (this.pushTokenOperations.get(token) === pending) {
-        this.pushTokenOperations.delete(token);
-      }
-    };
-    void pending.then(cleanup, cleanup);
-    return pending;
-  }
-
-  private isCurrentPushTokenOperation(
-    token: string,
-    generation: number,
-  ): boolean {
-    return this.pushTokenGeneration.get(token) === generation;
-  }
-
-  /** Get unique locales from tokens acknowledged by the push relay. */
-  private getRegisteredLocales(): PushLocale[] {
-    const locales = new Set(this.tokenLocales.values());
-    return [...locales];
-  }
-
-  /** Hashes of relay tokens that are currently safe for remote delivery. */
-  private getActivePushTokenHashes(locale: PushLocale): string[] {
-    return [...this.tokenLocales]
-      .filter(([, tokenLocale]) => tokenLocale === locale)
-      .map(([token]) => createHash("sha256").update(token).digest("hex"));
-  }
-
-  /** Whether any registered token has privacy mode enabled (conservative: privacy wins). */
-  private isPrivacyMode(): boolean {
-    for (const privacy of this.tokenPrivacyMode.values()) {
-      if (privacy) return true;
-    }
-    return false;
-  }
-
-  /** Get a display label for push notification title: "name (project)" or just project. */
-  private sessionLabel(sessionId: string): string {
-    const session = this.sessionManager.get(sessionId);
-    const project = this.projectLabel(sessionId);
-    if (session?.name) {
-      return project ? `${session.name} (${project})` : session.name;
-    }
-    return project;
-  }
-
-  private maybeSendPushNotification(
-    sessionId: string,
-    msg: ServerMessage,
-  ): void {
-    if (!this.pushRelay.isConfigured) return;
-    if (this.tokenLocales.size === 0) return;
-
-    const privacy = this.isPrivacyMode();
-    const label = privacy ? "" : this.sessionLabel(sessionId);
-
-    if (msg.type === "permission_request") {
-      const seen =
-        this.notifiedPermissionToolUses.get(sessionId) ?? new Set<string>();
-      if (seen.has(msg.toolUseId)) return;
-      seen.add(msg.toolUseId);
-      this.notifiedPermissionToolUses.set(sessionId, seen);
-
-      const isAskUserQuestion = msg.toolName === "AskUserQuestion";
-      const isExitPlanMode = msg.toolName === "ExitPlanMode";
-      const eventType = isAskUserQuestion
-        ? "ask_user_question"
-        : "approval_required";
-
-      // Extract question text for AskUserQuestion (standard mode only)
-      let questionText: string | undefined;
-      if (!privacy && isAskUserQuestion) {
-        const questions = msg.input?.questions;
-        const firstQuestion =
-          Array.isArray(questions) && questions.length > 0
-            ? (questions[0] as Record<string, unknown>)?.question
-            : undefined;
-        if (typeof firstQuestion === "string" && firstQuestion.length > 0) {
-          questionText = firstQuestion.slice(0, 120);
-        }
-      }
-
-      const data: Record<string, string> = {
-        sessionId,
-        provider: this.sessionManager.get(sessionId)?.provider ?? "claude",
-        toolUseId: msg.toolUseId,
-        toolName: msg.toolName,
-      };
-
-      for (const locale of this.getRegisteredLocales()) {
-        let title: string;
-        let body: string;
-
-        if (isExitPlanMode) {
-          const titleKey = "plan_ready_title";
-          title = label
-            ? `${t(locale, titleKey)} - ${label}`
-            : t(locale, titleKey);
-          body = t(locale, "plan_ready_body");
-        } else if (isAskUserQuestion) {
-          const titleKey = "ask_title";
-          title = label
-            ? `${t(locale, titleKey)} - ${label}`
-            : t(locale, titleKey);
-          body = privacy
-            ? t(locale, "ask_body_private")
-            : (questionText ?? t(locale, "ask_default_body"));
-        } else {
-          const titleKey = "approval_title";
-          title = label
-            ? `${t(locale, titleKey)} - ${label}`
-            : t(locale, titleKey);
-          body = privacy
-            ? t(locale, "approval_body_private")
-            : t(locale, "approval_body", { toolName: msg.toolName });
-        }
-
-        void this.pushRelay
-          .notify({
-            eventType,
-            title,
-            body,
-            locale,
-            tokenHashes: this.getActivePushTokenHashes(locale),
-            data,
-          })
-          .catch((err) => {
-            const detail = err instanceof Error ? err.message : String(err);
-            console.warn(
-              `[ws] Failed to send push notification (${eventType}, ${locale}): ${detail}`,
-            );
-          });
-      }
-      return;
-    }
-
-    if ((msg.type === "result" || msg.type === "goal_state") && msg.notification) {
-      if (msg.notification === "none") return;
-      const kind = msg.notification;
-      const icon = kind === "goal_complete" ? "✅"
-        : kind === "goal_progress" ? "💬"
-        : kind === "goal_blocked" ? "⚠️" : "⏸";
-      for (const locale of this.getRegisteredLocales()) {
-        const copy = t(locale, kind);
-        void this.pushRelay.notify({
-          eventType: kind,
-          title: `${icon} ${copy}${label ? ` - ${label}` : ""}`,
-          body: copy,
-          locale,
-          tokenHashes: this.getActivePushTokenHashes(locale),
-          data: { sessionId, provider: "codex" },
-        }).catch((err) => {
-          console.warn(`[ws] Failed to send ${kind}: ${String(err)}`);
-        });
-      }
-      return;
-    }
-
-    if (msg.type === "status" || msg.type === "background_tasks") {
-      this.completionGate.update(sessionId);
-      return;
-    }
-
-    if (msg.type !== "result") return;
-    if (msg.subtype === "stopped") {
-      this.completionGate.discard(sessionId);
-      return;
-    }
-    if (msg.subtype !== "success" && msg.subtype !== "error") return;
-    if (msg.subtype === "error") {
-      this.completionGate.discard(sessionId);
-    } else if (
-      this.completionGate.hold(
-        sessionId,
-        msg,
-        this.keepsWorkingInBackground(sessionId),
-      )
-    ) {
-      return;
-    }
-    this.sendCompletionPush(sessionId, msg);
-  }
-
-  /**
-   * Claude keeps working after a result while background agents are live: it
-   * starts a follow-up turn when they report back. Shells and monitors may
-   * run indefinitely (dev servers), so they do not delay completion. Codex
-   * never starts a follow-up turn, so its background work is ignored too.
-   */
-  private keepsWorkingInBackground(sessionId: string): boolean {
-    const session = this.sessionManager.get(sessionId);
-    return (
-      session?.provider === "claude" &&
-      !!session.backgroundTasks?.some(isAgentBackgroundTask)
-    );
-  }
-
-  private sendCompletionPush(sessionId: string, msg: ResultServerMessage): void {
-    if (!this.pushRelay.isConfigured) return;
-    if (this.tokenLocales.size === 0) return;
-    const privacy = this.isPrivacyMode();
-    const label = privacy ? "" : this.sessionLabel(sessionId);
-    const isSuccess = msg.subtype === "success";
-    const eventType = isSuccess ? "session_completed" : "session_failed";
-
-    const pieces: string[] = [];
-    if (isSuccess) {
-      if (msg.duration != null) pieces.push(`${msg.duration.toFixed(1)}s`);
-      if (msg.cost != null) pieces.push(`$${msg.cost.toFixed(4)}`);
-    }
-    const stats = pieces.length > 0 ? ` (${pieces.join(", ")})` : "";
-
-    const data: Record<string, string> = {
-      sessionId,
-      provider: this.sessionManager.get(sessionId)?.provider ?? "claude",
-      subtype: msg.subtype,
-    };
-    if (msg.stopReason) data.stopReason = msg.stopReason;
-    if (msg.sessionId) data.providerSessionId = msg.sessionId;
-
-    for (const locale of this.getRegisteredLocales()) {
-      let title: string;
-      if (privacy) {
-        title = isSuccess
-          ? t(locale, "task_completed")
-          : t(locale, "error_occurred");
-      } else {
-        title = label
-          ? isSuccess
-            ? `✅ ${label}`
-            : `❌ ${label}`
-          : isSuccess
-            ? t(locale, "task_completed")
-            : t(locale, "error_occurred");
-      }
-
-      let body: string;
-      if (privacy) {
-        const privateBody = isSuccess
-          ? t(locale, "result_success_body_private")
-          : t(locale, "result_error_body_private");
-        body = isSuccess ? `${privateBody}${stats}` : privateBody;
-      } else if (isSuccess) {
-        body = msg.result
-          ? `${msg.result.slice(0, 120)}${stats}`
-          : `${t(locale, "session_completed")}${stats}`;
-      } else {
-        body = msg.error
-          ? msg.error.slice(0, 120)
-          : t(locale, "session_failed");
-      }
-
-      void this.pushRelay
-        .notify({
-          eventType,
-          title,
-          body,
-          locale,
-          tokenHashes: this.getActivePushTokenHashes(locale),
-          data,
-        })
-        .catch((err) => {
-          const detail = err instanceof Error ? err.message : String(err);
-          console.warn(
-            `[ws] Failed to send push notification (${eventType}, ${locale}): ${detail}`,
-          );
-        });
-    }
-  }
-
-  private broadcast(msg: Record<string, unknown>): void {
+  broadcast(msg: Record<string, unknown>): void {
     for (const client of this.wss.clients) {
       if (client.readyState === WebSocket.OPEN) {
         const compatibleMsg = this.prepareServerMessageForClient(client, msg);
@@ -11084,14 +3091,20 @@ export class BridgeWebSocketServer {
     const messages = msg.messages as unknown[];
 
     if (msg.type === "past_history") {
-      if (this.clientSupportedServerMessages.get(ws)?.has("context_compaction")) {
+      const supported = this.clientSupportedServerMessages.get(ws);
+      const supportsCompaction = supported?.has("context_compaction") ?? false;
+      const supportsRecap = supported?.has("session_recap") ?? false;
+      if (supportsCompaction && supportsRecap) {
         return msg;
       }
       return {
         ...(msg as unknown as Record<string, unknown>),
-        messages: messages.filter(
-          (message) => !isRecord(message) || message.role !== "compaction",
-        ),
+        messages: messages.filter((message) => {
+          if (!isRecord(message)) return true;
+          if (!supportsCompaction && message.role === "compaction") return false;
+          if (!supportsRecap && message.role === "recap") return false;
+          return true;
+        }),
       };
     }
 
@@ -11116,7 +3129,7 @@ export class BridgeWebSocketServer {
     return msg;
   }
 
-  private shouldSendToClient(
+  shouldSendToClient(
     ws: WebSocket,
     msg: ServerMessage | Record<string, unknown>,
   ): boolean {
@@ -11127,44 +3140,13 @@ export class BridgeWebSocketServer {
     );
   }
 
-  private hasInputConflictSince(session: SessionInfo, baseSeq: number): boolean {
-    const codexResetRevision = session.codexHistoryResetRevision ??
-      session.codexCanonicalHistoryRevision;
-    if (
-      session.provider === "codex" &&
-      typeof codexResetRevision === "number" &&
-      baseSeq < codexResetRevision
-    ) {
-      return true;
-    }
-
-    const delta = this.sessionManager.getHistorySince(session.id, baseSeq);
-    if (!delta) return true;
-    if (delta.kind === "snapshot") return true;
-
-    return delta.entries.some((entry) => {
-      const msg = entry.message;
-      if (msg.type === "user_input" || msg.type === "result") return true;
-      if (msg.type === "system") {
-        const subtype = (msg as Record<string, unknown>).subtype;
-        return (
-          subtype === "session_switched" ||
-          subtype === "session_rewound" ||
-          subtype === "sandbox_restarted" ||
-          subtype === "session_stopped"
-        );
-      }
-      return false;
-    });
-  }
-
-  private sendQueueState(
+  sendQueueState(
     ws: WebSocket,
     sessionId: string,
     session: SessionInfo,
   ): void {
     const item = session.queuedInput;
-    this.sendConversationQueue(ws, {
+    sendConversationQueue(this, ws, {
       type: "conversation_queue",
       sessionId,
       limit: 1,
@@ -11187,34 +3169,7 @@ export class BridgeWebSocketServer {
     } as Record<string, unknown>);
   }
 
-  private sendBackgroundTasksState(
-    ws: WebSocket,
-    sessionId: string,
-    session: SessionInfo,
-  ): void {
-    this.send(ws, {
-      type: "background_tasks",
-      sessionId,
-      tasks: session.backgroundTasks ?? [],
-    });
-  }
-
-  private sendCodexGoalState(
-    ws: WebSocket,
-    sessionId: string,
-    session: SessionInfo,
-  ): void {
-    const recovery = (session.process as CodexProcess).getRecoveryState?.();
-    if (recovery) this.send(ws, { type: "codex_recovery_state", sessionId, recovery });
-    if (session.codexGoal === undefined) return;
-    this.send(ws, {
-      type: "goal_state",
-      sessionId,
-      goal: session.codexGoal,
-    });
-  }
-
-  private sendCachedCommands(
+  sendCachedCommands(
     ws: WebSocket,
     sessionId: string,
     session: SessionInfo,
@@ -11239,7 +3194,11 @@ export class BridgeWebSocketServer {
       type: "system",
       subtype: "supported_commands",
       sessionId,
+      provider: session.provider,
       slashCommands: cached.slashCommands,
+      ...(cached.slashCommandDescriptions
+        ? { slashCommandDescriptions: cached.slashCommandDescriptions }
+        : {}),
       skills: cached.skills,
       ...(cached.skillMetadata ? { skillMetadata: cached.skillMetadata } : {}),
       apps: cached.apps,
@@ -11249,29 +3208,19 @@ export class BridgeWebSocketServer {
     });
   }
 
-  private sendConversationQueue(
-    ws: WebSocket,
-    msg:
-      | Extract<ServerMessage, { type: "conversation_queue" }>
-      | Record<string, unknown>,
-  ): void {
-    if (!this.shouldSendToClient(ws, msg)) return;
-    this.send(ws, msg);
-  }
-
-  private send(
+  send(
     ws: WebSocket,
     msg: ServerMessage | Record<string, unknown>,
   ): void {
     const compatibleMsg = this.prepareServerMessageForClient(ws, msg);
     if (!compatibleMsg) return;
-    const sessionId = this.extractSessionIdFromServerMessage(compatibleMsg);
+    const sessionId = extractSessionIdFromServerMessage(compatibleMsg);
     if (sessionId && this.debugEvents.has(sessionId)) {
-      this.recordDebugEvent(sessionId, {
+      recordDebugEvent(this, sessionId, {
         direction: "outgoing",
         channel: "ws",
         type: String(compatibleMsg.type ?? "unknown"),
-        detail: this.summarizeOutboundMessage(compatibleMsg),
+        detail: summarizeOutboundMessage(compatibleMsg),
       });
     }
     if (ws.readyState === WebSocket.OPEN) {
@@ -11286,7 +3235,7 @@ export class BridgeWebSocketServer {
     this.broadcast({ type: "gallery_new_image", image });
   }
 
-  private collectGitDiff(
+  collectGitDiff(
     cwd: string,
     callback: (result: { diff: string; error?: string }) => void,
     options?: { staged?: boolean; unstaged?: boolean },
@@ -11438,481 +3387,5 @@ export class BridgeWebSocketServer {
         callback({ diff: stdout });
       },
     );
-  }
-
-  // ---------------------------------------------------------------------------
-  // Image diff helpers
-  // ---------------------------------------------------------------------------
-
-  private static readonly IMAGE_EXTENSIONS = new Set([
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".gif",
-    ".webp",
-    ".ico",
-    ".bmp",
-    ".svg",
-  ]);
-
-  private static readonly FILE_PEEK_IMAGE_EXTENSIONS = new Set([
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".gif",
-    ".webp",
-    ".svg",
-  ]);
-
-  // Image diff thresholds (configurable via environment variables)
-  // - Auto-display: images ≤ threshold are sent inline as base64
-  // - Max size: images ≤ max are available for on-demand loading
-  // - Images > max size show text info only
-  private static readonly AUTO_DISPLAY_THRESHOLD = (() => {
-    const kb = parseInt(process.env.DIFF_IMAGE_AUTO_DISPLAY_KB ?? "", 10);
-    return Number.isFinite(kb) && kb > 0 ? kb * 1024 : 1024 * 1024; // default 1 MB
-  })();
-  private static readonly MAX_IMAGE_SIZE = (() => {
-    const mb = parseInt(process.env.DIFF_IMAGE_MAX_SIZE_MB ?? "", 10);
-    return Number.isFinite(mb) && mb > 0 ? mb * 1024 * 1024 : 5 * 1024 * 1024; // default 5 MB
-  })();
-
-  private static mimeTypeForExt(ext: string): string {
-    const map: Record<string, string> = {
-      ".png": "image/png",
-      ".jpg": "image/jpeg",
-      ".jpeg": "image/jpeg",
-      ".gif": "image/gif",
-      ".webp": "image/webp",
-      ".ico": "image/x-icon",
-      ".bmp": "image/bmp",
-      ".svg": "image/svg+xml",
-    };
-    return map[ext.toLowerCase()] ?? "application/octet-stream";
-  }
-
-  /**
-   * Scan diff text for image file changes and extract base64 data where appropriate.
-   *
-   * Detection strategy:
-   * 1. Binary markers: "Binary files a/<path> and b/<path> differ"
-   * 2. diff --git headers where the file extension is an image type
-   *
-   * For each detected image file:
-   * - Old version: `git show HEAD:<path>` (committed version)
-   * - New version: read from working tree
-   * - Apply size thresholds for auto-display / on-demand / text-only
-   */
-  private async collectImageChanges(
-    cwd: string,
-    diffText: string,
-  ): Promise<ImageChange[]> {
-    // Phase 1: Extract image file entries from diff text (synchronous, CPU only)
-    interface ImageEntry {
-      filePath: string;
-      isNew: boolean;
-      isDeleted: boolean;
-      isSvg: boolean;
-      mimeType: string;
-      ext: string;
-    }
-    const entries: ImageEntry[] = [];
-    const processedPaths = new Set<string>();
-
-    const lines = diffText.split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-
-      const gitMatch = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
-      if (!gitMatch) continue;
-
-      const filePath = gitMatch[2];
-      const ext = extname(filePath).toLowerCase();
-      if (!BridgeWebSocketServer.IMAGE_EXTENSIONS.has(ext)) continue;
-      if (processedPaths.has(filePath)) continue;
-      processedPaths.add(filePath);
-
-      let isNew = false;
-      let isDeleted = false;
-      for (let j = i + 1; j < Math.min(i + 6, lines.length); j++) {
-        if (lines[j].startsWith("diff --git ")) break;
-        if (lines[j].startsWith("new file mode")) isNew = true;
-        if (lines[j].startsWith("deleted file mode")) isDeleted = true;
-      }
-
-      entries.push({
-        filePath,
-        isNew,
-        isDeleted,
-        isSvg: ext === ".svg",
-        mimeType: BridgeWebSocketServer.mimeTypeForExt(ext),
-        ext,
-      });
-    }
-
-    if (entries.length === 0) return [];
-
-    // Phase 2: Read image data asynchronously
-    const execFileAsync = promisify(execFile);
-
-    const changes: ImageChange[] = [];
-    for (const entry of entries) {
-      let oldBuf: Buffer | undefined;
-      let newBuf: Buffer | undefined;
-
-      // Read old image (committed version)
-      if (!entry.isNew) {
-        try {
-          const result = await execFileAsync(
-            "git",
-            ["show", `HEAD:${entry.filePath}`],
-            {
-              cwd,
-              maxBuffer: BridgeWebSocketServer.MAX_IMAGE_SIZE + 1024,
-              encoding: "buffer",
-            },
-          );
-          oldBuf = result.stdout as unknown as Buffer;
-        } catch {
-          // File may not exist in HEAD (e.g. untracked)
-        }
-      }
-
-      // Read new image (working tree)
-      if (!entry.isDeleted) {
-        try {
-          const absPath = resolve(cwd, entry.filePath);
-          if (existsSync(absPath)) {
-            newBuf = await readFile(absPath);
-          }
-        } catch {
-          // Ignore read errors
-        }
-      }
-
-      const oldSize = oldBuf?.length;
-      const newSize = newBuf?.length;
-      const maxSize = Math.max(oldSize ?? 0, newSize ?? 0);
-
-      const autoDisplay =
-        maxSize <= BridgeWebSocketServer.AUTO_DISPLAY_THRESHOLD;
-      const loadable =
-        autoDisplay || maxSize <= BridgeWebSocketServer.MAX_IMAGE_SIZE;
-
-      const change: ImageChange = {
-        filePath: entry.filePath,
-        isNew: entry.isNew,
-        isDeleted: entry.isDeleted,
-        isSvg: entry.isSvg,
-        mimeType: entry.mimeType,
-        loadable,
-        autoDisplay: autoDisplay || undefined,
-      };
-
-      if (oldSize !== undefined) change.oldSize = oldSize;
-      if (newSize !== undefined) change.newSize = newSize;
-
-      // Auto-display images are no longer embedded in the initial response.
-      // They are loaded on-demand when the Flutter widget becomes visible.
-
-      changes.push(change);
-    }
-
-    return changes;
-  }
-
-  /**
-   * Load a single diff image on demand (async I/O for better throughput).
-   */
-  private async loadDiffImageAsync(
-    cwd: string,
-    filePath: string,
-    version: "old" | "new",
-  ): Promise<{ base64?: string; mimeType?: string; error?: string }> {
-    // Path traversal guard: reject paths containing '..' or absolute paths
-    if (filePath.includes("..") || filePath.startsWith("/")) {
-      return { error: "Invalid file path" };
-    }
-
-    const ext = extname(filePath).toLowerCase();
-    if (!BridgeWebSocketServer.IMAGE_EXTENSIONS.has(ext)) {
-      return { error: "Not an image file" };
-    }
-    const mimeType = BridgeWebSocketServer.mimeTypeForExt(ext);
-
-    try {
-      const execFileAsync = promisify(execFile);
-
-      let buf: Buffer;
-      if (version === "old") {
-        const result = await execFileAsync(
-          "git",
-          ["show", `HEAD:${filePath}`],
-          {
-            cwd,
-            maxBuffer: BridgeWebSocketServer.MAX_IMAGE_SIZE + 1024,
-            encoding: "buffer",
-          },
-        );
-        buf = result.stdout as unknown as Buffer;
-      } else {
-        const absPath = resolve(cwd, filePath);
-        // Verify resolved path stays within cwd
-        if (!isPathWithinAllowedDirectory(absPath, cwd, this.platform)) {
-          return { error: "Invalid file path" };
-        }
-        buf = await readFile(absPath);
-      }
-
-      if (buf.length > BridgeWebSocketServer.MAX_IMAGE_SIZE) {
-        return { error: "Image too large" };
-      }
-
-      return { base64: buf.toString("base64"), mimeType };
-    } catch (err) {
-      return { error: err instanceof Error ? err.message : String(err) };
-    }
-  }
-
-  private extractSessionIdFromClientMessage(
-    msg: ClientMessage,
-  ): string | undefined {
-    return "sessionId" in msg && typeof msg.sessionId === "string"
-      ? msg.sessionId
-      : undefined;
-  }
-
-  private extractSessionIdFromServerMessage(
-    msg: ServerMessage | Record<string, unknown>,
-  ): string | undefined {
-    if ("sessionId" in msg && typeof msg.sessionId === "string")
-      return msg.sessionId;
-    return undefined;
-  }
-
-  private recordDebugEvent(
-    sessionId: string,
-    event: Omit<DebugTraceEvent, "ts" | "sessionId">,
-  ): void {
-    const events = this.debugEvents.get(sessionId) ?? [];
-    const fullEvent: DebugTraceEvent = {
-      ts: new Date().toISOString(),
-      sessionId,
-      ...event,
-    };
-    events.push(fullEvent);
-    if (events.length > BridgeWebSocketServer.MAX_DEBUG_EVENTS) {
-      events.splice(0, events.length - BridgeWebSocketServer.MAX_DEBUG_EVENTS);
-    }
-    this.debugEvents.set(sessionId, events);
-    this.debugTraceStore.record(fullEvent);
-  }
-
-  private getDebugEvents(sessionId: string, limit: number): DebugTraceEvent[] {
-    const events = this.debugEvents.get(sessionId) ?? [];
-    const capped = Math.max(
-      0,
-      Math.min(limit, BridgeWebSocketServer.MAX_DEBUG_EVENTS),
-    );
-    if (capped === 0) return [];
-    return events.slice(-capped);
-  }
-
-  private buildHistorySummary(history: ServerMessage[]): string[] {
-    const lines = history.map((msg, index) => {
-      const num = String(index + 1).padStart(3, "0");
-      return `${num}. ${this.summarizeServerMessage(msg)}`;
-    });
-    if (lines.length <= BridgeWebSocketServer.MAX_HISTORY_SUMMARY_ITEMS) {
-      return lines;
-    }
-    return lines.slice(-BridgeWebSocketServer.MAX_HISTORY_SUMMARY_ITEMS);
-  }
-
-  private summarizeClientMessage(msg: ClientMessage): string {
-    switch (msg.type) {
-      case "input": {
-        const textPreview = msg.text.replace(/\s+/g, " ").trim().slice(0, 80);
-        const hasImage = msg.imageBase64 != null || msg.imageId != null;
-        return `text=\"${textPreview}\" image=${hasImage} skills=${msg.skills?.length ?? (msg.skill ? 1 : 0)} mentions=${msg.mentions?.length ?? 0}`;
-      }
-      case "push_register":
-        return `platform=${msg.platform} token=${msg.token.slice(0, 8)}...`;
-      case "push_unregister":
-        return `token=${msg.token.slice(0, 8)}...`;
-      case "approve":
-      case "approve_always":
-      case "reject":
-        return `id=${msg.id}`;
-      case "answer":
-        return `toolUseId=${msg.toolUseId}`;
-      case "install_tool_suggestion":
-        return `toolUseId=${msg.toolUseId}`;
-      case "start":
-        return `projectPath=${msg.projectPath} provider=${msg.provider ?? "claude"}`;
-      case "resume_session":
-        return `sessionId=${msg.sessionId} provider=${msg.provider ?? "claude"}`;
-      case "get_debug_bundle":
-        return `traceLimit=${msg.traceLimit ?? BridgeWebSocketServer.MAX_DEBUG_EVENTS} includeDiff=${msg.includeDiff ?? true}`;
-      case "get_usage":
-        return "get_usage";
-      default:
-        return msg.type;
-    }
-  }
-
-  private summarizeServerMessage(msg: ServerMessage): string {
-    switch (msg.type) {
-      case "assistant": {
-        const textChunks: string[] = [];
-        for (const content of msg.message.content) {
-          if (content.type === "text") {
-            textChunks.push(content.text);
-          }
-        }
-        const text = textChunks
-          .join(" ")
-          .replace(/\s+/g, " ")
-          .trim()
-          .slice(0, 100);
-        return text ? `assistant: ${text}` : "assistant";
-      }
-      case "tool_result": {
-        const contentPreview = msg.content
-          .replace(/\s+/g, " ")
-          .trim()
-          .slice(0, 100);
-        return `${msg.toolName ?? "tool_result"}(${msg.toolUseId}) ${contentPreview}`;
-      }
-      case "permission_request":
-        return `${msg.toolName}(${msg.toolUseId})`;
-      case "result":
-        return `${msg.subtype}${msg.error ? ` error=${msg.error}` : ""}`;
-      case "status":
-        return msg.status;
-      case "error":
-        return msg.message;
-      case "stream_delta":
-      case "thinking_delta":
-        return `${msg.type}(${msg.text.length})`;
-      default:
-        return msg.type;
-    }
-  }
-
-  private summarizeOutboundMessage(
-    msg: ServerMessage | Record<string, unknown>,
-  ): string {
-    if ("type" in msg && typeof msg.type === "string") {
-      return msg.type;
-    }
-    return "message";
-  }
-
-  private pruneDebugEvents(): void {
-    const active = new Set(this.sessionManager.list().map((s) => s.id));
-    for (const sessionId of this.debugEvents.keys()) {
-      if (!active.has(sessionId)) {
-        this.debugEvents.delete(sessionId);
-      }
-    }
-    for (const sessionId of this.notifiedPermissionToolUses.keys()) {
-      if (!active.has(sessionId)) {
-        this.notifiedPermissionToolUses.delete(sessionId);
-      }
-    }
-  }
-
-  private buildReproRecipe(
-    session: SessionInfo,
-    traceLimit: number,
-    includeDiff: boolean,
-  ): Record<string, unknown> {
-    const bridgePort = process.env.BRIDGE_PORT ?? "8765";
-    const wsUrlHint = `ws://localhost:${bridgePort}`;
-    const notes = [
-      "1) Connect with wsUrlHint and send resumeSessionMessage.",
-      "2) Read session_created.sessionId from server response.",
-      "3) Replace <runtime_session_id> in getHistoryMessage/getDebugBundleMessage and send them.",
-      "4) Compare history/debugTrace/diff with the saved bundle snapshot.",
-    ];
-    if (!session.claudeSessionId) {
-      notes.push(
-        "claudeSessionId is not available yet. Use list_recent_sessions to pick the right session id.",
-      );
-    }
-
-    return {
-      wsUrlHint,
-      startBridgeCommand: `BRIDGE_PORT=${bridgePort} npm run bridge`,
-      resumeSessionMessage: this.buildResumeSessionMessage(session),
-      getHistoryMessage: {
-        type: "get_history",
-        sessionId: "<runtime_session_id>",
-      },
-      getDebugBundleMessage: {
-        type: "get_debug_bundle",
-        sessionId: "<runtime_session_id>",
-        traceLimit,
-        includeDiff,
-      },
-      notes,
-    };
-  }
-
-  private buildResumeSessionMessage(
-    session: SessionInfo,
-  ): Record<string, unknown> {
-    const msg: Record<string, unknown> = {
-      type: "resume_session",
-      sessionId: session.claudeSessionId ?? "<session_id_from_recent_sessions>",
-      projectPath: session.projectPath,
-      provider: session.provider,
-    };
-
-    if (session.provider === "codex" && session.codexSettings) {
-      if (session.codexSettings.approvalPolicy !== undefined) {
-        msg.approvalPolicy = session.codexSettings.approvalPolicy;
-      }
-      if (session.codexSettings.approvalsReviewer !== undefined) {
-        msg.approvalsReviewer = session.codexSettings.approvalsReviewer;
-      }
-      if (session.codexSettings.sandboxMode !== undefined) {
-        msg.sandboxMode = session.codexSettings.sandboxMode;
-      }
-      if (session.codexSettings.model !== undefined) {
-        msg.model = session.codexSettings.model;
-      }
-      if (session.codexSettings.modelReasoningEffort !== undefined) {
-        msg.modelReasoningEffort = session.codexSettings.modelReasoningEffort;
-      }
-      if (session.codexSettings.serviceTier !== undefined) {
-        msg.serviceTier = session.codexSettings.serviceTier;
-      }
-      if (session.codexSettings.networkAccessEnabled !== undefined) {
-        msg.networkAccessEnabled = session.codexSettings.networkAccessEnabled;
-      }
-      if (session.codexSettings.webSearchMode !== undefined) {
-        msg.webSearchMode = session.codexSettings.webSearchMode;
-      }
-      if (session.codexSettings.additionalWritableRoots !== undefined) {
-        msg.additionalWritableRoots =
-          session.codexSettings.additionalWritableRoots;
-      }
-    }
-
-    return msg;
-  }
-
-  private buildAgentPrompt(session: SessionInfo): string {
-    return [
-      "Use this ccpocket debug bundle to investigate a chat-screen bug.",
-      `Target provider: ${session.provider}`,
-      `Project path: ${session.projectPath}`,
-      "Required output:",
-      "1) Timeline analysis from historySummary + debugTrace.",
-      "2) Top 1-3 root-cause hypotheses with confidence.",
-      "3) Concrete validation steps and the minimum extra logs needed.",
-    ].join("\n");
   }
 }

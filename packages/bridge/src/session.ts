@@ -1,9 +1,9 @@
 import { currentGitBranch } from "./git-project-state.js";
 import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   pathToSlug,
   claudeAbandonedBranchUuids,
@@ -13,6 +13,8 @@ import {
   renameCodexSession,
   saveCodexSessionAdditionalWritableRoots,
   saveCodexSessionProfile,
+  type SessionHistoryContentItem,
+  type SessionHistoryMessage,
 } from "./sessions-index.js";
 import {
   SdkProcess,
@@ -24,6 +26,15 @@ import {
   normalizeCodexReasoningEffortForModel,
   type CodexStartOptions,
 } from "./codex-process.js";
+import {
+  AntigravityProcess,
+  type AntigravitySettings,
+  type AntigravityStartOptions,
+} from "./antigravity-process.js";
+import type {
+  AntigravityCompactionRecord,
+  AntigravityPermissionGrants,
+} from "./antigravity-store.js";
 import type {
   ServerMessage,
   ProcessStatus,
@@ -32,6 +43,7 @@ import type {
   QueuedInputItem,
   CodexGoal,
   BackgroundTaskInfo,
+  AgentActivityState,
 } from "./parser.js";
 import { isAgentBackgroundTask } from "./parser.js";
 import type { ImageRef, ImageStore } from "./image-store.js";
@@ -59,7 +71,7 @@ export interface WorktreeOptions {
 
 export interface SessionInfo {
   id: string;
-  process: SdkProcess | CodexProcess;
+  process: SdkProcess | CodexProcess | AntigravityProcess;
   provider: Provider;
   history: ServerMessage[];
   historyEntries: HistoryEntry[];
@@ -67,6 +79,11 @@ export interface SessionInfo {
   historyLowWatermark: number;
   /** Past conversation loaded from disk on resume (SessionHistoryMessage[]). */
   pastMessages?: unknown[];
+  /**
+   * Untrimmed Antigravity transcript (replayed + live, capped at 5,000 entries)
+   * served by `get_session_transcript` even after live history is trimmed.
+   */
+  antigravityTranscript?: SessionHistoryMessage[];
   /**
    * True until the first Codex history response consumes the history already
    * loaded during resume. This also distinguishes a loaded empty history from
@@ -124,6 +141,8 @@ export interface SessionInfo {
   codexGoal?: CodexGoal | null;
   /** Live Claude background tasks. Kept out of chat history. */
   backgroundTasks?: BackgroundTaskInfo[];
+  /** Ephemeral mid-turn live agent activity state. Kept out of chat history. */
+  agentActivity?: AgentActivityState | null;
   /** Synthetic Codex user UUIDs waiting for their app-server echo. */
   pendingCodexUserEchoUuids?: Set<string>;
   /** Raw Codex app-server user item ids mapped to valid ccpocket turn UUIDs. */
@@ -174,6 +193,14 @@ export interface QueuedSessionInput extends QueuedInputItem {
   imageRefs?: ImageRef[];
 }
 
+export function providerLabel(provider: Provider): string {
+  return provider === "codex"
+    ? "Codex"
+    : provider === "antigravity"
+      ? "Antigravity"
+      : "Claude";
+}
+
 export interface SessionSummary {
   id: string;
   provider: Provider;
@@ -210,6 +237,7 @@ export interface SessionSummary {
     additionalWritableRoots?: string[];
   };
   /** User-selected Claude model, effort and fast mode. */
+  antigravitySettings?: AntigravitySettings;
   claudeSettings?: {
     model?: string;
     effort?: string;
@@ -348,12 +376,37 @@ function publicQueuedInput(item?: QueuedSessionInput): QueuedInputItem | undefin
   };
 }
 
+function buildComparablePathSet(paths: readonly string[]): Set<string> {
+  const set = new Set<string>();
+  for (const raw of paths) {
+    const abs = resolve(raw);
+    set.add(abs);
+    try {
+      set.add(realpathSync(abs));
+    } catch {
+      // File may not exist or be unreadable in tests; lexical path still matches.
+    }
+  }
+  return set;
+}
+
+function matchesComparablePathSet(path: string, set: ReadonlySet<string>): boolean {
+  const abs = resolve(path);
+  if (set.has(abs)) return true;
+  try {
+    return set.has(realpathSync(abs));
+  } catch {
+    return false;
+  }
+}
+
 export class SessionManager {
   private sessions = new Map<string, SessionInfo>();
   private processMessageDelivery = new Map<
     string,
     ProcessMessageDeliveryState
   >();
+  private pendingMessageDrains = new Map<string, Promise<void>>();
   private onMessage: (sessionId: string, msg: ServerMessage) => void;
   private imageStore: ImageStore | null;
   private galleryStore: GalleryStore | null;
@@ -361,6 +414,12 @@ export class SessionManager {
   private worktreeStore: WorktreeStore | null;
   private onSessionUpdated: SessionUpdatedCallback | null;
   private assistantImageResolver: AssistantImageResolver | null = null;
+  private onAntigravityCompaction:
+    | ((claudeSessionId: string, record: AntigravityCompactionRecord) => void)
+    | null = null;
+  private onAntigravityPermissionGrants:
+    | ((claudeSessionId: string, grants: AntigravityPermissionGrants) => void)
+    | null = null;
   private readonly idleSessionTtlMs: number;
   private idleEvictionTimer: ReturnType<typeof setInterval>;
 
@@ -369,6 +428,7 @@ export class SessionManager {
     string,
     {
       slashCommands: string[];
+      slashCommandDescriptions?: Record<string, string>;
       skills: string[];
       skillMetadata?: Array<Record<string, unknown>>;
       apps: string[];
@@ -378,9 +438,38 @@ export class SessionManager {
     }
   >();
 
+  /** Returns true when async process message processing is currently queued or running. */
+  hasPendingMessages(sessionId: string): boolean {
+    return this.pendingMessageDrains.has(sessionId);
+  }
+
+  /** Waits for any in-flight async process message processing (e.g. image registration) on a session. */
+  async waitForPendingMessages(sessionId: string): Promise<void> {
+    const pending = this.pendingMessageDrains.get(sessionId);
+    if (pending) await pending;
+  }
+
   /** Enables attaching markdown-embedded images to assistant messages. */
   setAssistantImageResolver(resolver: AssistantImageResolver | null): void {
     this.assistantImageResolver = resolver;
+  }
+
+  /** Receives Antigravity compaction records for persistence. */
+  setAntigravityCompactionHandler(
+    handler:
+      | ((claudeSessionId: string, record: AntigravityCompactionRecord) => void)
+      | null,
+  ): void {
+    this.onAntigravityCompaction = handler;
+  }
+
+  /** Receives Antigravity session-scoped permission grants for persistence across resumes. */
+  setAntigravityPermissionGrantsHandler(
+    handler:
+      | ((claudeSessionId: string, grants: AntigravityPermissionGrants) => void)
+      | null,
+  ): void {
+    this.onAntigravityPermissionGrants = handler;
   }
 
   constructor(
@@ -416,6 +505,7 @@ export class SessionManager {
     provider?: Provider,
     codexOptions?: CodexStartOptions,
     creationOptions?: { deferProcessMessages?: boolean },
+    antigravityOptions?: AntigravityStartOptions,
   ): string {
     const id = randomUUID().slice(0, 8);
     const effectiveProvider = provider ?? "claude";
@@ -429,7 +519,11 @@ export class SessionManager {
         }
       : undefined;
     const proc =
-      effectiveProvider === "codex" ? new CodexProcess() : new SdkProcess();
+      effectiveProvider === "codex"
+        ? new CodexProcess()
+        : effectiveProvider === "antigravity"
+          ? new AntigravityProcess()
+          : new SdkProcess();
     const messageDelivery: ProcessMessageDeliveryState = {
       deferred: creationOptions?.deferProcessMessages === true,
       discarded: false,
@@ -491,7 +585,9 @@ export class SessionManager {
       gitBranch,
       worktreePath: wtPath,
       worktreeBranch: wtBranch,
+      // Antigravity titles its own sessions; the Bridge never prompts for one.
       autoRename:
+        effectiveProvider !== "antigravity" &&
         options?.autoRename === true &&
         !options.sessionId &&
         !options.continueMode &&
@@ -499,7 +595,12 @@ export class SessionManager {
       // Pre-populate claudeSessionId for resumed sessions so that get_history
       // can return it immediately (before the SDK sends a system/result event).
       // A fork gets a new provider id from system/init instead.
-      claudeSessionId: options?.forkSession ? undefined : options?.sessionId,
+      claudeSessionId:
+        effectiveProvider === "antigravity"
+          ? antigravityOptions?.sessionId
+          : options?.forkSession
+            ? undefined
+            : options?.sessionId,
     };
     if (effectiveProvider === "codex") {
       this.seedCodexPastUserTurnUuidMap(session);
@@ -518,9 +619,32 @@ export class SessionManager {
         const previousProviderSessionId = session.claudeSessionId;
 
         if (msg.type === "background_tasks") {
+          const prevCounts = backgroundTaskCounts(session.backgroundTasks);
           session.backgroundTasks = msg.tasks;
+          const nextCounts = backgroundTaskCounts(msg.tasks);
           deliverProcessMessage({ ...msg, sessionId: session.id });
+          if (
+            prevCounts.backgroundTaskCount !== nextCounts.backgroundTaskCount ||
+            prevCounts.backgroundAgentCount !== nextCounts.backgroundAgentCount
+          ) {
+            this.onSessionUpdated?.(session.id);
+          }
           return;
+        }
+
+        if (msg.type === "agent_activity") {
+          session.agentActivity = msg.activity;
+          if (!(proc instanceof AntigravityProcess && proc.isReplaying)) {
+            deliverProcessMessage({ ...msg, sessionId: session.id });
+          }
+          return;
+        }
+
+        if (
+          (msg.type === "status" && msg.status === "idle") ||
+          msg.type === "result"
+        ) {
+          session.agentActivity = null;
         }
 
         if (msg.type === "goal_state") {
@@ -567,6 +691,7 @@ export class SessionManager {
           msg.type === "system" &&
           (msg.subtype === "init" || msg.subtype === "supported_commands") &&
           (msg.slashCommands ||
+            msg.slashCommandDescriptions ||
             msg.skills ||
             msg.skillMetadata ||
             msg.apps ||
@@ -582,6 +707,9 @@ export class SessionManager {
           this.commandCache.set(commandCacheKey, {
             slashCommands:
               msg.slashCommands ?? previousCommands?.slashCommands ?? [],
+            slashCommandDescriptions:
+              msg.slashCommandDescriptions ??
+              previousCommands?.slashCommandDescriptions,
             skills: msg.skills ?? previousCommands?.skills ?? [],
             skillMetadata:
               (msg.skillMetadata as
@@ -631,6 +759,11 @@ export class SessionManager {
               msg = { ...msg, toolName: cachedName };
             }
           }
+        } else if (effectiveProvider === "antigravity") {
+          if (msg.type === "system" && "sessionId" in msg && msg.sessionId) {
+            session.claudeSessionId = msg.sessionId;
+            this.saveWorktreeMapping(session);
+          }
         } else {
           // Codex: capture thread_id for session tracking and worktree restore.
           if (msg.type === "system" && "sessionId" in msg && msg.sessionId) {
@@ -668,104 +801,125 @@ export class SessionManager {
 
         if (
           session.claudeSessionId &&
-          session.claudeSessionId !== previousProviderSessionId
+          session.claudeSessionId !== previousProviderSessionId &&
+          !(proc instanceof AntigravityProcess && proc.isReplaying)
         ) {
           this.onSessionUpdated?.(session.id);
         }
 
         // Attach images the assistant embedded with ![label](path).
-        if (msg.type === "assistant" && this.assistantImageResolver) {
-          const texts = assistantTextBlocks(msg.message.content);
-          if (hasMarkdownImages(texts)) {
-            const images = await this.assistantImageResolver(
-              texts,
-              session.projectPath,
-            );
-            if (images.length > 0) {
-              msg = { ...msg, images };
+        if (msg.type === "assistant") {
+          const omitted = msg.omitAssistantImagePaths;
+          if (this.assistantImageResolver) {
+            const texts = assistantTextBlocks(msg.message.content);
+            if (hasMarkdownImages(texts)) {
+              const resolvedImages = await this.assistantImageResolver(
+                texts,
+                session.projectPath,
+              );
+              const omittedSet = omitted?.length
+                ? buildComparablePathSet(omitted)
+                : null;
+              const images = omittedSet
+                ? resolvedImages.filter(
+                    (img) => !matchesComparablePathSet(img.path, omittedSet),
+                  )
+                : resolvedImages;
+              if (images.length > 0) {
+                msg = { ...msg, images };
+              }
             }
+          }
+          if (omitted !== undefined) {
+            const { omitAssistantImagePaths: _, ...cleanMsg } = msg;
+            msg = cleanMsg as typeof msg;
           }
         }
 
         // Extract images from tool_result content for both Claude and Codex.
-        if (msg.type === "tool_result" && this.imageStore) {
-          const paths = this.imageStore.extractImagePaths(msg.content);
-          if (paths.length > 0) {
-            const images = await this.imageStore.registerImages(
-              paths,
-              session.projectPath,
-            );
-            if (images.length > 0) {
-              msg = { ...msg, images };
+        if (msg.type === "tool_result") {
+          const skipGallery = msg.skipGallery === true;
+          if (this.imageStore) {
+            const paths = this.imageStore.extractImagePaths(msg.content);
+            if (paths.length > 0) {
+              const images = await this.imageStore.registerImages(
+                paths,
+                session.projectPath,
+              );
+              if (images.length > 0) {
+                msg = { ...msg, images };
+              }
+
+              // Also register in GalleryStore (disk-persistent), except during history replay
+              if (this.galleryStore && !skipGallery) {
+                for (const p of paths) {
+                  const meta = await this.galleryStore.addImage(
+                    p,
+                    session.projectPath,
+                    session.id,
+                  );
+                  if (meta && this.onGalleryImage) {
+                    this.onGalleryImage(meta);
+                  }
+                }
+              }
             }
 
-            // Also register in GalleryStore (disk-persistent)
-            if (this.galleryStore) {
-              for (const p of paths) {
-                const meta = await this.galleryStore.addImage(
-                  p,
-                  session.projectPath,
-                  session.id,
-                );
-                if (meta && this.onGalleryImage) {
-                  this.onGalleryImage(meta);
+            // Extract base64 images from content blocks (e.g., MCP screenshots)
+            if (msg.rawContentBlocks) {
+              const imageBlocks = (
+                msg.rawContentBlocks as Array<Record<string, unknown>>
+              ).filter(
+                (c) =>
+                  c.type === "image" &&
+                  (c.source as Record<string, unknown>)?.type === "base64",
+              );
+
+              if (imageBlocks.length > 0) {
+                const existingImages = msg.images ?? [];
+                const newImages: ImageRef[] = [];
+
+                for (const block of imageBlocks) {
+                  const source = block.source as Record<string, unknown>;
+                  if (
+                    typeof source?.data !== "string" ||
+                    typeof source?.media_type !== "string"
+                  )
+                    continue;
+                  const b64Data = source.data as string;
+                  const mimeType = source.media_type as string;
+                  const ref = this.imageStore.registerFromBase64(
+                    b64Data,
+                    mimeType,
+                  );
+                  if (ref) {
+                    newImages.push(ref);
+
+                    // Also persist to GalleryStore
+                    if (this.galleryStore && !skipGallery) {
+                      const meta = await this.galleryStore.addImageFromBase64(
+                        b64Data,
+                        mimeType,
+                        session.projectPath,
+                        session.id,
+                      );
+                      if (meta && this.onGalleryImage) {
+                        this.onGalleryImage(meta);
+                      }
+                    }
+                  }
+                }
+
+                if (newImages.length > 0) {
+                  msg = { ...msg, images: [...existingImages, ...newImages] };
                 }
               }
             }
           }
 
-          // Extract base64 images from content blocks (e.g., MCP screenshots)
-          if (msg.rawContentBlocks) {
-            const imageBlocks = (
-              msg.rawContentBlocks as Array<Record<string, unknown>>
-            ).filter(
-              (c) =>
-                c.type === "image" &&
-                (c.source as Record<string, unknown>)?.type === "base64",
-            );
-
-            if (imageBlocks.length > 0) {
-              const existingImages = msg.images ?? [];
-              const newImages: ImageRef[] = [];
-
-              for (const block of imageBlocks) {
-                const source = block.source as Record<string, unknown>;
-                if (
-                  typeof source?.data !== "string" ||
-                  typeof source?.media_type !== "string"
-                )
-                  continue;
-                const b64Data = source.data as string;
-                const mimeType = source.media_type as string;
-                const ref = this.imageStore.registerFromBase64(
-                  b64Data,
-                  mimeType,
-                );
-                if (ref) {
-                  newImages.push(ref);
-
-                  // Also persist to GalleryStore
-                  if (this.galleryStore) {
-                    const meta = await this.galleryStore.addImageFromBase64(
-                      b64Data,
-                      mimeType,
-                      session.projectPath,
-                      session.id,
-                    );
-                    if (meta && this.onGalleryImage) {
-                      this.onGalleryImage(meta);
-                    }
-                  }
-                }
-              }
-
-              if (newImages.length > 0) {
-                msg = { ...msg, images: [...existingImages, ...newImages] };
-              }
-            }
-
-            // Strip transient rawContentBlocks before sending to client
-            const { rawContentBlocks: _, ...cleanMsg } = msg;
+          if (msg.rawContentBlocks !== undefined || msg.skipGallery !== undefined) {
+            // Strip transient fields before sending to client or storing in history
+            const { rawContentBlocks: _raw, skipGallery: _skip, ...cleanMsg } = msg;
             msg = cleanMsg as typeof msg;
           }
         }
@@ -789,9 +943,11 @@ export class SessionManager {
           }
         }
 
-        deliverProcessMessage(
-          this.buildLiveProcessMessage(session, historyMsg, mergedUserInput),
-        );
+        if (!(proc instanceof AntigravityProcess && proc.isReplaying)) {
+          deliverProcessMessage(
+            this.buildLiveProcessMessage(session, historyMsg, mergedUserInput),
+          );
+        }
 
         if (
           historyMsg.type === "permission_request" ||
@@ -822,12 +978,22 @@ export class SessionManager {
       firstMessage: ServerMessage,
     ): Promise<void> => {
       processingAsyncProcessMessage = true;
-      let nextMessage: ServerMessage | undefined = firstMessage;
-      while (nextMessage) {
-        await processMessage(nextMessage);
-        nextMessage = pendingProcessMessages.shift();
+      const run = (async () => {
+        let nextMessage: ServerMessage | undefined = firstMessage;
+        while (nextMessage) {
+          await processMessage(nextMessage);
+          nextMessage = pendingProcessMessages.shift();
+        }
+      })();
+      this.pendingMessageDrains.set(id, run);
+      try {
+        await run;
+      } finally {
+        if (this.pendingMessageDrains.get(id) === run) {
+          this.pendingMessageDrains.delete(id);
+        }
+        processingAsyncProcessMessage = false;
       }
-      processingAsyncProcessMessage = false;
     };
 
     const processMessageMayAwait = (msg: ServerMessage): boolean => {
@@ -867,6 +1033,28 @@ export class SessionManager {
         this.evictStaleIdleSessions();
       }
     });
+
+    if (proc instanceof AntigravityProcess) {
+      proc.on("title", (title) => {
+        if (this.sessions.get(id) !== session || session.name) return;
+        session.name = title;
+        this.onSessionUpdated?.(session.id);
+      });
+      proc.on("compaction", (record) => {
+        if (this.sessions.get(id) !== session) return;
+        const providerSessionId = session.claudeSessionId ?? proc.sessionId;
+        if (providerSessionId) {
+          this.onAntigravityCompaction?.(providerSessionId, record);
+        }
+      });
+      proc.on("permission_grants", (grants) => {
+        if (this.sessions.get(id) !== session) return;
+        const providerSessionId = session.claudeSessionId ?? proc.sessionId;
+        if (providerSessionId) {
+          this.onAntigravityPermissionGrants?.(providerSessionId, grants);
+        }
+      });
+    }
 
     proc.on("usage_limit", (retryAt?: number) => {
       if (this.sessions.get(id) !== session) return;
@@ -968,10 +1156,12 @@ export class SessionManager {
     }
 
     try {
-      if (effectiveProvider === "codex") {
-        (proc as CodexProcess).start(effectiveCwd, effectiveCodexOptions);
+      if (proc instanceof CodexProcess) {
+        proc.start(effectiveCwd, effectiveCodexOptions);
+      } else if (proc instanceof AntigravityProcess) {
+        proc.start(effectiveCwd, antigravityOptions);
       } else {
-        (proc as SdkProcess).start(effectiveCwd, options);
+        proc.start(effectiveCwd, options);
       }
     } catch (error) {
       messageDelivery.discarded = true;
@@ -1129,13 +1319,17 @@ export class SessionManager {
               session.process.approvalPolicy) === "never"
             ? "fullAccess"
             : "default"
-          : undefined;
+          : session.process.permissionMode === "bypassPermissions"
+            ? "fullAccess"
+            : session.process.permissionMode === "acceptEdits"
+              ? "acceptEdits"
+              : "default";
     const planMode =
       session.process instanceof SdkProcess
         ? session.process.permissionMode === "plan"
         : session.process instanceof CodexProcess
           ? session.process.collaborationMode === "plan"
-          : undefined;
+          : session.process.permissionMode === "plan";
     return {
       id: session.id,
       provider: session.provider,
@@ -1160,14 +1354,17 @@ export class SessionManager {
                   session.process.approvalPolicy) === "never"
                 ? "bypassPermissions"
                 : "acceptEdits"
-            : undefined,
+            : session.process.permissionMode,
       executionMode,
       planMode,
       model:
-        session.process instanceof SdkProcess
-          ? session.process.model
-          : undefined,
+        session.process instanceof CodexProcess
+          ? undefined
+          : session.process.model,
       codexSettings,
+      ...(session.process instanceof AntigravityProcess
+        ? { antigravitySettings: session.process.settings }
+        : {}),
       ...(session.process instanceof SdkProcess
         ? { claudeSettings: session.process.settings }
         : {}),
@@ -1203,8 +1400,82 @@ export class SessionManager {
     if (session.provider === "codex" && msg.type === "user_input") {
       session.codexLatestUserInput = msg;
     }
+    if (session.provider === "antigravity") {
+      this.appendAntigravityTranscript(session, msg);
+    }
     this.trimHistory(session);
     return entry;
+  }
+
+  private static readonly MAX_ANTIGRAVITY_TRANSCRIPT = 5000;
+
+  private appendAntigravityTranscript(
+    session: SessionInfo,
+    msg: ServerMessage,
+  ): void {
+    let item: SessionHistoryMessage | null = null;
+    if (msg.type === "user_input") {
+      item = {
+        role: "user",
+        ...(msg.userMessageUuid ? { uuid: msg.userMessageUuid } : {}),
+        ...(msg.timestamp ? { timestamp: msg.timestamp } : {}),
+        ...(msg.isMeta ? { isMeta: true } : {}),
+        ...(msg.imageCount ? { imageCount: msg.imageCount } : {}),
+        content: msg.text,
+      };
+    } else if (msg.type === "assistant") {
+      const blocks: SessionHistoryContentItem[] = msg.message.content.map(
+        (block) =>
+          block.type === "text"
+            ? { type: "text", text: block.text }
+            : block.type === "thinking"
+              ? { type: "thinking", thinking: block.thinking }
+              : {
+                  type: "tool_use",
+                  id: block.id,
+                  name: block.name,
+                  input: block.input,
+                },
+      );
+      item = {
+        role: "assistant",
+        ...(msg.messageUuid ? { uuid: msg.messageUuid } : {}),
+        content: blocks,
+      };
+    } else if (msg.type === "tool_result") {
+      item = {
+        role: "tool_result",
+        toolUseId: msg.toolUseId,
+        ...(msg.toolName ? { toolName: msg.toolName } : {}),
+        content: msg.content,
+      };
+    } else if (msg.type === "context_compaction") {
+      item = {
+        role: "compaction",
+        ...(msg.id ? { uuid: msg.id } : {}),
+        ...(msg.timestamp ? { timestamp: msg.timestamp } : {}),
+        compaction: {
+          ...(msg.trigger ? { trigger: msg.trigger } : {}),
+          ...(msg.preTokens !== undefined ? { preTokens: msg.preTokens } : {}),
+          ...(msg.postTokens !== undefined ? { postTokens: msg.postTokens } : {}),
+          ...(msg.summary ? { summary: msg.summary } : {}),
+        },
+        content: "",
+      };
+    }
+    if (!item) return;
+    session.antigravityTranscript ??= [];
+    session.antigravityTranscript.push(item);
+    if (
+      session.antigravityTranscript.length >
+      SessionManager.MAX_ANTIGRAVITY_TRANSCRIPT
+    ) {
+      session.antigravityTranscript.splice(
+        0,
+        session.antigravityTranscript.length -
+          SessionManager.MAX_ANTIGRAVITY_TRANSCRIPT,
+      );
+    }
   }
 
   private mergeUserInputIntoHistory(
@@ -1726,6 +1997,11 @@ export class SessionManager {
         });
       } else if (session.process instanceof SdkProcess) {
         session.process.steerInput(input.text, input.images);
+      } else if (session.process instanceof AntigravityProcess) {
+        // A prompt sent during a turn joins it.
+        if (!session.process.sendInput(input.text, input.images)) {
+          return { ok: false, error: "Antigravity session is not running." };
+        }
       } else {
         return { ok: false, error: "No active session process." };
       }
@@ -1802,7 +2078,9 @@ export class SessionManager {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       reset = await Promise.race([
-        session.process.readUsageLimitResetAt(),
+        session.process instanceof AntigravityProcess
+          ? Promise.resolve(undefined)
+          : session.process.readUsageLimitResetAt(),
         new Promise<never>((_, reject) => {
           timeout = setTimeout(() => reject(new Error("Usage lookup timed out")), 10_000);
           timeout.unref?.();
@@ -1850,6 +2128,9 @@ export class SessionManager {
       if (session.process.isTurnActive || session.process.status !== "idle") {
         return;
       }
+    } else if (session.process instanceof AntigravityProcess) {
+      // Also false while a plan waits for review.
+      if (!session.process.isWaitingForInput) return;
     } else {
       return;
     }
@@ -1870,6 +2151,8 @@ export class SessionManager {
         skills: queued.skills,
         mentions: queued.mentions,
       });
+    } else if (session.process instanceof AntigravityProcess) {
+      session.process.sendInput(queued.text, queued.images);
     } else if (queued.images && queued.images.length > 0) {
       session.process.dispatchInputWithImages(queued.text, queued.images);
     } else {
@@ -1897,6 +2180,7 @@ export class SessionManager {
   ):
     | {
         slashCommands: string[];
+        slashCommandDescriptions?: Record<string, string>;
         skills: string[];
         skillMetadata?: Array<Record<string, unknown>>;
         apps: string[];
@@ -1946,10 +2230,10 @@ export class SessionManager {
     if (!session) {
       return { canRewind: false, error: "Session not found" };
     }
-    if (session.provider === "codex") {
+    if (session.provider !== "claude") {
       return {
         canRewind: false,
-        error: "Rewind is not supported for Codex sessions",
+        error: `Rewind is not supported for ${providerLabel(session.provider)} sessions`,
       };
     }
     return (session.process as SdkProcess).rewindFiles(targetUuid, dryRun);
@@ -1971,8 +2255,10 @@ export class SessionManager {
     if (!session) {
       throw new Error(`Session ${id} not found`);
     }
-    if (session.provider === "codex") {
-      throw new Error("Rewind is not supported for Codex sessions");
+    if (session.provider !== "claude") {
+      throw new Error(
+        `Rewind is not supported for ${providerLabel(session.provider)} sessions`,
+      );
     }
 
     const claudeSessionId = session.claudeSessionId;
@@ -1999,6 +2285,9 @@ export class SessionManager {
   ): Promise<{ text: string }> {
     const session = this.sessions.get(id);
     if (!session) throw new Error(`Session ${id} not found`);
+    if (session.process instanceof AntigravityProcess) {
+      throw new Error("Rewind is not supported for Antigravity sessions");
+    }
     if (session.status !== "idle") {
       throw new Error("Cannot rewind while the agent is running");
     }

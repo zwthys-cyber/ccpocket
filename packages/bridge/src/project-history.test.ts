@@ -1,9 +1,38 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { rm, mkdir, writeFile } from "node:fs/promises";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { rm, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { ProjectHistory } from "./project-history.js";
+
+/** Holds one index write open so a second write can race it. */
+const writeGate = vi.hoisted(() => ({
+  armed: false,
+  path: "",
+  calls: 0,
+  waiters: [] as Array<() => void>,
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    writeFile: async (
+      path: Parameters<typeof actual.writeFile>[0],
+      data: Parameters<typeof actual.writeFile>[1],
+      options?: Parameters<typeof actual.writeFile>[2],
+    ) => {
+      if (String(path) === writeGate.path) {
+        writeGate.calls += 1;
+        if (writeGate.armed) {
+          writeGate.armed = false;
+          await new Promise<void>((resolve) => writeGate.waiters.push(resolve));
+        }
+      }
+      return actual.writeFile(path, data, options);
+    },
+  };
+});
 
 let tempDir: string;
 let historyFile: string;
@@ -15,7 +44,12 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await rm(tempDir, { recursive: true, force: true });
+  // The store saves without blocking its caller; let those writes land before
+  // the temp directory goes away.
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  // A write that lands while the directory is being removed fails the
+  // removal with ENOTEMPTY; retrying lets it finish first.
+  await rm(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 20 });
 });
 
 describe("ProjectHistory", () => {
@@ -110,4 +144,64 @@ describe("ProjectHistory", () => {
     await ph.init();
     expect(ph.getProjects()).toEqual([]);
   });
+
+  it("accepts Windows drive and UNC project paths and normalizes worktrees on add/remove", async () => {
+    const ph = new ProjectHistory(historyFile);
+    await ph.init();
+
+    ph.addProject("C:\\Users\\alice\\project-a");
+    ph.addProject("\\\\fileserver\\share\\project-b");
+    ph.addProject("C:\\shallow"); // too shallow (2 segments)
+    ph.addProject("D:\\Users\\alice\\project-c-worktrees\\feat");
+    expect(ph.getProjects()).toEqual([
+      "D:\\Users\\alice\\project-c",
+      "\\\\fileserver\\share\\project-b",
+      "C:\\Users\\alice\\project-a",
+    ]);
+
+    ph.removeProject("D:\\Users\\alice\\project-c-worktrees\\feat");
+    expect(ph.getProjects()).toEqual([
+      "\\\\fileserver\\share\\project-b",
+      "C:\\Users\\alice\\project-a",
+    ]);
+  });
+
+  it("does not let an in-flight save overwrite a newer one", async () => {
+    const ph = new ProjectHistory(historyFile);
+    await ph.init();
+
+    writeGate.path = historyFile;
+    writeGate.calls = 0;
+    writeGate.armed = true;
+
+    // Two quick project switches: the second save must queue behind the first
+    // instead of writing the file at the same time.
+    ph.addProject("/Users/test/project-a");
+    ph.addProject("/Users/test/project-b");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(writeGate.calls).toBe(1);
+
+    writeGate.waiters.shift()?.();
+    await waitFor(async () => {
+      try {
+        const saved = JSON.parse(await readFile(historyFile, "utf-8"));
+        return Array.isArray(saved) && saved.length === 2;
+      } catch {
+        return false;
+      }
+    });
+
+    expect(JSON.parse(await readFile(historyFile, "utf-8"))).toEqual([
+      "/Users/test/project-b",
+      "/Users/test/project-a",
+    ]);
+  });
 });
+
+async function waitFor(check: () => Promise<boolean> | boolean): Promise<void> {
+  const deadline = Date.now() + 2000;
+  while (!(await check())) {
+    if (Date.now() > deadline) throw new Error("timed out waiting for the saved file");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}

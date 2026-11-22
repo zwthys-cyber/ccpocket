@@ -1,3 +1,7 @@
+import type {
+  AntigravityCatalog,
+  AntigravitySettings,
+} from "./antigravity-process.js";
 import type { AssistantImageRef } from "./markdown-images.js";
 import type { CodexRecoveryState } from "./codex-recovery.js";
 import type { GoalNotification } from "./goal-notifications.js";
@@ -15,6 +19,11 @@ import type {
 } from "./prompt-history-store.js";
 import type { WindowInfo } from "./screenshot.js";
 import type { WorktreeInfo } from "./worktree.js";
+import {
+  isValidSharedStateKey,
+  isValidSharedStateValue,
+  SHARED_STATE_MAX_SEED_ENTRIES,
+} from "./shared-state-store.js";
 
 // Re-export for convenience
 export type { ImageRef } from "./image-store.js";
@@ -76,7 +85,7 @@ export type CodexPermissionsMode =
   | "fullAccess"
   | "custom";
 
-export type Provider = "claude" | "codex";
+export type Provider = "claude" | "codex" | "antigravity";
 
 export type CodexGoalStatus =
   | "active"
@@ -107,7 +116,56 @@ export interface BackgroundTaskInfo {
   taskType: string;
   description?: string;
   subagentType?: string;
+  /** Live model/MCP progress summary for this task (`system/task_progress`). */
+  summary?: string;
+  /** Most recent tool invoked inside this task (`system/task_progress`). */
+  lastToolName?: string;
+  /**
+   * For an Antigravity swarm worker: its place in the order workers joined,
+   * from 0. Clients colour a worker by it, the same as on its board posts.
+   */
+  swarmIndex?: number;
 }
+
+/**
+ * Ephemeral mid-turn live agent activity state. Opt-in via `agent_activity` in
+ * `supportedServerMessages`; `activity: null` clears any previously published
+ * mid-turn state.
+ */
+export interface AgentActivityState {
+  /** Human-readable live phrase (e.g. Claude `task_summary` / `task_progress` summary, Codex MCP progress). */
+  summary?: string;
+  /** Tool currently streaming its input JSON (`content_block_start`) or running (`tool_progress`). */
+  toolName?: string;
+  toolUseId?: string;
+  /** Short hint extracted while streaming tool JSON (`file_path`, `description`, `command`, `query`, `pattern`). */
+  toolHint?: string;
+  /** True while the model is still streaming tool JSON arguments (`content_block_start`). */
+  preparingTool?: boolean;
+  /** Elapsed tool execution seconds (`tool_progress`). */
+  elapsedSeconds?: number;
+  /** Estimated thinking tokens during redacted thinking (`system/thinking_tokens`). */
+  thinkingTokens?: number;
+  /** Low-level phase when no tool/summary is active (`requesting` = waiting for model response). */
+  phase?: "requesting";
+}
+
+export type AgentActivityMessage = {
+  type: "agent_activity";
+  sessionId?: string;
+  activity: AgentActivityState | null;
+};
+
+/**
+ * Claude session recap (`away_summary` or `/recap` command output). Opt-in via
+ * `session_recap` in `supportedServerMessages`.
+ */
+export type SessionRecapMessage = {
+  type: "session_recap";
+  content: string;
+  source?: "away_summary" | "recap_command";
+  timestamp?: string;
+};
 
 /** Task types that are agents rather than shells or monitors. */
 const AGENT_BACKGROUND_TASK_TYPES = new Set([
@@ -115,6 +173,7 @@ const AGENT_BACKGROUND_TASK_TYPES = new Set([
   "remote_agent",
   "local_workflow",
   "codex_agent",
+  "antigravity_agent",
 ]);
 
 export function isAgentBackgroundTask(task: BackgroundTaskInfo): boolean {
@@ -256,6 +315,19 @@ export type ClientMessage =
       serviceTier: string;
       sessionId?: string;
     }
+  | { type: "set_antigravity_model"; sessionId: string; model: string }
+  | {
+      /** Model family and/or thinking level of an Antigravity session. */
+      type: "set_antigravity_settings";
+      sessionId: string;
+      model?: string;
+      thoughtLevel?: string;
+    }
+  | {
+      /** Models, thinking levels, modes and plan a new Antigravity session gets. */
+      type: "get_antigravity_catalog";
+      requestId?: string;
+    }
   | {
       type: "set_claude_settings";
       sessionId: string;
@@ -324,7 +396,12 @@ export type ClientMessage =
       workspaceKind?: "project" | "unassigned";
       requestScope?: "list" | "project";
       requestId?: string;
-      provider?: "claude" | "codex";
+      provider?: Provider;
+      /**
+       * Also list Antigravity conversations when no provider is selected.
+       * Clients that can open them send it (capability `antigravity_v1`).
+       */
+      includeAntigravity?: boolean;
       namedOnly?: boolean;
       searchQuery?: string;
       /**
@@ -332,7 +409,10 @@ export type ClientMessage =
        * independent of pagination (first list page only). Additive: older
        * Bridges ignore it.
        */
-      pinnedSessions?: Array<{ provider: "claude" | "codex"; sessionId: string }>;
+      pinnedSessions?: Array<{
+        provider: "claude" | "codex" | "antigravity";
+        sessionId: string;
+      }>;
       /**
        * Recent-session filters (capability `recent_sessions_filters_v1`).
        * See docs/recent-sessions-filters.md.
@@ -518,6 +598,24 @@ export type ClientMessage =
     }
   | { type: "rewind_dry_run"; sessionId: string; targetUuid: string }
   | { type: "fork"; sessionId: string; targetUuid: string }
+  | {
+      /**
+       * Stop a session and continue its task in a new session of another
+       * provider. See docs/session-handoff.md.
+       */
+      type: "handoff_session";
+      sessionId: string;
+      targetProvider: Provider;
+      /** What the target should do; it continues the task when omitted. */
+      instruction?: string;
+      /**
+       * The app's remembered `start` options for the target provider (model,
+       * effort, permission mode and the like). The Bridge takes the project,
+       * worktree and prompt from the source, and replaces the permission mode
+       * when the source's mode has a counterpart in the target.
+       */
+      start?: Record<string, unknown>;
+    }
   | { type: "list_windows" }
   | {
       type: "take_screenshot";
@@ -533,7 +631,14 @@ export type ClientMessage =
       traceLimit?: number;
       includeDiff?: boolean;
     }
-  | { type: "get_usage" }
+  | {
+      type: "get_usage";
+      /**
+       * Also read Antigravity's plan quota anew. Clients send it only when a
+       * person asks for a refresh; without it the last reading is returned.
+       */
+      refreshAntigravity?: boolean;
+    }
   | { type: "consume_usage_reset"; requestId: string; idempotencyKey: string; creditId?: string }
   | { type: "list_recordings" }
   | { type: "get_recording"; sessionId: string }
@@ -588,6 +693,50 @@ export type ClientMessage =
       projectPath: string;
     }
   | { type: "refresh_branch"; sessionId: string }
+  // ---- Pins shared by every client of this Bridge (docs/pin-sync.md) ----
+  | {
+      /**
+       * Ask for the pinned sessions and projects; answered with `pins`.
+       * `seed` carries the pins the client kept locally and is adopted only
+       * while the Bridge has never stored any.
+       */
+      type: "get_pins";
+      seed?: {
+        sessions?: Array<{
+          provider: Provider;
+          sessionId: string;
+          projectPath: string;
+        }>;
+        projects?: string[];
+      };
+    }
+  | {
+      type: "set_session_pin";
+      provider: Provider;
+      sessionId: string;
+      projectPath: string;
+      pinned: boolean;
+    }
+  | { type: "set_project_pin"; projectPath: string; pinned: boolean }
+  // ---- Shared state of this Bridge (docs/shared-state.md) ----
+  | { type: "get_shared_state" }
+  | {
+      /**
+       * Store `value` under `key` (null deletes it); answered by a
+       * `shared_state_changed` broadcast that repeats `mutationId`.
+       * `mode: "max"` keeps a stored string that is not smaller.
+       */
+      type: "set_shared_state";
+      key: string;
+      value?: unknown;
+      mode?: "max";
+      mutationId?: string;
+    }
+  | {
+      /** Offer local copies; only keys the Bridge does not have are adopted. */
+      type: "seed_shared_state";
+      entries: Record<string, unknown>;
+    }
   // ---- Git Operations (Phase 1-3) ----
   | {
       type: "git_stage";
@@ -709,11 +858,11 @@ export type ContextCompactionMessage = {
   type: "context_compaction";
   /** Provider boundary id (Claude boundary uuid / Codex item id). */
   id?: string;
-  provider: "claude" | "codex";
+  provider: "claude" | "codex" | "antigravity";
   trigger?: "manual" | "auto";
   preTokens?: number;
   postTokens?: number;
-  /** Claude only. Codex summaries are not readable. */
+  /** Claude / Antigravity compaction summary. Codex summaries are not readable. */
   summary?: string;
   timestamp?: string;
 };
@@ -739,6 +888,8 @@ export type ServerMessage =
       executionMode?: ExecutionMode;
       planMode?: boolean;
       slashCommands?: string[];
+      /** Descriptions for `slashCommands`, keyed by command name. */
+      slashCommandDescriptions?: Record<string, string>;
       skills?: string[];
       skillMetadata?: Array<{
         name: string;
@@ -788,10 +939,23 @@ export type ServerMessage =
       additionalWritableRoots?: string[];
       clearContext?: boolean;
       sourceSessionId?: string;
+      /** The source session keeps running (fork), unlike restarts/rewinds. */
+      forked?: boolean;
+      /**
+       * The session continues `sourceSessionId` in another provider. The
+       * source has been stopped, and the chat screen has to be replaced.
+       */
+      handoff?: boolean;
       resumeRequestId?: string;
       requestId?: string;
+      /** Claude settings, sent with subtype `claude_settings`. */
+      effort?: string;
+      fastMode?: boolean;
+      ultracode?: boolean;
       tipCode?: string;
       codexCliJoin?: CodexCliJoinTarget;
+      /** Antigravity session settings: current and selectable models/modes. */
+      antigravity?: AntigravitySettings;
     }
   | {
       type: "assistant";
@@ -799,6 +963,12 @@ export type ServerMessage =
       messageUuid?: string;
       /** Local images embedded with markdown image syntax in the text. */
       images?: AssistantImageRef[];
+      /**
+       * Transient: local image paths already surfaced as ImageGeneration
+       * tool_result cards, so markdown image attachment skips duplicates.
+       * Stripped by SessionManager before sending to clients.
+       */
+      omitAssistantImagePaths?: string[];
     }
   | {
       type: "tool_result";
@@ -813,6 +983,12 @@ export type ServerMessage =
       images?: ImageRef[];
       userMessageUuid?: string;
       rawContentBlocks?: unknown[];
+      /**
+       * Transient: set on replayed tool_result messages (e.g. Antigravity
+       * `session/load`) so ImageStore re-registers images without duplicating
+       * GalleryStore entries. Stripped before sending to clients.
+       */
+      skipGallery?: boolean;
     }
   | {
       type: "result";
@@ -827,6 +1003,8 @@ export type ServerMessage =
       inputTokens?: number;
       cachedInputTokens?: number;
       outputTokens?: number;
+      /** Reasoning tokens, where the provider reports them apart. */
+      thoughtTokens?: number;
       toolCalls?: number;
       fileEdits?: number;
     }
@@ -874,6 +1052,69 @@ export type ServerMessage =
     }
   | { type: "session_activity"; sessionId?: string; at: string; historySeq?: number }
   | { type: "performance_mode_state"; deliveryRevision: number }
+  | { type: "archive_result"; sessionId: string; success: boolean; error?: string }
+  | { type: "branch_update"; sessionId: string; branch: string }
+  | {
+      type: "input_ack";
+      sessionId: string;
+      clientMessageId?: string;
+      acceptedSeq: number;
+      queued: boolean;
+    }
+  | {
+      type: "input_rejected";
+      sessionId: string;
+      clientMessageId?: string;
+      reason: string;
+    }
+  | {
+      type: "past_history";
+      claudeSessionId: string;
+      sessionId: string;
+      messages: unknown[];
+    }
+  | {
+      type: "project_setup_result";
+      requestId: string;
+      projectPath?: string;
+      copiedFiles?: string[];
+      error?: string;
+    }
+  | {
+      type: "recent_sessions";
+      sessions: unknown[];
+      hasMore: boolean;
+      pinnedSessions?: unknown[];
+      limit?: number;
+      offset?: number;
+      projectPath?: string;
+      projectId?: string;
+      workspaceKind?: "project" | "unassigned";
+      requestScope?: "list" | "project";
+      requestId?: string;
+    }
+  | { type: "recording_list"; recordings: unknown[] }
+  | { type: "recording_content"; sessionId: string; content: string }
+  | {
+      type: "session_list";
+      sessions: unknown[];
+      allowedDirs: string[];
+      claudeModels: string[];
+      claudeModelOptions: unknown[];
+      claudeModelEfforts: Record<string, string[]>;
+      codexModels: string[];
+      codexModelReasoningEfforts: Record<string, string[]>;
+      codexModelServiceTiers: Record<string, string[]>;
+      codexModelServiceTierMetadata: Record<string, unknown>;
+      codexProfiles: string[];
+      defaultCodexProfile?: string;
+      codexAutoReviewDisabled: boolean;
+      bridgeVersion: string;
+      bridgeInstanceId?: string;
+      protocolVersion: number;
+      minimumProtocolVersion: number;
+      protocolCapabilities: string[];
+    }
   | { type: "status"; status: ProcessStatus }
   | {
       type: "history";
@@ -882,11 +1123,13 @@ export type ServerMessage =
       olderHistoryAvailable?: boolean;
     }
   | ContextCompactionMessage
+  | AgentActivityMessage
+  | SessionRecapMessage
   | {
       type: "session_transcript";
       sessionId: string;
       requestId: string;
-      provider: "claude" | "codex";
+      provider: "claude" | "codex" | "antigravity";
       /** Index of messages[0] within the full transcript. */
       startIndex: number;
       /** Exclusive end index of this page. */
@@ -1155,6 +1398,12 @@ export type ServerMessage =
       savedBundlePath?: string;
     }
   | { type: "usage_result"; providers: UsageInfoPayload[] }
+  | {
+      type: "antigravity_catalog";
+      requestId?: string;
+      catalog?: AntigravityCatalog;
+      error?: string;
+    }
   | { type: "usage_reset_result"; requestId: string; outcome?: string; error?: string }
   | { type: "message_images_result"; messageUuid: string; images: ImageRef[] }
   | {
@@ -1197,6 +1446,38 @@ export type ServerMessage =
       revision?: number;
       entry?: PromptHistoryEntry;
       error?: string;
+    }
+  | {
+      /**
+       * Pinned sessions and projects of this Bridge: the answer to
+       * `get_pins`, and broadcast after every change. Opt-in.
+       */
+      type: "pins";
+      sessions: Array<{
+        provider: Provider;
+        sessionId: string;
+        projectPath: string;
+      }>;
+      projects: string[];
+    }
+  | {
+      /** Every shared entry: the answer to `get_shared_state`. Opt-in. */
+      type: "shared_state";
+      storeId: string;
+      entries: Record<string, unknown>;
+    }
+  | {
+      /** One entry changed (`value: null` = absent). Opt-in. */
+      type: "shared_state_changed";
+      key: string;
+      value: unknown;
+      mutationId?: string;
+    }
+  | {
+      /** The answer to `seed_shared_state`. Opt-in. */
+      type: "shared_state_seeded";
+      storeId: string;
+      adopted: string[];
     }
   | {
       type: "prompt_history_status";
@@ -1360,7 +1641,9 @@ export interface UsageWindowPayload {
 }
 
 export interface UsageInfoPayload {
-  provider: "claude" | "codex";
+  provider: "claude" | "codex" | "antigravity";
+  /** Quota group name, for providers with several groups (Antigravity). */
+  label?: string;
   fiveHour: UsageWindowPayload | null;
   sevenDay: UsageWindowPayload | null;
   modelWindows?: Array<UsageWindowPayload & { label: string }>;
@@ -1390,7 +1673,7 @@ export function normalizeToolResultContent(
   return typeof content === "string" ? content : String(content ?? "");
 }
 
-const PROVIDERS = ["claude", "codex"] as const;
+const PROVIDERS = ["claude", "codex", "antigravity"] as const;
 const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 const PERMISSION_MODES = [
   "default",
@@ -1543,6 +1826,35 @@ function isValidRecentDate(value: unknown): boolean {
   );
 }
 
+const PIN_MAX_PATH_LENGTH = 4096;
+
+function isValidPinProjectPath(value: unknown, allowEmpty: boolean): boolean {
+  return (
+    typeof value === "string" &&
+    value.length <= PIN_MAX_PATH_LENGTH &&
+    (allowEmpty || value.length > 0)
+  );
+}
+
+function isValidPinSeed(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const { sessions, projects } = value as Record<string, unknown>;
+  if (sessions !== undefined) {
+    if (!isValidRecentPinnedSessions(sessions)) return false;
+    const pins = sessions as Array<Record<string, unknown>>;
+    if (!pins.every((pin) => isValidPinProjectPath(pin.projectPath, true)))
+      return false;
+  }
+  if (projects !== undefined) {
+    if (!Array.isArray(projects)) return false;
+    if (projects.length > RECENT_SESSIONS_MAX_PINNED_SESSIONS) return false;
+    if (!projects.every((path) => isValidPinProjectPath(path, false)))
+      return false;
+  }
+  return true;
+}
+
 function isValidRecentPinnedSessions(value: unknown): boolean {
   if (!Array.isArray(value)) return false;
   if (value.length > RECENT_SESSIONS_MAX_PINNED_SESSIONS) return false;
@@ -1550,7 +1862,9 @@ function isValidRecentPinnedSessions(value: unknown): boolean {
     if (!pin || typeof pin !== "object") return false;
     const { provider, sessionId } = pin as Record<string, unknown>;
     return (
-      (provider === "claude" || provider === "codex") &&
+      (provider === "claude" ||
+        provider === "codex" ||
+        provider === "antigravity") &&
       isNonEmptyString(sessionId)
     );
   });
@@ -1808,6 +2122,21 @@ export function parseClientMessage(data: string): ClientMessage | null {
         if (msg.sessionId !== undefined && typeof msg.sessionId !== "string")
           return null;
         break;
+      case "set_antigravity_model":
+        if (typeof msg.sessionId !== "string" || !msg.sessionId) return null;
+        if (typeof msg.model !== "string" || msg.model.trim() === "")
+          return null;
+        break;
+      case "set_antigravity_settings":
+        if (typeof msg.sessionId !== "string" || !msg.sessionId) return null;
+        if (!isOptionalNonEmptyString(msg.model)) return null;
+        if (!isOptionalNonEmptyString(msg.thoughtLevel)) return null;
+        if (msg.model === undefined && msg.thoughtLevel === undefined) return null;
+        break;
+      case "get_antigravity_catalog":
+        if (msg.requestId !== undefined && typeof msg.requestId !== "string")
+          return null;
+        break;
       case "set_claude_settings":
         if (typeof msg.sessionId !== "string" || !msg.sessionId) return null;
         if (!isOptionalNonEmptyString(msg.model)) return null;
@@ -1915,7 +2244,8 @@ export function parseClientMessage(data: string): ClientMessage | null {
         if (
           msg.provider !== undefined &&
           msg.provider !== "claude" &&
-          msg.provider !== "codex"
+          msg.provider !== "codex" &&
+          msg.provider !== "antigravity"
         )
           return null;
         break;
@@ -1970,7 +2300,8 @@ export function parseClientMessage(data: string): ClientMessage | null {
         if (
           msg.provider !== undefined &&
           msg.provider !== "claude" &&
-          msg.provider !== "codex"
+          msg.provider !== "codex" &&
+          msg.provider !== "antigravity"
         )
           return null;
         if (
@@ -2313,6 +2644,27 @@ export function parseClientMessage(data: string): ClientMessage | null {
         )
           return null;
         break;
+      case "handoff_session":
+        if (
+          typeof msg.sessionId !== "string" ||
+          (msg.targetProvider !== "claude" &&
+            msg.targetProvider !== "codex" &&
+            msg.targetProvider !== "antigravity")
+        )
+          return null;
+        if (
+          msg.instruction !== undefined &&
+          typeof msg.instruction !== "string"
+        )
+          return null;
+        if (
+          msg.start !== undefined &&
+          (typeof msg.start !== "object" ||
+            msg.start === null ||
+            Array.isArray(msg.start))
+        )
+          return null;
+        break;
       case "list_windows":
         break;
       case "take_screenshot":
@@ -2332,6 +2684,7 @@ export function parseClientMessage(data: string): ClientMessage | null {
           return null;
         break;
       case "get_usage":
+        if (!isOptionalBoolean(msg.refreshAntigravity)) return null;
         break;
       case "consume_usage_reset":
         if (typeof msg.requestId !== "string" || !msg.requestId.trim() || msg.requestId.length > 128) return null;
@@ -2585,8 +2938,43 @@ export function parseClientMessage(data: string): ClientMessage | null {
         break;
       case "archive_session":
         if (typeof msg.sessionId !== "string") return null;
-        if (msg.provider !== "claude" && msg.provider !== "codex") return null;
+        if (!isOptionalEnum(msg.provider, PROVIDERS) || msg.provider === undefined)
+          return null;
         if (typeof msg.projectPath !== "string") return null;
+        break;
+      case "get_shared_state":
+        break;
+      case "set_shared_state":
+        if (!isValidSharedStateKey(msg.key)) return null;
+        if (
+          msg.value !== undefined &&
+          msg.value !== null &&
+          !isValidSharedStateValue(msg.value)
+        )
+          return null;
+        if (msg.mode !== undefined && msg.mode !== "max") return null;
+        if (!isOptionalNonEmptyString(msg.mutationId)) return null;
+        break;
+      case "seed_shared_state": {
+        const entries = msg.entries;
+        if (!entries || typeof entries !== "object" || Array.isArray(entries))
+          return null;
+        if (Object.keys(entries).length > SHARED_STATE_MAX_SEED_ENTRIES)
+          return null;
+        break;
+      }
+      case "get_pins":
+        if (!isValidPinSeed(msg.seed)) return null;
+        break;
+      case "set_session_pin":
+        if (!isEnum(msg.provider, PROVIDERS)) return null;
+        if (!isNonEmptyString(msg.sessionId)) return null;
+        if (!isValidPinProjectPath(msg.projectPath, true)) return null;
+        if (typeof msg.pinned !== "boolean") return null;
+        break;
+      case "set_project_pin":
+        if (!isValidPinProjectPath(msg.projectPath, false)) return null;
+        if (typeof msg.pinned !== "boolean") return null;
         break;
       default:
         return null;

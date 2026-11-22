@@ -1,4 +1,8 @@
 import { createServer } from "node:http";
+import {
+  getAntigravityConfig,
+  isAntigravityCliAvailable,
+} from "./antigravity-process.js";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { setupProxy } from "./proxy.js";
@@ -16,7 +20,6 @@ import {
   resolveApiKey,
   writePairingSecret,
 } from "./bridge-auth.js";
-import { MdnsAdvertiser, shouldAdvertiseMdns } from "./mdns.js";
 import { ProjectHistory } from "./project-history.js";
 import { WorkspaceStore } from "./workspace-store.js";
 import { getVersionInfo } from "./version.js";
@@ -51,10 +54,6 @@ export async function startServer() {
   const PORT = parseBridgePort();
   const HOST = process.env.BRIDGE_HOST ?? "0.0.0.0";
   const insecureNoAuth = process.env.BRIDGE_INSECURE_NO_AUTH === "1";
-  const MDNS_ENABLED = shouldAdvertiseMdns(
-    process.platform,
-    !!process.env.BRIDGE_DISABLE_MDNS,
-  );
 
   // Unrestricted access requires the exact value "*".
   const ALLOWED_DIRS = parseAllowedDirectories(
@@ -93,14 +92,6 @@ export async function startServer() {
           "[bridge]          Anyone who can reach this port can control your agents.",
       );
       break;
-  }
-
-  if (!MDNS_ENABLED) {
-    console.log(
-      process.platform === "darwin"
-        ? "[bridge] mDNS advertisement disabled on macOS"
-        : "[bridge] mDNS advertisement disabled",
-    );
   }
 
   console.log(
@@ -172,7 +163,6 @@ export async function startServer() {
       process.env.BRIDGE_PROMPT_HISTORY_FILE,
     ),
   );
-  const mdns = MDNS_ENABLED ? new MdnsAdvertiser() : undefined;
 
   // Initialize stores (async)
   galleryStore.init().then(() => {
@@ -377,7 +367,10 @@ export async function startServer() {
   // Other HTTP requests retain a five-minute total deadline above.
   httpServer.requestTimeout = 60 * 60 * 1000;
 
+  // Capture the Antigravity key before any provider child can inherit it.
+  getAntigravityConfig();
   wsServer = new BridgeWebSocketServer({
+    detectAntigravity: () => isAntigravityCliAvailable(),
     server: httpServer,
     apiKey: API_KEY,
     allowedDirs: ALLOWED_DIRS,
@@ -401,7 +394,6 @@ export async function startServer() {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log("\n[bridge] Shutting down gracefully...");
-    mdns?.stop();
     wsServer?.close();
     await uploadStore.dispose();
     httpServer.close();
@@ -419,7 +411,6 @@ export async function startServer() {
   console.log(
     `[bridge] Ready. Listening on http://${HOST}:${PORT} (HTTP + WebSocket)`,
   );
-  mdns?.start(PORT, API_KEY);
   if (process.stdout.isTTY || !API_KEY) {
     printStartupInfo(PORT, HOST, API_KEY);
   } else {
