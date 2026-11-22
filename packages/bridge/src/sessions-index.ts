@@ -4075,33 +4075,46 @@ async function buildCodexMessageImageIndex(
   const jsonlPath = await findCodexSessionJsonlPath(threadId);
   if (!jsonlPath) return null;
 
-  let fileStat;
-  let raw: string;
   try {
-    fileStat = await stat(jsonlPath);
-    raw = await readFile(jsonlPath, "utf-8");
+    const fileStat = await stat(jsonlPath);
+    const imagesByUuid = fileStat.size === 0
+      ? new Map<string, ExtractedImage[]>()
+      : await collectCodexMessageImages(jsonlPath, fileStat.size);
+    return {
+      jsonlPath,
+      size: fileStat.size,
+      mtimeMs: fileStat.mtimeMs,
+      imagesByUuid,
+    };
   } catch {
     return null;
   }
+}
 
-  const imagesByUuid = await collectCodexMessageImages(raw.split("\n"));
-  return {
-    jsonlPath,
-    size: fileStat.size,
-    mtimeMs: fileStat.mtimeMs,
-    imagesByUuid,
-  };
+async function* readCodexImageIndexLines(path: string, size: number) {
+  // Read the same snapshot in both passes, even if Codex appends to the file.
+  const stream = createReadStream(path, { encoding: "utf-8", end: size - 1 });
+  const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    yield* lines;
+  } finally {
+    lines.close();
+    stream.destroy();
+  }
 }
 
 async function collectCodexMessageImages(
-  lines: string[],
+  path: string,
+  size: number,
 ): Promise<Map<string, ExtractedImage[]>> {
   const imagesByUuid = new Map<string, ExtractedImage[]>();
   const responseItemImagesByOrdinal =
-    collectCodexUserResponseItemImagesByOrdinal(lines);
+    await collectCodexUserResponseItemImagesByOrdinal(readCodexImageIndexLines(path, size));
   let ordinal = 0;
 
-  for (const [lineIndex, line] of lines.entries()) {
+  let lineIndex = -1;
+  for await (const line of readCodexImageIndexLines(path, size)) {
+    lineIndex += 1;
     if (!line.trim()) continue;
 
     let entry: Record<string, unknown>;
@@ -4175,13 +4188,13 @@ async function extractCodexUserMessagePayloadImages(
   return images;
 }
 
-function collectCodexUserResponseItemImagesByOrdinal(
-  lines: string[],
-): Map<number, ExtractedImage[]> {
+async function collectCodexUserResponseItemImagesByOrdinal(
+  lines: AsyncIterable<string>,
+): Promise<Map<number, ExtractedImage[]>> {
   const imagesByOrdinal = new Map<number, ExtractedImage[]>();
   let ordinal = 0;
 
-  for (const line of lines) {
+  for await (const line of lines) {
     if (!line.trim()) continue;
     let entry: Record<string, unknown>;
     try {

@@ -1,0 +1,60 @@
+name: DeepSeek Server Build
+on:
+  push:
+    branches: [feat/deepseek-server-1.107.0]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: deepseek-server-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.22.1'
+          cache: npm
+      - name: Install dependencies on GitHub runner
+        run: npm ci
+      - name: Run complete Bridge tests
+        run: npm run test:bridge
+      - name: Type check Bridge
+        run: npx tsc --noEmit -p packages/bridge/tsconfig.json
+      - name: Compile Bridge on GitHub runner
+        run: npm run bridge:build
+      - name: Prepare production runtime
+        run: |
+          npm prune --omit=dev --ignore-scripts
+          git rev-parse HEAD > BUILD_COMMIT
+      - name: Verify runtime on GitHub runner
+        run: |
+          node packages/bridge/dist/cli.js --version
+          BRIDGE_PORT=18765 BRIDGE_HOST=127.0.0.1 BRIDGE_API_KEY=ci-smoke-token BRIDGE_DISABLE_MDNS=1 BRIDGE_DEMO_MODE=1 node packages/bridge/dist/cli.js > "$RUNNER_TEMP/bridge-smoke.log" 2>&1 &
+          bridge_pid=$!
+          trap 'kill "$bridge_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:18765/health > "$RUNNER_TEMP/health.json"; then
+              node -e 'const fs=require("fs");const h=JSON.parse(fs.readFileSync(process.argv[1]));if(h.status!=="ok"||h.auth!=="required")process.exit(1)' "$RUNNER_TEMP/health.json"
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/bridge-smoke.log"
+          exit 1
+      - name: Package Linux x64 runtime
+        run: |
+          tar -czf bridge-deepseek-linux-x64.tar.gz BUILD_COMMIT package.json package-lock.json packages/bridge/package.json packages/bridge/dist node_modules
+          sha256sum bridge-deepseek-linux-x64.tar.gz > bridge-deepseek-linux-x64.tar.gz.sha256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: deepseek-server-runtime
+          path: |
+            bridge-deepseek-linux-x64.tar.gz
+            bridge-deepseek-linux-x64.tar.gz.sha256
+            BUILD_COMMIT
+          if-no-files-found: error
+          retention-days: 14

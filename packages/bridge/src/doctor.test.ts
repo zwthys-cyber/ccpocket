@@ -257,6 +257,26 @@ describe("doctor checks", () => {
       expect(claude?.authenticated).toBe(false);
     });
 
+    it.each([true, false])("diagnoses DeepSeek credentials (configured=%s)", async (configured) => {
+      vi.stubEnv("BRIDGE_CLAUDE_BACKEND", "deepseek");
+      vi.stubEnv("DEEPSEEK_API_KEY", configured ? "test-key" : "");
+      vi.stubEnv("ANTHROPIC_API_KEY", "other-key");
+      mockExecSync.mockImplementation((cmd: string) => {
+        if (cmd === "claude --version") return "2.1.250";
+        throw new Error("command not found");
+      });
+      try {
+        const result = await checkCliProviders();
+        const claude = result.providers.find((p: ProviderResult) => p.name === "Claude Code CLI");
+        expect(claude?.authenticated).toBe(configured);
+        expect(claude?.authMessage).toContain("DeepSeek");
+        expect(claude?.authMessage).toContain(configured ? "not verified" : "DEEPSEEK_API_KEY");
+        expect(mockExecSync).not.toHaveBeenCalledWith("claude auth status", expect.anything());
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
     it("reports Amazon Bedrock mode without asking for Anthropic credentials", async () => {
       vi.stubEnv("BRIDGE_ALLOW_CLAUDE_OAUTH", "");
       vi.stubEnv("CLAUDE_CODE_USE_BEDROCK", "1");

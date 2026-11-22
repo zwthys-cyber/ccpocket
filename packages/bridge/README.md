@@ -73,6 +73,9 @@ ccpocket-bridge --version
 | `BRIDGE_DELTA_BATCH_MAX_CHARS` | `4096` | Maximum Unicode characters per batched streaming payload; non-positive or invalid values use the default |
 | `DIFF_IMAGE_AUTO_DISPLAY_KB` | `1024` (1 MB) | Auto-display diff images up to this size, in KB |
 | `DIFF_IMAGE_MAX_SIZE_MB` | `5` (5 MB) | Maximum diff image size available for on-demand loading, in MB |
+| `BRIDGE_CLAUDE_BACKEND` | (none) | Set to `deepseek` to run Claude-channel sessions on DeepSeek's official Anthropic endpoint |
+| `DEEPSEEK_API_KEY` | (none) | DeepSeek API key on the Bridge host; required for the DeepSeek backend |
+| `DEEPSEEK_MODEL` | `deepseek-flash[1m]` | Default DeepSeek model; also used for legacy mobile Claude model selections |
 | `ANTHROPIC_API_KEY` | (none) | Claude Agent SDK API key; recommended for predictable third-party product usage |
 | `ANTHROPIC_AUTH_TOKEN` | (none) | Advanced Claude SDK auth token; prefer `ANTHROPIC_API_KEY` |
 | `CLAUDE_CODE_USE_BEDROCK` | (none) | Claude Code setting; when enabled, Claude sessions run on Amazon Bedrock and no Anthropic credential is required |
@@ -151,6 +154,37 @@ is reachable through a reverse proxy, tunnel, or public domain.
 
 Without it, the printed QR code is LAN-oriented by default and typically encodes
 something like `ws://192.168.x.x:8765`.
+
+## DeepSeek
+
+The Bridge can use [DeepSeek's official Claude Code integration](https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code/)
+through the existing Claude Agent SDK. See the [Chinese setup guide](../../docs/deepseek.zh-CN.md)
+for installation and background service configuration.
+
+```bash
+export BRIDGE_CLAUDE_BACKEND=deepseek
+export DEEPSEEK_API_KEY='YOUR_DEEPSEEK_API_KEY'
+# Optional; defaults to deepseek-flash[1m]
+export DEEPSEEK_MODEL='deepseek-flash[1m]'
+ccpocket-bridge
+```
+
+In the mobile app, select **Claude** when creating a session. The model list
+will show DeepSeek models. Tool use, streaming, permissions and session storage
+continue through the Claude channel. This setting applies to all Claude-channel
+sessions on that Bridge; use a separate Bridge instance to keep Anthropic sessions.
+Codex sessions are unaffected. Claude model aliases sent by older clients map to
+`DEEPSEEK_MODEL`, including the fallback model. Explicit DeepSeek model IDs pass
+through unchanged. Claude-specific effort selections are omitted.
+
+The profile passes the official endpoint and DeepSeek credentials to the SDK
+child process without modifying the host environment. It replaces inherited
+Anthropic API/OAuth credentials and disables other Claude cloud backends for that
+child. No DeepSeek key is sent to mobile clients. `doctor` reports whether a key
+is configured; it does not validate it against the paid API.
+
+Unset `BRIDGE_CLAUDE_BACKEND` and restart Bridge to restore the normal Claude
+backend. Restarting does not change existing session history.
 
 ## Claude on Amazon Bedrock
 
