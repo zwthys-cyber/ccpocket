@@ -4,13 +4,31 @@ Bridge server that connects Claude sessions powered by the [Claude Agent SDK](ht
 
 This is the server component of [ccpocket](https://github.com/zwthys-cyber/ccpocket) — a mobile client for Claude and Codex.
 
-## Quick Start
+## Current server build (2026-11-22)
+
+The deployed server is **Bridge 1.119.0**, built from
+[`upgrade/deepseek-bridge-1.119.0`](https://github.com/zwthys-cyber/ccpocket/tree/upgrade/deepseek-bridge-1.119.0).
+It includes this fork's DeepSeek backend, including `deepseek-v4-pro`, and the
+existing history-reading and Codex usage-reset extensions. The default branch's
+documentation points to this deployment branch; it does not imply that its
+server code has been merged into `main`.
+
+Use the [prebuilt server installation guide](../../docs/server-setup.zh-CN.md)
+and [DeepSeek guide](../../docs/deepseek.zh-CN.md). Tests, audits and compilation
+run on GitHub; deployment servers download the complete production runtime.
+See [build evidence and deployment status](../../docs/bridge-server-status.zh-CN.md).
+
+## Quick Start for this fork
+
+After installing the verified runtime as described in the guide:
 
 ```bash
-npx @ccpocket/bridge@latest
+node /root/ccpocket-current/packages/bridge/dist/cli.js
 ```
 
-A QR code will appear in your terminal. Scan it with the ccpocket mobile app to connect.
+For persistent operation, use the documented systemd service. The npm route
+below installs the published package and does not include this fork's custom
+DeepSeek profile. Do not replace an artifact deployment with `npx @latest`.
 
 Claude sessions use `ANTHROPIC_API_KEY` by default. Subscription authentication
 through the Bridge machine's Claude Code login is available only after explicit
@@ -166,7 +184,7 @@ export BRIDGE_CLAUDE_BACKEND=deepseek
 export DEEPSEEK_API_KEY='YOUR_DEEPSEEK_API_KEY'
 # Optional; defaults to deepseek-flash[1m]
 export DEEPSEEK_MODEL='deepseek-flash[1m]'
-ccpocket-bridge
+node /root/ccpocket-current/packages/bridge/dist/cli.js
 ```
 
 In the mobile app, select **Claude** when creating a session. The model list
@@ -175,7 +193,9 @@ continue through the Claude channel. This setting applies to all Claude-channel
 sessions on that Bridge; use a separate Bridge instance to keep Anthropic sessions.
 Codex sessions are unaffected. Claude model aliases sent by older clients map to
 `DEEPSEEK_MODEL`, including the fallback model. Explicit DeepSeek model IDs pass
-through unchanged. Claude-specific effort selections are omitted.
+through unchanged. Claude-specific effort, fast-mode and ultracode selections are omitted.
+Choose `deepseek-v4-pro` in the mobile model selector, or set
+`DEEPSEEK_MODEL=deepseek-v4-pro` and restart Bridge to make it the default.
 
 The profile passes the official endpoint and DeepSeek credentials to the SDK
 child process without modifying the host environment. It replaces inherited
@@ -339,7 +359,7 @@ future.
 
 ## Requirements
 
-- Node.js v20.18.1+
+- Node.js **22.19.0+** for the 1.119.0 server branch; validated with **24.22.1**
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) and/or [Codex CLI](https://github.com/openai/codex)
 
 Current Codex CLI docs recommend the standalone installer for macOS/Linux:

@@ -19,6 +19,15 @@
 无需 Apple Developer 账号的 TrollStore 未签名 IPA；目前没有 App Store、Google Play
 或官方推送服务。
 
+### 当前服务器版：Bridge 1.119.0
+
+截至 **2026-11-22**，已部署并验证的服务器版本为 **1.119.0**，支持 DeepSeek Flash 和 **`deepseek-v4-pro`**。
+服务器源码位于 [`upgrade/deepseek-bridge-1.119.0`](https://github.com/zwthys-cyber/ccpocket/tree/upgrade/deepseek-bridge-1.119.0)；部署时请选择该分支的 GitHub 构建产物，默认分支的文档入口不代表服务器代码已合并到 `main`。
+
+- [当前部署版本、构建证据和更新方式](docs/bridge-server-status.zh-CN.md)
+- [DeepSeek 配置、Pro 模型选择和后台服务](docs/deepseek.zh-CN.md)
+- 服务器运行时要求 Node.js **22.19.0+**；本次验证使用 **24.22.1**。测试、审计、编译和打包均在 GitHub 上完成。
+
 ### 新服务器安装：先看这份中文教程
 
 **第一次安装，直接按 [新服务器从零安装 CC Pocket](docs/server-setup.zh-CN.md) 操作。**
@@ -34,10 +43,10 @@
 **小服务器不需要克隆本项目源码，也不要在服务器运行依赖审计、编译或测试套件。**
 构建包已包含生产依赖。GitHub Artifact 当前保留 14 天；过期后在
 [Bridge Security Build](https://github.com/zwthys-cyber/ccpocket/actions/workflows/bridge-security-build.yml)
-选择 `main` 重新生成。完整命令、GitHub 登录方法和下载步骤都在上面的教程里。
+选择 `upgrade/deepseek-bridge-1.119.0`，将 `upstream_version` 留空后重新生成。完整命令、GitHub 登录方法和下载步骤都在上面的教程里。
 
 服务器 IP 要填写你新机器的地址；API Key 是教程自动生成的 Bridge 连接密钥，
-与 GitHub Token、OpenAI API Key 不同。
+与 GitHub Token、OpenAI API Key、DeepSeek API Key 不同。
 
 ### 手机安装包
 
@@ -130,7 +139,3 @@ cd apps/mobile && flutter pub get && cd ../..
 ## 许可证
 
 [MIT](LICENSE)
-
-### 使用 DeepSeek
-
-已支持通过现有 Claude 会话通道接入 DeepSeek，手机端可选择 DeepSeek 模型。参见[DeepSeek 接入与 GitHub 编译说明](docs/deepseek.zh-CN.md)。

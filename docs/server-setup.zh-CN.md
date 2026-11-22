@@ -4,6 +4,15 @@
 
 **安装路线：GitHub 负责编译和测试，服务器只下载现成的运行包。** 不需要在服务器克隆 CC Pocket 源码，也不用运行 `npm ci`、`npm run bridge:build` 或测试套件。
 
+## 当前版本与构建分支（2026-11-22）
+
+本教程当前服务器目标为 **Bridge 1.119.0**，源码分支为
+[`upgrade/deepseek-bridge-1.119.0`](https://github.com/zwthys-cyber/ccpocket/tree/upgrade/deepseek-bridge-1.119.0)。
+该版本已通过 GitHub 上的 2674 项测试、类型检查、编译、依赖审计和运行包启动检查；见[部署与构建记录](bridge-server-status.zh-CN.md)。
+Node.js 最低要求为 **22.19.0**，以下安装步骤使用已验证的 **24.22.1**。
+
+使用 DeepSeek 时，无需在服务器下载模型或配置显卡；安装 Bridge 和 Claude Code 运行条件后，按[DeepSeek 指南](deepseek.zh-CN.md)配置自己的 API Key。手机在 **Claude** 入口选择 `deepseek-v4-pro` 或 Flash。
+
 ## 先看懂这三样东西
 
 | 名称 | 通俗解释 | 安装在哪里 |
@@ -112,13 +121,13 @@ codex login status
 
 1. 登录有本仓库写入权限的 GitHub 账号。
 2. 点击 **Run workflow（运行工作流）**。
-3. 分支选 **main**。如果只是安装仓库当前版本，`upstream_version` 留空；要同步上游新版则填写版本号，例如 `1.90.0`（不加 `v`），再点击运行。
+3. 分支选 **`upgrade/deepseek-bridge-1.119.0`**，`upstream_version` **留空**，再点击运行。这会构建已完成兼容适配的 1.119.0 源码。
 4. 等这次任务变成绿色，且 `repair-verify-package` 作业成功。
 5. 打开任务详情，底部应出现 `bridge-linux-x64-数字` 这个 Artifact（构建包）。
 
 **没有绿色成功结果，或没有构建包，就不要继续部署。**
 
-当前工作流会尝试在声明的版本范围内更新依赖，然后执行漏洞审计、Bridge 测试、类型检查、编译和运行包启动检查。填写 `upstream_version` 时，还会核对上游发布的 Git 提交，三方合并对应版本的 Bridge 代码和相关设计文档，并更新实际版本号；有冲突会停止，不会强行覆盖本分支定制。检查通过后，源码或锁文件的变化会提交回所选分支；它不是一个只读的打包按钮。因此只对你打算部署的 `main` 运行，不要随便选择旧备份标签。
+当前工作流会尝试在声明的版本范围内更新依赖，然后执行漏洞审计、Bridge 测试、类型检查、编译和运行包启动检查。填写 `upstream_version` 时，还会核对上游发布的 Git 提交，三方合并对应版本的 Bridge 代码和相关设计文档，并更新实际版本号；有冲突会停止，不会强行覆盖本分支定制。检查通过后，源码或锁文件的变化会提交回所选分支；它不是一个只读的打包按钮。因此只对你打算部署的维护分支运行，不要随便选择旧备份标签。当前部署请选择 `upgrade/deepseek-bridge-1.119.0`。填写比当前版本更高的 `upstream_version` 只是发起新一轮升级，仍须处理冲突并通过检查后才能部署。
 
 运行包内已经包含 Bridge 程序和生产依赖。它是 **Linux 服务器端**，不是手机安装包，也不是源码 ZIP。
 
@@ -146,15 +155,15 @@ gh auth setup-git
 gh auth status
 ```
 
-然后列出 `main` 上最近成功的运行：
+然后列出当前服务器分支最近成功的运行：
 
 ```bash
 gh run list --repo zwthys-cyber/ccpocket \
-  --workflow bridge-security-build.yml --branch main \
+  --workflow bridge-security-build.yml --branch upgrade/deepseek-bridge-1.119.0 \
   --status success --limit 5
 ```
 
-记下你在第 3 步生成的那次任务的 **ID 数字**。不要误选名为 `Test` 或 `Bridge Release` 的其他工作流。
+记下你在第 3 步生成的那次任务的 **ID 数字**。不要误选名为 `Test` 或 `Bridge Release` 的其他工作流。当前已部署版本来自一次 **Bridge Upgrade Build** 运行，其产物前缀是 `bridge-upgrade-linux-x64-`；本教程通过 **Bridge Security Build** 重新生成同一源码，以下命令使用它的 `bridge-linux-x64-` 前缀，二者不要混用。
 
 下面整个代码块会让你输入 ID，下载构建包、核对文件校验值，然后以较低 CPU 优先级解压。**这里没有编译或安装 npm 依赖。**
 
@@ -165,7 +174,7 @@ gh run list --repo zwthys-cyber/ccpocket \
   [[ "$CCPOCKET_RUN_ID" =~ ^[0-9]+$ ]]
   test "$(gh run view "$CCPOCKET_RUN_ID" --repo zwthys-cyber/ccpocket \
     --json status,conclusion,headBranch \
-    --jq '.status + ":" + .conclusion + ":" + .headBranch')" = "completed:success:main"
+    --jq '.status + ":" + .conclusion + ":" + .headBranch')" = "completed:success:upgrade/deepseek-bridge-1.119.0"
   mkdir -p /root/ccpocket-artifacts /root/ccpocket-releases /root/.config/ccpocket
   CCPOCKET_DOWNLOAD=$(mktemp -d "/root/ccpocket-artifacts/$CCPOCKET_RUN_ID.XXXXXX")
   gh run download "$CCPOCKET_RUN_ID" --repo zwthys-cyber/ccpocket \
@@ -289,6 +298,12 @@ UNIT
 
 这里只运行下载包里的程序，不使用 `npx @ccpocket/bridge`，也不执行 `cli.js setup`。仓库内置的 Linux setup 会生成通过 npm 发布包启动的服务，可能与你刚下载的本分支版本不同。
 
+### 可选：启用 DeepSeek
+
+此教程创建的是**用户级** systemd 服务。若要启用 DeepSeek，按[DeepSeek 指南](deepseek.zh-CN.md#后台服务)准备私密环境文件，并通过 `systemctl --user edit ccpocket-bridge` 加载它，再使用 `systemctl --user restart ccpocket-bridge` 重启。
+
+已经部署的维护服务器使用**系统级** `ccpocket-bridge.service`，管理命令不带 `--user`。不要混用两种服务；可用 `systemctl status ccpocket-bridge.service` 和 `systemctl --user status ccpocket-bridge.service` 确认实际使用哪一种。升级时保留原有服务、监听地址、连接密钥和 DeepSeek 环境文件。
+
 ## 7. 看服务是否启动成功
 
 这一步只是几个轻量的状态查询，**不会执行测试、审计或编译**：
@@ -362,7 +377,7 @@ git -C /root/projects/hello-ccpocket init
 
 ## 以后怎么更新和回退
 
-**更新：** 先在手机结束正在执行的任务，避免重启打断任务。重新完成第 3、4 步，得到一个在 GitHub 完成验证的新包。只是重新打包当前仓库版本时，`upstream_version` 留空；例如要从 `1.88.0` 升级到上游 `1.90.0`，就在第 3 步填 `1.90.0`，而不是仅修改显示的版本号。不要重新生成 `bridge.env`，否则手机保存的密钥会失效。
+**更新：** 先在手机结束正在执行的任务，避免重启打断任务。重新完成第 3、4 步，得到一个在 GitHub 完成验证的新包。重新打包当前 1.119.0 时，选择维护分支 `upgrade/deepseek-bridge-1.119.0` 并将 `upstream_version` 留空。要升级到更高的上游版本，需要同步真实源码与依赖、保留本分支定制并重新通过 GitHub 验证；不能只修改版本号。不要重新生成 `bridge.env` 或 `deepseek.env`，否则手机连接或模型凭据可能失效。
 
 然后执行：
 
@@ -409,7 +424,7 @@ systemctl --user show ccpocket-bridge -p ExecStart -p WorkingDirectory -p DropIn
 | `git/node/gh: command not found` | 第 1 步是否成功；不要跳过失败的下载或安装 |
 | `Exec format error` / `GLIBC_… not found` | 是否是 Ubuntu 24.04 x86_64；ARM、Alpine 不能直接使用这个包 |
 | GitHub 提示输入 Username、无法读取私有项目 | `gh auth login` 和 `gh auth setup-git`；本项目目前公开，私有项目仍需自己的访问权限 |
-| 任务列表为空 | 第 3 步是否在 main 成功生成了包；手动运行需要仓库写入权限 |
+| 任务列表为空 | 第 3 步是否在 `upgrade/deepseek-bridge-1.119.0` 成功生成了包；确认所选工作流和产物前缀相符 |
 | `artifact not found` / 包已过期 | Artifact 只保留 14 天，重新在 GitHub 生成；确认 ID 对应正确工作流 |
 | Actions 报付款或额度问题 | 标准运行器在公开仓库免费，但账号付款异常仍可能限制任务；查看 GitHub Billing 和任务错误，不能保证改公开就一定恢复 |
 | `Failed to connect to bus` | 确认是 SSH 登录的完整 systemd 主机；执行 `loginctl enable-linger root`，并检查 `/run/user/0`；必要时重新 SSH 登录。不要去容器里启动 systemd |
@@ -430,6 +445,8 @@ systemctl --user show ccpocket-bridge -p ExecStart -p WorkingDirectory -p DropIn
 - [中文首页](../README.zh-CN.md)
 - [实际构建工作流](../.github/workflows/bridge-security-build.yml)
 - [Bridge 配置项](../packages/bridge/README.md#configuration)
+- [当前服务器版本与构建记录](bridge-server-status.zh-CN.md)
+- [DeepSeek 与 Pro 模型配置](deepseek.zh-CN.md)
 - [OpenAI Codex CLI 安装](https://learn.chatgpt.com/docs/cli)与[认证说明](https://learn.chatgpt.com/docs/auth)
 - [GitHub 构建包下载规则](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts)
 - [Node.js 24.22.1 官方下载](https://nodejs.org/en/download/archive/v24.22.1)

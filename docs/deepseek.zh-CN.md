@@ -1,71 +1,90 @@
 # 在 CC Pocket 中使用 DeepSeek
 
-CC Pocket 的 Bridge 可以通过 [DeepSeek 官方 Anthropic 兼容接口](https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code/)使用 DeepSeek。手机端沿用 **Claude** 会话入口，模型列表显示 DeepSeek 模型；流式消息、工具调用、权限确认和历史会话沿用现有机制。
+更新日期：**2026-11-22**。当前维护服务器已升级到 **Bridge 1.119.0**，源码位于 [`upgrade/deepseek-bridge-1.119.0`](https://github.com/zwthys-cyber/ccpocket/tree/upgrade/deepseek-bridge-1.119.0)。[部署版本与构建证据](bridge-server-status.zh-CN.md)记录了具体提交和验证结果。
 
-## 编译和下载
+DeepSeek 使用云端 API，**无需在服务器安装模型或准备显卡**。Bridge 通过 [DeepSeek 官方 Anthropic 兼容接口](https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code/)调用模型，手机端沿用 **Claude** 会话入口。服务器仍需 Node.js **22.19.0+** 和 Claude Code / Agent SDK 的运行条件；本次部署使用 Node.js **24.22.1**。
 
-本功能分支的编译、测试和启动检查由 GitHub Actions 的 **Test → bridge** 任务执行。在成功运行的页面下载 **bridge-package**，解压后得到 `ccpocket-bridge-1.107.0.tgz`（文件名随项目版本变化）。该包包含本分支编译后的 Bridge，不需要发布到 npm。
+## 模型选择
 
-在实际部署机器安装，而不是在用于编辑代码的服务器执行：
+| 手机显示的模型 | 用法 |
+| --- | --- |
+| `deepseek-flash[1m]` | 默认模型，通过 Claude Code 的长上下文模型标记使用 Flash |
+| `deepseek-flash` | 显式选择 Flash |
+| `deepseek-v4-pro` | 显式选择 Pro；已使用维护服务器的账号完成 API 响应验证 |
+
+重新连接 Bridge，新建 **Claude** 会话，在模型列表中选择 **`deepseek-v4-pro`** 即可使用 Pro。要将 Pro 设为此 Bridge 的默认模型，把服务器环境文件中的 `DEEPSEEK_MODEL` 改为 `deepseek-v4-pro` 并重启服务。当前默认仍为 `deepseek-flash[1m]`。
+
+该后端设置作用于此 Bridge 的全部 Claude 通道会话，包括恢复的历史会话；Codex 不受影响。旧客户端发送的 Claude 模型别名及 fallback model 会转换为 `DEEPSEEK_MODEL`。Claude 专有的 effort、fast mode、ultracode 选项不会传给 DeepSeek。模型可用性、能力和计费以 DeepSeek API 与账号权限为准。
+
+## 获取运行包
+
+小服务器只下载编译好的运行包，**不要在服务器执行依赖安装、审计、编译或测试套件**。1.119.0 完整运行包包含 Linux x64 生产依赖，不能直接复用旧版依赖来替代升级。
+
+- [已验证的 Bridge Upgrade Build 运行](https://github.com/zwthys-cyber/ccpocket/actions/runs/45029554790)：下载 `bridge-upgrade-linux-x64-45029554790`，其中包含 `bridge-linux-x64.tar.gz`、校验文件和 `BUILD_COMMIT`。
+- Artifact 保留 14 天。过期后在 [Bridge Security Build](https://github.com/zwthys-cyber/ccpocket/actions/workflows/bridge-security-build.yml)选择 `upgrade/deepseek-bridge-1.119.0`，`upstream_version` 留空后重新生成。
+- 首次安装、GitHub 登录、校验、解压和回退步骤见[新服务器安装教程](server-setup.zh-CN.md)。使用本仓库产物；npm 上游发布包不包含本分支的 DeepSeek 配置开关。
+
+## 填写 API Key
+
+密钥从 [DeepSeek 平台](https://platform.deepseek.com/)获取。以下是 root 部署路径；其他账号应使用自己的绝对路径。
 
 ```bash
-npm install -g ./ccpocket-bridge-1.107.0.tgz
+mkdir -p /root/.config/ccpocket
+touch /root/.config/ccpocket/deepseek.env
+chmod 700 /root/.config/ccpocket
+chmod 600 /root/.config/ccpocket/deepseek.env
+nano /root/.config/ccpocket/deepseek.env
 ```
 
-部署机器仍需满足 Bridge 的 Node.js 和 Claude Code 运行条件。手机已有客户端支持 Bridge 动态模型列表，因此无需为本次接入重新编译手机应用。
+填入下面三行，把占位文字替换为自己的密钥。已有文件只修改需要变更的值：
 
-## 配置并启动
-
-在实际运行 Bridge 的电脑或服务器配置：
-
-```bash
-export BRIDGE_CLAUDE_BACKEND=deepseek
-export DEEPSEEK_API_KEY='替换成你自己的 DeepSeek API Key'
-# 可选，默认为 deepseek-flash[1m]
-export DEEPSEEK_MODEL='deepseek-flash[1m]'
-ccpocket-bridge
+```ini
+DEEPSEEK_API_KEY=替换成自己的DeepSeek密钥
+BRIDGE_CLAUDE_BACKEND=deepseek
+DEEPSEEK_MODEL=deepseek-flash[1m]
 ```
 
-密钥从 [DeepSeek 平台](https://platform.deepseek.com/)获取。它只保存在部署机器的环境中，不应提交到仓库或填入 PR；GitHub 编译无需密钥。启动命令也可用于 Windows PowerShell，但环境变量需改用 `$env:变量名='值'` 语法。
+按 **Ctrl+O → 回车**保存，**Ctrl+X**退出。要默认使用 Pro，第三行改为 `DEEPSEEK_MODEL=deepseek-v4-pro`。
 
-手机连接该 Bridge 后，新建会话时选择 **Claude**，模型选 `deepseek-flash[1m]`、`deepseek-flash` 或 `deepseek-v4-pro`。也支持通过 `DEEPSEEK_MODEL` 指定其他 DeepSeek 模型；该配置会成为模型列表第一项。模型是否可用取决于 DeepSeek API 和账号权限。
-
-旧客户端保存的 Claude 模型选择会转换成 `DEEPSEEK_MODEL`，避免依赖 API 隐式映射到不同计费档位。Claude 特有的 effort、fast mode 和 ultracode 选择不会传给 DeepSeek。DeepSeek 模型的能力、上下文长度和计费以官方文档为准，不能假定支持 Claude 的全部功能。
+`DEEPSEEK_API_KEY` 用于模型调用；`bridge.env` 中的 `BRIDGE_API_KEY` 用于手机连接，两者不同。不要把真实密钥发到聊天、提交到 GitHub 或填入构建工作流。GitHub 编译不需要 DeepSeek 密钥。
 
 ## 后台服务
 
-`ccpocket-bridge setup` 不会自动保存这三个 DeepSeek 环境变量。已有后台服务需要在其运行环境中配置，再重启服务；在终端 export 后重启系统服务不等于服务已经获得变量。
-
-Linux 用户级 systemd 服务可以使用：
+维护服务器使用**系统级** `ccpocket-bridge.service`。服务通过 drop-in 加载环境文件：
 
 ```bash
-systemctl --user edit ccpocket-bridge
+mkdir -p /etc/systemd/system/ccpocket-bridge.service.d
+nano /etc/systemd/system/ccpocket-bridge.service.d/30-deepseek.conf
 ```
 
-加入以下配置（替换密钥），保存后重启：
+配置内容：
 
 ```ini
 [Service]
-Environment="BRIDGE_CLAUDE_BACKEND=deepseek"
-Environment="DEEPSEEK_API_KEY=替换成你自己的密钥"
-Environment="DEEPSEEK_MODEL=deepseek-flash[1m]"
+EnvironmentFile=/root/.config/ccpocket/deepseek.env
 ```
+
+保存后加载配置并重启。重启会中断正在执行的任务，先结束任务：
 
 ```bash
-systemctl --user daemon-reload
-systemctl --user restart ccpocket-bridge
+systemctl daemon-reload
+systemctl restart ccpocket-bridge.service
+systemctl is-active ccpocket-bridge.service
 ```
 
-macOS launchd 服务则在 `~/Library/LaunchAgents/com.ccpocket.bridge.plist` 的 `EnvironmentVariables` 字典中添加同名字符串配置，重新加载服务。密钥属于本机敏感配置，注意配置文件访问权限。之后再次执行 `setup` 会重建服务配置，需要重新补充变量。
+如果按[从零安装教程](server-setup.zh-CN.md)创建的是**用户级**服务，使用 `systemctl --user edit ccpocket-bridge` 添加相同的 `[Service]` 配置，再用 `systemctl --user daemon-reload`、`systemctl --user restart ccpocket-bridge`。不要同时启动两个占用同一端口的服务。
 
-## 检查和切换
+终端中的 `export` 不会自动传给 systemd。`cli.js setup` 也不会自动保存这三个 DeepSeek 变量，且可能重建为通过 npm 启动的服务。现有产物部署应保留原服务的 `ExecStart`、监听地址和配置文件。
 
-在与服务相同的环境中运行 `ccpocket-bridge doctor` 可以检查是否配置 DeepSeek 密钥。`DeepSeek configured; API key not verified` 只说明本地配置齐全，实际请求成功才能验证密钥、余额和模型权限。
+## 检查与回退
 
-该开关作用于此 Bridge 的全部 Claude 通道会话，包括恢复的历史会话。建议先新建会话验证；要同时使用 Anthropic 和 DeepSeek，可分别启动两个不同端口的 Bridge。Codex 会话不受影响。
+轻量检查包括服务状态、`/health`、`/version` 和手机模型列表。服务监听了特定地址时，请向该地址查询；手机不能使用服务器的 `127.0.0.1`。
 
-移除 `BRIDGE_CLAUDE_BACKEND` 并重启 Bridge 即恢复原来的 Claude 后端。历史记录仍保存在原有 Claude 会话目录中。
+- `/version` 应返回 `1.119.0`；`/health` 应有 `status: ok`、`auth: required`。
+- 手机重新连接后应出现上面的三个 DeepSeek 模型；首次验证建议新建会话。
+- 在与服务相同的环境中运行 `doctor`，`DeepSeek configured; API key not verified` 只表示本地已配置密钥，不验证 API 余额或模型权限。
+- 维护服务器已验证 Flash、Pro 的实际 API 响应，升级后也验证了模型列表、公网 TLS 和 WebSocket 鉴权。GitHub CI 使用模拟密钥，本身不调用付费 API。
 
-CI 使用模拟密钥验证配置与 SDK 调用，再在 GitHub runner 上启动演示模式进行健康检查。它不调用付费 DeepSeek API，因此不代表已完成真实模型对话验证。
+切回普通 Claude 后端时移除 `BRIDGE_CLAUDE_BACKEND` 并重启，按原有方式配置 Claude 认证。要同时使用 Anthropic 和 DeepSeek，可分别部署不同端口的 Bridge。
 
-服务器部署构建使用 **DeepSeek Server Build** 工作流，产物 `deepseek-server-runtime` 包含 Linux x64 的编译结果和生产依赖，可解压部署，不需要在服务器安装依赖或编译。此分支基于 1.107.0，并保留已有的历史图片索引流式读取修复。
+程序回退按[安装教程的更新和回退章节](server-setup.zh-CN.md#以后怎么更新和回退)操作，保留 DeepSeek 环境文件、手机连接密钥和旧运行目录。程序回退不会撤销项目文件或历史数据的变化。
