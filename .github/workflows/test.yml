@@ -263,6 +263,29 @@ jobs:
         run: npx tsc --noEmit -p packages/bridge/tsconfig.json
       - name: Build Bridge
         run: npm run bridge:build
+      - name: Smoke test built Bridge on GitHub runner
+        run: |
+          node packages/bridge/dist/cli.js --version
+          BRIDGE_PORT=18765 BRIDGE_HOST=127.0.0.1 BRIDGE_API_KEY=ci-smoke-token BRIDGE_DISABLE_MDNS=1 BRIDGE_DEMO_MODE=1 node packages/bridge/dist/cli.js > "$RUNNER_TEMP/bridge-smoke.log" 2>&1 &
+          bridge_pid=$!
+          trap 'kill "$bridge_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:18765/health > "$RUNNER_TEMP/bridge-health.json"; then
+              node -e 'const fs=require("fs");const h=JSON.parse(fs.readFileSync(process.argv[1]));if(h.status!=="ok")process.exit(1)' "$RUNNER_TEMP/bridge-health.json"
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/bridge-smoke.log"
+          exit 1
+      - name: Package built Bridge
+        run: npm pack --ignore-scripts --workspace=packages/bridge --pack-destination "$RUNNER_TEMP"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bridge-package
+          path: ${{ runner.temp }}/ccpocket-bridge-*.tgz
+          if-no-files-found: error
+          retention-days: 14
 
   functions:
     runs-on: ubuntu-latest

@@ -1,3 +1,4 @@
+import { isDeepSeekEnabled } from "./deepseek.js";
 /**
  * Bridge Server doctor command.
  *
@@ -127,7 +128,13 @@ export async function checkCliProviders(): Promise<
       const out = execQuiet("claude --version");
       installed = true;
       version = out.trim().split("\n")[0];
-      if (isClaudeBedrockModeEnabled()) {
+      if (isDeepSeekEnabled()) {
+        authenticated = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
+        authMessage = authenticated
+          ? "DeepSeek configured; API key not verified"
+          : "DeepSeek enabled; DEEPSEEK_API_KEY is missing";
+        if (!authenticated) remediation = "Set DEEPSEEK_API_KEY in the Bridge service environment";
+      } else if (isClaudeBedrockModeEnabled()) {
         // Validate the required local setting without calling AWS. Credential
         // validity remains Claude Code's responsibility at session startup.
         if (isClaudeBedrockRegionConfigured()) {

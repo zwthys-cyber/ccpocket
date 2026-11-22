@@ -1026,6 +1026,49 @@ describe("SdkProcess Claude authentication", () => {
     rmSync(claudeConfigDir, { recursive: true, force: true });
   });
 
+  it("lists DeepSeek models without starting a Claude process", async () => {
+    vi.stubEnv("BRIDGE_CLAUDE_BACKEND", "deepseek");
+    vi.stubEnv("DEEPSEEK_API_KEY", "test-key");
+    const models = await listAvailableClaudeModels();
+    expect(models.map((m) => m.model)).toContain("deepseek-flash[1m]");
+    expect(mockSdkQuery).not.toHaveBeenCalled();
+  });
+
+  it("reports a missing DeepSeek key instead of using Anthropic or OAuth", async () => {
+    vi.stubEnv("BRIDGE_CLAUDE_BACKEND", "deepseek");
+    vi.stubEnv("DEEPSEEK_API_KEY", "");
+    vi.stubEnv("ANTHROPIC_API_KEY", "other-key");
+    vi.stubEnv("BRIDGE_ALLOW_CLAUDE_OAUTH", "1");
+    const proc = new SdkProcess();
+    const messages: ServerMessage[] = [];
+    proc.on("message", (message) => messages.push(message));
+    proc.start(process.cwd());
+    await vi.waitFor(() => expect(messages).toContainEqual(expect.objectContaining({
+      type: "error", errorCode: "deepseek_api_key_required",
+    })));
+    expect(mockSdkQuery).not.toHaveBeenCalled();
+    await expect(listAvailableClaudeModels()).rejects.toThrow("DEEPSEEK_API_KEY");
+  });
+
+  it("starts DeepSeek sessions with the official endpoint and mapped model", () => {
+    vi.stubEnv("BRIDGE_CLAUDE_BACKEND", "deepseek");
+    vi.stubEnv("DEEPSEEK_API_KEY", "test-key");
+    mockSdkQuery.mockReturnValueOnce({
+      async *[Symbol.asyncIterator]() {},
+      close: vi.fn(),
+      supportedCommands: vi.fn().mockResolvedValue([]),
+    });
+    const proc = new SdkProcess();
+    proc.start(process.cwd(), { model: "sonnet", fallbackModel: "opus", effort: "xhigh" });
+    const options = mockSdkQuery.mock.calls[0][0].options;
+    expect(options.model).toBe("deepseek-flash[1m]");
+    expect(options.fallbackModel).toBe("deepseek-flash[1m]");
+    expect(options.env.ANTHROPIC_BASE_URL).toBe("https://api.deepseek.com/anthropic");
+    expect(options.env.ANTHROPIC_AUTH_TOKEN).toBe("test-key");
+    expect(options.effort).toBeUndefined();
+    proc.stop();
+  });
+
   async function runSdkMessages(
     sdkMessages: unknown[],
     permissionMode?: "acceptEdits",
