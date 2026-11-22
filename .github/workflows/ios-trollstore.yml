@@ -1,44 +1,46 @@
 name: Build iOS TrollStore IPA
 
 on:
+  push:
+    branches: [release/trollstore-1.140.3]
+    paths:
+      - 'apps/mobile/**'
+      - 'CHANGELOG.md'
+      - '.github/workflows/ios-trollstore.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: trollstore-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
-    name: Build unsigned IPA
+    name: Verify and build unsigned IPA
     runs-on: macos-26
     timeout-minutes: 45
-
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
+      - name: Read and verify release version
+        run: |
+          test "$(sed -n 's/^version: //p' apps/mobile/pubspec.yaml)" = '1.140.3+266'
       - name: Read Flutter version from .mise.toml
         id: mise
         run: echo "flutter_version=$(grep 'flutter' .mise.toml | sed 's/.*= *\"//' | sed 's/\"//')" >> "$GITHUB_OUTPUT"
-
       - name: Set up Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           flutter-version: ${{ steps.mise.outputs.flutter_version }}
           cache: true
-
-      - name: Install dependencies
+      - name: Install dependencies on GitHub runner
         working-directory: apps/mobile
         run: flutter pub get
-
-      - name: Analyze Flutter app
-        working-directory: apps/mobile
-        run: flutter analyze --no-fatal-infos
-
-      - name: Test usage display
-        working-directory: apps/mobile
-        run: flutter test test/settings_usage_visibility_test.dart test/usage_pace_test.dart test/codex_usage_summary_test.dart test/usage_reset_card_test.dart
-
-      - name: Build unsigned iOS app
+      - name: Run release analysis and complete Flutter tests
+        run: bash scripts/release/run-checks.sh
+      - name: Build unsigned iOS app on GitHub runner
         working-directory: apps/mobile
         run: |
           flutter build ios \
@@ -46,21 +48,70 @@ jobs:
             --no-codesign \
             --no-tree-shake-icons \
             --dart-define=REVENUECAT_PUBLIC_KEY=
-
-      - name: Package IPA
+      - name: Verify app identity and package IPA
         run: |
           APP_PATH="apps/mobile/build/ios/iphoneos/Runner.app"
           test -d "$APP_PATH"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP_PATH/Info.plist")" = 'com.zwthys.ccpocket'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Info.plist")" = '1.140.3'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Info.plist")" = '266'
           mkdir -p "$RUNNER_TEMP/Payload"
           cp -R "$APP_PATH" "$RUNNER_TEMP/Payload/"
-          ditto -c -k --sequesterRsrc --keepParent \
-            "$RUNNER_TEMP/Payload" \
-            "$RUNNER_TEMP/CC-Pocket-TrollStore-unsigned.ipa"
-
-      - name: Upload IPA
-        uses: actions/upload-artifact@v7
+          ditto -c -k --sequesterRsrc --keepParent "$RUNNER_TEMP/Payload" "$RUNNER_TEMP/CC-Pocket-TrollStore-unsigned.ipa"
+          cd "$RUNNER_TEMP"
+          shasum -a 256 CC-Pocket-TrollStore-unsigned.ipa > CC-Pocket-TrollStore-unsigned.ipa.sha256
+      - name: Upload verified IPA
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: CC-Pocket-TrollStore-unsigned-${{ github.sha }}
-          path: ${{ runner.temp }}/CC-Pocket-TrollStore-unsigned.ipa
+          path: |
+            ${{ runner.temp }}/CC-Pocket-TrollStore-unsigned.ipa
+            ${{ runner.temp }}/CC-Pocket-TrollStore-unsigned.ipa.sha256
           if-no-files-found: error
           retention-days: 30
+
+  publish:
+    name: Publish TrollStore installer to Releases
+    needs: build
+    if: github.ref == 'refs/heads/release/trollstore-1.140.3'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: trollstore/v1.140.3+266
+    steps:
+      - name: Download and verify installer built by this run
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "CC-Pocket-TrollStore-unsigned-$GITHUB_SHA" --dir release-assets
+          cd release-assets
+          sha256sum -c CC-Pocket-TrollStore-unsigned.ipa.sha256
+      - name: Publish verified installer
+        run: |
+          cat > release-notes.md <<'NOTES'
+          ## CC Pocket 1.140.3+266 · TrollStore
+
+          - 配套当前维护服务器 Bridge 1.119.0，更新客户端的 Bridge 推荐版本。
+          - 连接已启用 DeepSeek 的 Bridge 后，从 Claude 入口选择 deepseek-v4-pro 或 DeepSeek Flash。
+          - 保留现有应用标识 com.zwthys.ccpocket 和 Codex 额度重置功能。
+
+          ### 安装
+
+          下载 CC-Pocket-TrollStore-unsigned.ipa，使用受支持设备上的 TrollStore 安装。
+          IPA 不包含模型密钥。手机使用原有 Bridge 地址和连接密钥；DeepSeek API Key 配置在服务器。
+          应用版本 1.140.3，构建号 266；基于本仓库维护的客户端发布，不等同于同步全部上游客户端新功能。
+
+          ### 验证
+
+          Flutter 静态分析、完整测试和 iOS release 构建均在 GitHub runner 上执行。
+          构建后核对 Bundle ID、应用版本和构建号，并附带 SHA-256 校验文件。
+          NOTES
+          gh release create "$RELEASE_TAG" \
+            release-assets/CC-Pocket-TrollStore-unsigned.ipa \
+            release-assets/CC-Pocket-TrollStore-unsigned.ipa.sha256 \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title 'CC Pocket 1.140.3+266 · TrollStore' \
+            --notes-file release-notes.md --draft
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

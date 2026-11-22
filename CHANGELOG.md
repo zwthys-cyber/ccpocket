@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.140.3] - 2026-11-22
+
+### Changed
+- Recommend Bridge 1.119.0 to match the deployed server and its DeepSeek Flash / Pro backend through the existing Claude model selector.
+- Build and publish the maintained TrollStore IPA, with version and bundle-identifier checks and a downloadable SHA-256 checksum.
+
 ## [1.140.2] - 2026-10-09
 
 ### Added
