@@ -58,3 +58,16 @@ jobs:
             BUILD_COMMIT
           if-no-files-found: error
           retention-days: 14
+      - name: Package update for servers with identical dependencies
+        run: |
+          tar -czf bridge-deepseek-update.tar.gz BUILD_COMMIT package.json package-lock.json packages/bridge/package.json packages/bridge/dist
+          sha256sum bridge-deepseek-update.tar.gz > bridge-deepseek-update.tar.gz.sha256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: deepseek-server-update
+          path: |
+            bridge-deepseek-update.tar.gz
+            bridge-deepseek-update.tar.gz.sha256
+            BUILD_COMMIT
+          if-no-files-found: error
+          retention-days: 14
