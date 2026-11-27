@@ -54,6 +54,7 @@ jobs:
           import 'package:flutter/services.dart' show FontLoader;
           import 'package:ccpocket/features/session_list/widgets/session_list_app_bar.dart';
           import 'package:ccpocket/mock/store_screenshot_data.dart';
+          import 'ui_surface_capture.dart';
           """
           source = imports + source
           source = source.replace(
@@ -131,15 +132,7 @@ jobs:
                     sessions: storeHomeRunningSessions().take(1).toList(),
                     recentSessions: storeRecentSessions(),
                     screenshotKey: key,
-                    screenshotTheme: theme.copyWith(
-                      platform: TargetPlatform.iOS,
-                      textTheme: theme.textTheme.apply(fontFamily: 'EvidenceSans'),
-                      inputDecorationTheme: theme.inputDecorationTheme.copyWith(
-                        hintStyle: theme.inputDecorationTheme.hintStyle?.copyWith(
-                          fontFamily: 'EvidenceSans',
-                        ),
-                      ),
-                    ),
+                    screenshotTheme: captureTheme(theme),
                     cubit: cubit,
                     draftService: draftService,
                     revenueCatService: revenueCatService,
@@ -207,9 +200,20 @@ jobs:
           }
 
           ThemeData captureTheme(ThemeData theme) {
+            final text = theme.textTheme.apply(fontFamily: 'EvidenceSans');
             return theme.copyWith(
               platform: TargetPlatform.iOS,
-              textTheme: theme.textTheme.apply(fontFamily: 'EvidenceSans'),
+              textTheme: text,
+              appBarTheme: theme.appBarTheme.copyWith(
+                titleTextStyle: theme.appBarTheme.titleTextStyle?.copyWith(
+                  fontFamily: 'EvidenceSans',
+                ),
+              ),
+              filledButtonTheme: FilledButtonThemeData(
+                style: (theme.filledButtonTheme.style ?? const ButtonStyle()).copyWith(
+                  textStyle: WidgetStatePropertyAll(text.labelLarge),
+                ),
+              ),
               inputDecorationTheme: theme.inputDecorationTheme.copyWith(
                 hintStyle: theme.inputDecorationTheme.hintStyle?.copyWith(
                   fontFamily: 'EvidenceSans',
@@ -282,6 +286,8 @@ jobs:
                       createdAt: DateTime.now().toIso8601String(),
                       lastActivityAt: DateTime.now().toIso8601String(),
                       gitBranch: 'feat/checkout',
+                      codexApprovalPolicy: 'never',
+                      codexSandboxMode: 'danger-full-access',
                     ),
                   ),
                   makeAssistantMessage(
@@ -296,12 +302,28 @@ jobs:
                   ),
                   const ToolResultMessage(toolUseId: 'tool-1', content: 'All tests passed.'),
                   makeAssistantMessage(
+                    'answer-3',
+                    'I updated the error message and kept the retry action available.',
+                    toolUses: [
+                      const ToolUseContent(
+                        id: 'tool-2', name: 'Bash',
+                        input: {'command': 'git diff --stat'},
+                      ),
+                      const ToolUseContent(
+                        id: 'tool-3', name: 'Bash',
+                        input: {'command': 'git status --short'},
+                      ),
+                    ],
+                  ),
+                  const ToolResultMessage(toolUseId: 'tool-2', content: '2 files changed.'),
+                  const ToolResultMessage(toolUseId: 'tool-3', content: 'M checkout_view.dart'),
+                  makeAssistantMessage(
                     'answer-2',
                     'I am checking that a successful retry clears the error banner.',
                   ),
                   const StatusMessage(status: ProcessStatus.running),
                 ]);
-                expect(find.textContaining('The checkout now', findRichText: true), findsWidgets);
+                expect(find.textContaining('a successful retry', findRichText: true), findsWidgets);
                 await writeCapture(tester, key, 'session-$name');
                 bridge.dispose();
                 for (final (pageName, content) in [
