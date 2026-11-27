@@ -2931,9 +2931,11 @@ export async function codexThreadUserTimes(
   thread: unknown,
 ): Promise<Map<string, string> | undefined> {
   const needsTimes = arrayValue(asObject(thread)?.turns).some((rawTurn) => {
-    const users = arrayValue(asObject(rawTurn)?.items).map(asObject)
-      .filter((item) => item?.type === "userMessage");
-    return users.slice(1).some((item) => item && item.id && !codexItemTime(item));
+    return arrayValue(asObject(rawTurn)?.items).some((value, position) => {
+      const item = asObject(value);
+      return position > 0 && item?.type === "userMessage" &&
+        Boolean(stringValue(item.id)?.trim()) && !codexItemTime(item);
+    });
   });
   if (!needsTimes) return undefined;
   return (await getCodexMessageImageIndex(threadId))?.userTimesById;

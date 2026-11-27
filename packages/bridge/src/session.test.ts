@@ -1457,6 +1457,29 @@ describe("SessionManager codex path", () => {
     ).toBe(true);
   });
 
+  it("joins an early Codex provider echo to the accepted steer with its original time", async () => {
+    const manager = new SessionManager(() => {});
+    const id = manager.create("/tmp/project", undefined, undefined, undefined, "codex");
+    const proc = codexInstances.at(-1)!;
+    const timestamp = "2026-11-27T09:32:09.859Z";
+    proc.steerInputStructured.mockImplementationOnce(async () => {
+      proc.emit("message", {
+        type: "user_input", text: "confirm", userMessageUuid: "provider-item", timestamp,
+      });
+    });
+    const result = await manager.steerInput(id, {
+      itemId: "first-steer", text: "confirm", createdAt: timestamp,
+      userMessageUuid: "codex:user-turn:1", clientMessageId: "phone-send",
+    });
+    expect(result).toBe("steered");
+    const rows = manager.get(id)!.history.filter(message => message.type === "user_input");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      timestamp, rawItemId: "provider-item", userMessageUuid: "codex:user-turn:1",
+      clientMessageId: "phone-send",
+    });
+  });
+
   it("keeps queued codex input when steer fails", async () => {
     const manager = new SessionManager(() => {});
     const sessionId = manager.create(

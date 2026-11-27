@@ -1790,6 +1790,10 @@ describe("codex sessions integration", () => {
         started_at_ms: Date.parse(sentAt), item: { id: "completed-item", type: "UserMessage" },
       } },
     ].map(entry => JSON.stringify(entry)).join("\n"));
+    const partial = { turns: [{ items: [
+      { type: "agentMessage", text: "Still working" }, thread.turns[0].items[1],
+    ] }] };
+    expect((await codexThreadUserTimes(threadId, partial))?.get("completed-item")).toBe(sentAt);
     const times = await codexThreadUserTimes(threadId, thread);
     const users = codexThreadToSessionHistory(thread, times);
     expect(users.map(message => message.timestamp)).toEqual([

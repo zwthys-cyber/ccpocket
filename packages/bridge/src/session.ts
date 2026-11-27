@@ -2040,7 +2040,8 @@ export class SessionManager {
           message.userMessageUuid === input.userMessageUuid && message.text === input.text)
       : undefined;
     if (earlyEcho?.message.type === "user_input" && userMsg.type === "user_input") {
-      Object.assign(earlyEcho.message, userMsg);
+      const acceptedAt = earlyEcho.message.timestamp ?? userMsg.timestamp;
+      Object.assign(earlyEcho.message, userMsg, { timestamp: acceptedAt });
       session.codexLatestUserInput = earlyEcho.message;
       this.onMessage(session.id, earlyEcho.message);
       return { ok: true };

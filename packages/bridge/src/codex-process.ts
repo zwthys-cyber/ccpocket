@@ -3936,7 +3936,8 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
           type: "user_input",
           text,
           ...(typeof item.id === "string" && item.id.trim()
-            ? { userMessageUuid: item.id, rawItemId: item.id } : {}),
+            ? { userMessageUuid: item.id }
+            : {}),
           ...(typeof item.timestamp === "string"
             ? { timestamp: item.timestamp }
             : {}),
