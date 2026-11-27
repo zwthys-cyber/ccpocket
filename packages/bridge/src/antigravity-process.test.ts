@@ -1285,6 +1285,109 @@ describe("AntigravityProcess MCP tools", () => {
   });
 });
 
+describe("AntigravityProcess turns that stay open over background work (agy 1.5.15+)", () => {
+  const timer = {
+    toolCallId: "sched",
+    name: "schedule",
+    kind: "other",
+    title: "Run schedule",
+    rawInput: { DurationSeconds: 10, Prompt: "check the build" },
+  };
+
+  it("lists a timer as background work while its turn goes on, and splits the text around it", async () => {
+    const { proc, messages, update, endTurn } = await startSession();
+    proc.sendInput("go");
+    update({ sessionUpdate: "usage_update", used: 100, size: 1000 });
+    update({ sessionUpdate: "tool_call", status: "in_progress", ...timer });
+    // Not yet: the model has not been called again since the timer was set.
+    expect(ofType(messages, "background_tasks").at(-1)?.tasks ?? []).toEqual([]);
+    update({ sessionUpdate: "agent_message_chunk", content: { text: "Timer set." } });
+    update({ sessionUpdate: "usage_update", used: 120, size: 1000 });
+    expect(ofType(messages, "background_tasks").at(-1)?.tasks).toEqual([
+      { taskId: "sched", taskType: "antigravity_timer", description: "Timer: check the build" },
+    ]);
+    expect(proc.status).toBe("running");
+
+    update({ sessionUpdate: "tool_call_update", status: "completed", ...timer });
+    expect(ofType(messages, "background_tasks").at(-1)?.tasks).toEqual([]);
+    update({ sessionUpdate: "agent_message_chunk", content: { text: "It rang." } });
+    endTurn();
+    await until(() => proc.status === "idle", "turn done");
+
+    const texts = ofType(messages, "assistant").flatMap((m) =>
+      m.message.content.flatMap((c) => (c.type === "text" ? [c.text] : [])),
+    );
+    expect(texts).toEqual(["Timer set.", "It rang."]);
+    expect(results(messages)).toHaveLength(1);
+    expect(proc.expectsFollowUp).toBe(false);
+  });
+
+  it("does not list a call the turn is still waiting on", async () => {
+    const { proc, messages, update } = await startSession();
+    proc.sendInput("go");
+    update({ sessionUpdate: "usage_update", used: 100, size: 1000 });
+    update({
+      sessionUpdate: "tool_call",
+      status: "in_progress",
+      toolCallId: "c1",
+      name: "run_command",
+      kind: "execute",
+      title: "sleep 5",
+      rawInput: { CommandLine: "sleep 5" },
+    });
+    expect(ofType(messages, "background_tasks").at(-1)?.tasks ?? []).toEqual([]);
+  });
+
+  it("does not hold the completion back for a server left running", async () => {
+    const { proc, messages, update, endTurn } = await startSession();
+    proc.sendInput("start the server");
+    update({
+      sessionUpdate: "tool_call",
+      status: "in_progress",
+      toolCallId: "srv",
+      name: "run_command",
+      kind: "execute",
+      title: "npm run dev",
+      rawInput: { CommandLine: "npm run dev", IsDaemon: true },
+    });
+    update({ sessionUpdate: "agent_message_chunk", content: { text: "started" } });
+    endTurn();
+    await until(() => proc.status === "idle", "turn done");
+    expect(proc.expectsFollowUp).toBe(false);
+    // Still listed as running.
+    expect(ofType(messages, "background_tasks").at(-1)?.tasks).toEqual([
+      { taskId: "srv", taskType: "antigravity_terminal", description: "npm run dev" },
+    ]);
+  });
+});
+
+describe("AntigravityProcess with a server left running", () => {
+  it("keeps listing it when a later turn is interrupted", async () => {
+    const { proc, transport, messages, update, endTurn } = await startSession();
+    proc.sendInput("start the server");
+    update({
+      sessionUpdate: "tool_call",
+      status: "in_progress",
+      toolCallId: "srv",
+      name: "run_command",
+      kind: "execute",
+      title: "npm run dev",
+      rawInput: { CommandLine: "npm run dev", IsDaemon: true },
+    });
+    endTurn();
+    await until(() => proc.status === "idle", "first turn done");
+
+    proc.sendInput("something else");
+    proc.interrupt();
+    const second = transport.written.filter((m) => m.method === "session/prompt").at(-1);
+    transport.emit("message", { jsonrpc: "2.0", id: second?.id, result: { stopReason: "cancelled" } });
+    await until(() => proc.status === "idle", "interrupted");
+    expect(ofType(messages, "background_tasks").at(-1)?.tasks).toEqual([
+      { taskId: "srv", taskType: "antigravity_terminal", description: "npm run dev" },
+    ]);
+  });
+});
+
 describe("AntigravityProcess turns the agent starts itself", () => {
   const timer = {
     toolCallId: "sched",
@@ -1749,6 +1852,53 @@ describe("AntigravityProcess plan review", () => {
 });
 
 describe("describeAcpTool", () => {
+  it("shows the Orchestrator's hand-off as a plan", () => {
+    expect(
+      describeAcpTool({
+        kind: "other",
+        name: "exit_plan_mode",
+        title: "Run exit_plan_mode",
+        rawInput: { plan: "1. Create a.txt\n2. Verify" },
+      }),
+    ).toEqual({ toolName: "ExitPlanMode", input: { plan: "1. Create a.txt\n2. Verify" } });
+  });
+
+  it("turns the step checklist into a todo list", () => {
+    expect(
+      describeAcpTool({
+        kind: "other",
+        name: "update_steps",
+        title: "Run update_steps",
+        rawInput: {
+          steps: [
+            { status: "done", title: "Create a.txt" },
+            { status: "in_progress", title: "Create b.txt" },
+            { status: "pending", title: "Run cat command" },
+            { status: "skipped", title: "Commit" },
+          ],
+        },
+      }),
+    ).toEqual({
+      toolName: "TodoWrite",
+      input: {
+        todos: [
+          { content: "Create a.txt", status: "completed", activeForm: "" },
+          { content: "Create b.txt", status: "in_progress", activeForm: "" },
+          { content: "Run cat command", status: "pending", activeForm: "" },
+          {
+            content: "Commit (skipped)",
+            status: "completed",
+            activeForm: "",
+            outcome: "skipped",
+          },
+        ],
+      },
+    });
+    expect(
+      describeAcpTool({ kind: "other", name: "update_steps", rawInput: {} }),
+    ).toBeUndefined();
+  });
+
   it("names Antigravity tools the way clients render them", () => {
     expect(
       describeAcpTool({ kind: "read", name: "read_file", rawInput: { Path: "/a/b.txt" } }),
@@ -1898,6 +2048,42 @@ describe("AntigravityProcess image-generator subagent", () => {
     kind: "other",
     title: "Run invoke_subagent",
     rawInput: { TypeName: "image-generator", Role: "Image Generator", Prompt },
+  });
+
+  it("resolves in the same turn when agy keeps it open until the image is done (agy 1.5.15+)", async () => {
+    const generated = "/home/u/.gemini/antigravity-cli/brain/s1/red_circle.jpg";
+    const { proc, messages, update, endTurn } = await startSession(
+      {},
+      {},
+      (p) => p === generated,
+    );
+    proc.sendInput("赤い丸の画像を作って");
+    update({ sessionUpdate: "usage_update", used: 100, size: 1000 });
+    update({ sessionUpdate: "tool_call", status: "in_progress", ...imageGenCall("img1", "Red circle") });
+    update({ sessionUpdate: "tool_call_update", status: "completed", ...imageGenCall("img1", "Red circle") });
+    // The model is called again while the subagent works: the call runs beside the turn.
+    update({ sessionUpdate: "usage_update", used: 200, size: 1000 });
+    expect(ofType(messages, "background_tasks").at(-1)?.tasks).toEqual([
+      {
+        taskId: "img1",
+        taskType: "antigravity_agent",
+        subagentType: "image-generator",
+        description: "Red circle",
+      },
+    ]);
+    update({
+      sessionUpdate: "agent_message_chunk",
+      content: { type: "text", text: `生成しました。\n\n![赤い丸](${generated})` },
+    });
+    endTurn();
+    await until(() => proc.status === "idle", "turn done");
+
+    expect(ofType(messages, "tool_result").find((m) => m.toolUseId === "img1")).toMatchObject({
+      toolName: "ImageGeneration",
+      content: `status: completed\nrevisedPrompt: Red circle\nsavedPath: ${generated}`,
+    });
+    expect(ofType(messages, "background_tasks").at(-1)?.tasks).toEqual([]);
+    expect(proc.expectsFollowUp).toBe(false);
   });
 
   it("maps image-generator to ImageGeneration and resolves when the follow-up turn reports the file", async () => {

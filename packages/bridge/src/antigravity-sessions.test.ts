@@ -401,7 +401,7 @@ describe("readAntigravityTranscriptFile", () => {
         content: [
           { type: "thinking", thinking: "Let me check" },
           { type: "text", text: "Done!" },
-          { type: "tool_use", id: "tc1", name: "read_file", input: { Path: "a.ts" } },
+          { type: "tool_use", id: "tc1", name: "Read", input: { file_path: "a.ts" } },
         ],
       });
       expect(full[2]).toMatchObject({
@@ -420,6 +420,125 @@ describe("readAntigravityTranscriptFile", () => {
       const compact = await readAntigravityTranscriptFile("conv-2", { profileDir });
       expect(compact).toHaveLength(1);
       expect(compact[0]).toMatchObject({ role: "user", content: "Compact log" });
+    } finally {
+      rmSync(profileDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("readAntigravityTranscriptFile with entries as agy writes them", () => {
+  it("shows the user's words and names tools as a live session does", async () => {
+    const profileDir = mkdtempSync(join(tmpdir(), "ccpocket-agy-transcript-"));
+    try {
+      const logsDir = join(profileDir, "brain", "conv-1", ".system_generated", "logs");
+      mkdirSync(logsDir, { recursive: true });
+      const lines = [
+        {
+          step_index: 0,
+          type: "USER_INPUT",
+          content:
+            "<USER_REQUEST>\nmake a.txt\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nThe current local time is: 2026-11-24T18:19:52+09:00.\n</ADDITIONAL_METADATA>",
+        },
+        {
+          step_index: 1,
+          type: "PLANNER_RESPONSE",
+          tool_calls: [
+            // Plain values.
+            { name: "run_command", args: { CommandLine: "ls -la", toolSummary: "List files" } },
+            { name: "write_file", args: { Content: "alpha", Path: "/workspace/a.txt" } },
+            // Every value kept as a JSON string.
+            { name: "run_command", args: { CommandLine: '"cat a.txt"', WaitMsBeforeAsync: "5000" } },
+            { name: "read_file", args: { Path: '"/workspace/a.txt"' } },
+            {
+              name: "call_mcp_tool",
+              args: { ServerName: "dart-mcp", ToolName: "dtd", Arguments: { command: "connect" } },
+            },
+            { name: "swarm", args: { action: "status" } },
+            // Nothing closes these in a transcript: no open question, no image "generating".
+            { name: "ask_question", args: { questions: [{ question: "Color?", options: ["Red"] }] } },
+            {
+              name: "invoke_subagent",
+              args: { TypeName: "image-generator", Prompt: "Red circle" },
+            },
+          ],
+        },
+      ];
+      writeFileSync(
+        join(logsDir, "transcript_full.jsonl"),
+        lines.map((line) => JSON.stringify(line)).join("\n") + "\n",
+      );
+
+      const messages = await readAntigravityTranscriptFile("conv-1", {
+        profileDir,
+        cwd: "/workspace",
+      });
+      expect(messages[0]).toMatchObject({ role: "user", content: "make a.txt" });
+      const uses = (messages[1]?.content as Array<Record<string, unknown>>).map(
+        ({ name, input }) => ({ name, input }),
+      );
+      expect(uses).toEqual([
+        { name: "Bash", input: { command: "ls -la", description: "List files" } },
+        {
+          name: "FileChange",
+          input: { changes: [{ path: "a.txt", kind: "update", diff: "" }] },
+        },
+        { name: "Bash", input: { command: "cat a.txt" } },
+        { name: "Read", input: { file_path: "a.txt" } },
+        { name: "mcp__dart-mcp__dtd", input: { command: "connect" } },
+        { name: "swarm", input: { action: "status" } },
+        {
+          name: "ask_question",
+          input: { questions: [{ question: "Color?", options: ["Red"] }] },
+        },
+        {
+          name: "ImageGeneration",
+          input: { status: "completed", revisedPrompt: "Red circle" },
+        },
+      ]);
+    } finally {
+      rmSync(profileDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("readAntigravityTranscriptFile step checklist", () => {
+  it("reads update_steps as a todo list", async () => {
+    const profileDir = mkdtempSync(join(tmpdir(), "ccpocket-agy-transcript-"));
+    try {
+      const logsDir = join(profileDir, "brain", "conv-1", ".system_generated", "logs");
+      mkdirSync(logsDir, { recursive: true });
+      // The transcript keeps arguments under `args`, the list as a JSON string.
+      const line = JSON.stringify({
+        step_index: 7,
+        type: "PLANNER_RESPONSE",
+        tool_calls: [
+          {
+            name: "update_steps",
+            args: {
+              steps: JSON.stringify([
+                { status: "done", title: "Create a.txt" },
+                { status: "in_progress", title: "Create b.txt" },
+              ]),
+            },
+          },
+        ],
+      });
+      writeFileSync(join(logsDir, "transcript_full.jsonl"), line + "\n");
+
+      const messages = await readAntigravityTranscriptFile("conv-1", { profileDir });
+      expect(messages).toHaveLength(1);
+      expect(messages[0]?.content).toMatchObject([
+        {
+          type: "tool_use",
+          name: "TodoWrite",
+          input: {
+            todos: [
+              { content: "Create a.txt", status: "completed", activeForm: "" },
+              { content: "Create b.txt", status: "in_progress", activeForm: "" },
+            ],
+          },
+        },
+      ]);
     } finally {
       rmSync(profileDir, { recursive: true, force: true });
     }

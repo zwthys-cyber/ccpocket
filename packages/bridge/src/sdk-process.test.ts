@@ -1028,8 +1028,43 @@ describe("SdkProcess settings", () => {
 });
 
 describe("SdkProcess input dispatch", () => {
-  it("steers into a running turn with next priority and no status change", () => {
+  // Input is only accepted while a query exists.
+  const processWithQuery = () => {
     const proc = new SdkProcess();
+    (proc as any).queryInstance = {
+      close: vi.fn(),
+      interrupt: vi.fn(() => Promise.resolve()),
+    };
+    return proc;
+  };
+
+  it("drops input when no query is running", () => {
+    const proc = new SdkProcess();
+
+    expect(proc.dispatchInput("lost")).toEqual({
+      queued: false,
+      shouldInterrupt: false,
+    });
+    expect(
+      proc.dispatchInputWithImages("lost", [
+        { base64: "aGk=", mimeType: "image/png" },
+      ]),
+    ).toEqual({ queued: false, shouldInterrupt: false });
+    expect(proc.hasInputQueue).toBe(false);
+    expect(proc.status).toBe("idle");
+  });
+
+  it("does not hand input sent after stop to the next start", () => {
+    const proc = processWithQuery();
+    proc.stop();
+
+    proc.dispatchInput("after stop");
+
+    expect(proc.hasInputQueue).toBe(false);
+  });
+
+  it("steers into a running turn with next priority and no status change", () => {
+    const proc = processWithQuery();
     const resolve = vi.fn();
     const internal = proc as any;
     internal._status = "running";
@@ -1046,7 +1081,7 @@ describe("SdkProcess input dispatch", () => {
   });
 
   it("buffers a steer until the stream pulls during the same turn", async () => {
-    const proc = new SdkProcess();
+    const proc = processWithQuery();
     const internal = proc as any;
     internal._status = "running";
     internal.userMessageResolve = null;
@@ -1061,7 +1096,7 @@ describe("SdkProcess input dispatch", () => {
   });
 
   it("sends a buffered steer as a normal prompt when the turn already ended", async () => {
-    const proc = new SdkProcess();
+    const proc = processWithQuery();
     const internal = proc as any;
     internal._status = "running";
     internal.userMessageResolve = null;
@@ -1075,7 +1110,7 @@ describe("SdkProcess input dispatch", () => {
   });
 
   it("sends steer input normally when no turn is active", () => {
-    const proc = new SdkProcess();
+    const proc = processWithQuery();
     const resolve = vi.fn();
     const internal = proc as any;
     internal._status = "idle";
@@ -1088,7 +1123,7 @@ describe("SdkProcess input dispatch", () => {
   });
 
   it("queues and requests interrupt while a turn is running", () => {
-    const proc = new SdkProcess();
+    const proc = processWithQuery();
     const resolve = vi.fn();
     const internal = proc as any;
     internal._status = "running";
@@ -1103,7 +1138,7 @@ describe("SdkProcess input dispatch", () => {
   });
 
   it("queues without interrupting while approval is pending", () => {
-    const proc = new SdkProcess();
+    const proc = processWithQuery();
     const resolve = vi.fn();
     const internal = proc as any;
     internal._status = "waiting_approval";
@@ -1119,7 +1154,7 @@ describe("SdkProcess input dispatch", () => {
   it.each(["starting", "idle"])(
     "delivers directly through the ready resolver while %s",
     (status) => {
-      const proc = new SdkProcess();
+      const proc = processWithQuery();
       const resolve = vi.fn();
       const internal = proc as any;
       internal._status = status;
@@ -1136,7 +1171,7 @@ describe("SdkProcess input dispatch", () => {
   );
 
   it("applies the running policy to image input", () => {
-    const proc = new SdkProcess();
+    const proc = processWithQuery();
     const resolve = vi.fn();
     const internal = proc as any;
     internal._status = "running";
@@ -1151,7 +1186,7 @@ describe("SdkProcess input dispatch", () => {
   });
 
   it("marks directly delivered image input as running", () => {
-    const proc = new SdkProcess();
+    const proc = processWithQuery();
     const resolve = vi.fn();
     const internal = proc as any;
     internal._status = "idle";
@@ -1167,7 +1202,7 @@ describe("SdkProcess input dispatch", () => {
   });
 
   it("drains queued input FIFO one item per result when a consumer is waiting", () => {
-    const proc = new SdkProcess();
+    const proc = processWithQuery();
     const internal = proc as any;
     const firstResolve = vi.fn();
     internal._status = "running";
@@ -1199,7 +1234,7 @@ describe("SdkProcess input dispatch", () => {
   });
 
   it("keeps queued input until a consumer is waiting", () => {
-    const proc = new SdkProcess();
+    const proc = processWithQuery();
     const internal = proc as any;
     internal._status = "running";
     internal.userMessageResolve = null;
@@ -1211,7 +1246,7 @@ describe("SdkProcess input dispatch", () => {
   });
 
   it("drains only one queued item per result with a greedy stream consumer", async () => {
-    const proc = new SdkProcess();
+    const proc = processWithQuery();
     const internal = proc as any;
     internal._status = "running";
 
@@ -2482,6 +2517,36 @@ describe("SdkProcess Claude authentication", () => {
     ]);
   });
 
+  it("settles requests and drops input state when the SDK stream ends by itself", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test");
+    const proc = new SdkProcess();
+    const exits: Array<number | null> = [];
+    proc.on("exit", (code) => exits.push(code));
+    let asked: Promise<unknown> | undefined;
+    mockSdkQuery.mockImplementationOnce((args: any) => ({
+      async *[Symbol.asyncIterator]() {
+        asked = args.options.canUseTool(
+          "Bash",
+          { command: "ls" },
+          { signal: new AbortController().signal, toolUseID: "tool-1" },
+        );
+        // Park a resolver the way the SDK does while it waits for input.
+        void args.prompt[Symbol.asyncIterator]().next();
+        await Promise.resolve();
+      },
+      close: vi.fn(),
+      supportedCommands: vi.fn().mockResolvedValue([]),
+    }));
+
+    proc.start(process.cwd());
+    await vi.waitFor(() => expect(exits).toEqual([0]), { timeout: 2000 });
+
+    await expect(asked).resolves.toMatchObject({ behavior: "deny" });
+    expect(proc.getPendingPermissions()).toEqual([]);
+    expect((proc as any).userMessageResolve).toBeNull();
+    expect(proc.status).toBe("idle");
+  });
+
   it("flushes a typed assistant error instead of duplicating an iterator failure", async () => {
     const { messages } = await runSdkMessages(
       [
@@ -3404,12 +3469,17 @@ describe("SdkProcess pending permission cleanup", () => {
         };
         proc.interrupt();
       },
+      // Interrupt leaves the turn running, so it reports the requests itself.
+      ["tool-1", "tool-2"],
+      "running",
     ],
     [
       "stop",
       (proc: SdkProcess) => {
         proc.stop();
       },
+      [],
+      "idle",
     ],
     [
       "result",
@@ -3419,8 +3489,15 @@ describe("SdkProcess pending permission cleanup", () => {
           subtype: "success",
         });
       },
+      [],
+      "idle",
     ],
-  ])("denies outstanding canUseTool requests on %s", async (_label, trigger) => {
+  ])("denies outstanding canUseTool requests on %s", async (
+    _label,
+    trigger,
+    resolvedIds,
+    status,
+  ) => {
     const proc = new SdkProcess();
     const messages: ServerMessage[] = [];
     proc.on("message", (msg) => messages.push(msg));
@@ -3441,8 +3518,92 @@ describe("SdkProcess pending permission cleanup", () => {
     });
     expect(proc.getPendingPermissions()).toEqual([]);
     expect(
-      messages.filter((m) => m.type === "permission_resolved"),
-    ).toEqual([]);
+      messages
+        .filter((m) => m.type === "permission_resolved")
+        .map((m) => (m as { toolUseId: string }).toolUseId),
+    ).toEqual(resolvedIds);
+    expect(proc.status).toBe(status);
+  });
+
+  it.each(["requesting", "compacting"])(
+    "stays in waiting_approval when a %s status frame arrives",
+    (frameStatus) => {
+      const proc = new SdkProcess();
+      void startPending(proc, "tool-1");
+
+      (proc as any).updateStatusFromMessage({
+        type: "system",
+        subtype: "status",
+        status: frameStatus,
+      });
+
+      expect(proc.status).toBe("waiting_approval");
+    },
+  );
+
+  it("settles and reports a request the SDK withdraws", async () => {
+    const proc = new SdkProcess();
+    const messages: ServerMessage[] = [];
+    proc.on("message", (msg) => messages.push(msg));
+    const controller = new AbortController();
+    const withdrawn = (proc as any).waitForPermission(
+      "tool-1",
+      "Bash",
+      { command: "ls" },
+      controller.signal,
+    ) as Promise<unknown>;
+
+    controller.abort();
+
+    await expect(settledWithin(withdrawn)).resolves.toMatchObject({
+      behavior: "deny",
+    });
+    expect(proc.getPendingPermissions()).toEqual([]);
+    expect(proc.status).toBe("running");
+    expect(messages).toContainEqual({
+      type: "permission_resolved",
+      toolUseId: "tool-1",
+    });
+  });
+
+  it("keeps waiting for the other request when one is withdrawn", () => {
+    const proc = new SdkProcess();
+    const controller = new AbortController();
+    void (proc as any).waitForPermission(
+      "tool-1",
+      "Bash",
+      { command: "ls" },
+      controller.signal,
+    );
+    void startPending(proc, "tool-2");
+
+    controller.abort();
+
+    expect(proc.getPendingPermissions().map((p) => p.toolUseId)).toEqual([
+      "tool-2",
+    ]);
+    expect(proc.status).toBe("waiting_approval");
+  });
+
+  it("answers an already withdrawn request without announcing it", async () => {
+    const proc = new SdkProcess();
+    const messages: ServerMessage[] = [];
+    proc.on("message", (msg) => messages.push(msg));
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = (proc as any).waitForPermission(
+      "tool-1",
+      "Bash",
+      { command: "ls" },
+      controller.signal,
+    ) as Promise<unknown>;
+
+    await expect(settledWithin(result)).resolves.toMatchObject({
+      behavior: "deny",
+    });
+    expect(messages).toEqual([]);
+    expect(proc.status).toBe("idle");
   });
 
   it("leaves normal approve and reject flows unchanged", async () => {

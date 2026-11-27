@@ -2,6 +2,51 @@
 
 All notable changes to `@ccpocket/bridge` will be documented in this file.
 
+## [1.122.0] - 2026-11-25
+
+### Added
+
+- Per-category delivery filtering (`performance_mode_v2`): `client_capabilities` now accepts `performanceFilter` and `sessionPerformanceFilters` to independently toggle tasks/TODO checklists (`TodoWrite`/`update_steps`, `UpdatePlan`, `TaskCreate`/`TaskUpdate`), thinking blocks and `thinking_delta` streams, subagent calls/summaries and Swarm conversation, code edit diffs, other tool calls, and non-essential tool outputs/screenshots. Legacy `performanceMode` clients remain fully compatible.
+
+## [1.121.0] - 2026-11-24
+
+### Added
+
+- Antigravity sessions: the step checklist (`update_steps`, agy 1.5.16) is sent as a todo list, with skipped and failed steps marked.
+- Antigravity sessions: the plan the Orchestrator hands to its executor (`exit_plan_mode`) is sent as a plan card.
+- Antigravity sessions: timers and background commands are listed as background work while their turn stays open (agy 1.5.15 and later), and the text written before and after the wait are separate messages.
+- Antigravity swarms: an approval that agy forwards to the coordinator's session (agy 1.5.16) names the worker and is kept when the coordinator's turn ends.
+
+### Changed
+
+- Antigravity sessions: a command agy marks as a daemon (a dev server) no longer holds the completion notification back, and stays in the background list when a later turn is cancelled.
+
+### Fixed
+
+- Antigravity sessions: an image generation card stayed on "generating" with agy 1.5.15 and later, because the turn now stays open until the image is done.
+- Antigravity sessions: the history of a session that is not loaded showed the user's prompt with agy's wrapper tags and tools without their input; tools now have the same names and inputs as in a live session.
+
+## [1.120.1] - 2026-11-24
+
+### Changed
+
+- Updated `@anthropic-ai/claude-agent-sdk` to 0.3.330, plus `socks`, `undici` and the test tooling.
+
+### Fixed
+
+- Claude sessions: a status update from Claude no longer takes a session out of "waiting for approval" while a request is still pending.
+- Claude sessions: an approval request that Claude withdraws, an interrupt, and a stream that ends by itself now settle the pending requests, so the status moves on and clients are told the request is resolved.
+- Claude sessions: input sent to a session whose query has ended after an error is rejected (`input_rejected`) instead of being acknowledged and never delivered.
+
+## [1.120.0] - 2026-11-23
+
+### Added
+
+- Config file: settings can be saved in `~/.ccpocket/bridge-config.json` (`BRIDGE_CONFIG_FILE` overrides the path). The precedence is CLI flag > environment variable > config file > default, so existing environment-based setups are unchanged.
+- Local management API (`/admin/*`) for the CC Pocket desktop app on the same machine: status, settings, restart, API key replacement and recent logs. It requires a loopback connection and the per-start pairing secret, and does not accept the API key, so a paired phone cannot change what the Bridge may access.
+- `GET /tools` (API key required): Node.js, Git, Claude Code, Codex, Antigravity, GitHub CLI and Tailscale with their install state and install commands. The report is cached for 30 seconds; `?refresh=1` runs the checks again.
+- Safe mode: with `CCPOCKET_BRIDGE_SAFE_MODE=1` (set by the macOS app's launcher after repeated failed starts) the saved settings are ignored so they can be fixed through the management API.
+
 ## [1.119.0] - 2026-11-22
 
 ### Added

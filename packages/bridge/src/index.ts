@@ -25,6 +25,10 @@ import { WorkspaceStore } from "./workspace-store.js";
 import { getVersionInfo } from "./version.js";
 import { fetchAllUsage } from "./usage.js";
 import { runDoctor } from "./doctor.js";
+import { getCachedToolsReport } from "./tools.js";
+import { handleAdminRequest, SAFE_MODE_ENV } from "./admin-api.js";
+import { applyBridgeConfig, readBridgeConfigFile } from "./bridge-config.js";
+import { LogBuffer } from "./log-buffer.js";
 import { DebugTraceStore } from "./debug-trace-store.js";
 import { RecordingStore } from "./recording-store.js";
 import { FirebaseAuthClient } from "./firebase-auth.js";
@@ -51,6 +55,27 @@ function positiveEnvInt(name: string, fallback: number): number {
 }
 
 export async function startServer() {
+  const logBuffer = new LogBuffer();
+  logBuffer.install();
+
+  // Settings saved in ~/.ccpocket/bridge-config.json fill in the environment
+  // variables that are not set, before anything below reads them.
+  const loadedConfig = await readBridgeConfigFile();
+  for (const warning of loadedConfig.warnings) {
+    console.warn(`[bridge] WARNING: ${warning}`);
+  }
+  // A launcher sets this after the Bridge kept exiting right after start:
+  // run on defaults so the saved settings can be fixed through /admin.
+  const safeMode = process.env[SAFE_MODE_ENV] === "1";
+  if (safeMode) {
+    console.warn(
+      "[bridge] WARNING: safe mode: the saved settings are ignored because the Bridge failed to start repeatedly.",
+    );
+  }
+  const appliedConfig = applyBridgeConfig(
+    safeMode ? {} : loadedConfig.settings,
+  );
+
   const PORT = parseBridgePort();
   const HOST = process.env.BRIDGE_HOST ?? "0.0.0.0";
   const insecureNoAuth = process.env.BRIDGE_INSECURE_NO_AUTH === "1";
@@ -73,6 +98,9 @@ export async function startServer() {
     configured: process.env.BRIDGE_API_KEY,
     insecureNoAuth,
   });
+  // Pairing output (deep link, QR code) carries the key: keep it out of the
+  // log buffer the management UI shows and copies.
+  if (API_KEY) logBuffer.addSecret(API_KEY);
   switch (apiKeySource) {
     case "configured":
       console.log("[bridge] API key authentication enabled");
@@ -256,6 +284,28 @@ export async function startServer() {
       return;
     }
 
+    // Local management API: same local-only checks as /pairing, also before
+    // the CORS headers.
+    if (
+      handleAdminRequest(req, res, {
+        pairingSecret,
+        port: PORT,
+        version: getVersionInfo(startedAt).version,
+        startedAt,
+        appliedConfig,
+        apiKeySource,
+        safeMode,
+        logs: logBuffer,
+        counts: () => ({
+          sessions: wsServer?.sessionCount ?? 0,
+          clients: wsServer?.clientCount ?? 0,
+        }),
+        restart: () => void shutdown(),
+      })
+    ) {
+      return;
+    }
+
     // CORS headers for Flutter Web clients
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader(
@@ -328,6 +378,23 @@ export async function startServer() {
     // Doctor endpoint
     if (req.url === "/doctor" && req.method === "GET") {
       runDoctor()
+        .then((report) => {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(report));
+        })
+        .catch((err) => {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: String(err) }));
+        });
+      return;
+    }
+
+    // Tools the host needs, with install state (setup guide in the app)
+    if (
+      (req.url === "/tools" || req.url === "/tools?refresh=1") &&
+      req.method === "GET"
+    ) {
+      getCachedToolsReport(req.url.endsWith("refresh=1"))
         .then((report) => {
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify(report));

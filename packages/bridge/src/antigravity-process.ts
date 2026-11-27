@@ -537,10 +537,14 @@ interface ToolCallState {
   timer: boolean;
   /** Still open when its turn ended. */
   background: boolean;
+  /** Still open while its own turn went on (agy 1.5.15 keeps the turn open). */
+  detached?: boolean;
+  /** A command meant to keep running (`IsDaemon`), such as a dev server. */
+  daemon?: boolean;
   /** Shown another way (a board post), so no tool card. */
   hidden?: boolean;
   /** Built-in `image-generator` subagent call; resolves once the image path arrives. */
-  imageGeneration?: { prompt: string };
+  imageGeneration?: { prompt: string; startedAt: number };
 }
 
 interface ElicitationField {
@@ -1083,6 +1087,43 @@ export function extractGeneratedImagePaths(
   return existing;
 }
 
+/**
+ * Antigravity's step checklist (`update_steps`, agy 1.5.16) as the todo list
+ * Claude sessions send, so clients draw it with the same checklist. Every call
+ * carries the whole list.
+ */
+function todosFromUpdateSteps(
+  steps: unknown,
+): Array<{ content: string; status: string; activeForm: string; outcome?: string }> {
+  // The transcript on disk keeps the list as a JSON string.
+  if (typeof steps === "string") {
+    try {
+      steps = JSON.parse(steps);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(steps)) return [];
+  return steps.filter(isRecord).map((step, index) => {
+    const title = stringOr(step.title).trim() || `Step ${index + 1}`;
+    const raw = stringOr(step.status);
+    if (raw === "pending" || raw === "in_progress") {
+      return { content: title, status: raw, activeForm: "" };
+    }
+    // Skipped and failed steps are finished too; the todo list has no state
+    // for them, so the title says how they ended.
+    if (!raw) return { content: title, status: "pending", activeForm: "" };
+    const done = raw === "done" || raw === "completed";
+    return {
+      content: done ? title : `${title} (${raw})`,
+      status: "completed",
+      activeForm: "",
+      // How it ended, for clients that can show it; others read the title.
+      ...(done ? {} : { outcome: raw }),
+    };
+  });
+}
+
 export function describeAcpTool(
   update: Record<string, unknown>,
   cwd = "",
@@ -1107,6 +1148,16 @@ export function describeAcpTool(
       toolName: "AskUserQuestion",
       input: { questions: questionsFromAskQuestion(rawInput) },
     };
+  }
+  // The Orchestrator's planner hands its plan to the executor with this call.
+  // It asks nothing, so it is the plan card without an approval.
+  if (name === "exit_plan_mode") {
+    const plan = stringOr(rawInput.plan).trim();
+    if (plan) return { toolName: "ExitPlanMode", input: { plan } };
+  }
+  if (name === "update_steps") {
+    const todos = todosFromUpdateSteps(rawInput.steps);
+    if (todos.length > 0) return { toolName: "TodoWrite", input: { todos } };
   }
   if (kind === "read") {
     const rawPath =
@@ -1176,6 +1227,88 @@ function schemaOptions(schema: Record<string, unknown>): Array<{ value: unknown;
     }));
   }
   return [];
+}
+
+const STORED_TOOL_KINDS: Record<string, string> = {
+  run_command: "execute",
+  write_file: "edit",
+  edit_file: "edit",
+  read_file: "read",
+  search_web: "search",
+  read_url_content: "fetch",
+};
+
+/**
+ * Some transcripts keep every argument as a JSON string (`"\"ls\""`,
+ * `"[{...}]"`); read those back so the tool input looks as it did live.
+ */
+function decodeStoredArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const decoded: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    // Encoded transcripts encode every value; one that is not a JSON string
+    // means these are the values themselves.
+    if (typeof value !== "string") return args;
+    try {
+      decoded[key] = JSON.parse(value);
+    } catch {
+      return args;
+    }
+  }
+  return decoded;
+}
+
+/**
+ * A tool call from the transcript Antigravity keeps on disk
+ * (`{name, args}`), named and shaped like the same call in a live session.
+ */
+export function describeStoredToolCall(
+  name: string,
+  args: Record<string, unknown>,
+  cwd = "",
+): { toolName: string; input: Record<string, unknown> } {
+  const rawInput = decodeStoredArgs(args);
+  const kind = STORED_TOOL_KINDS[name] ?? "other";
+  const update = { name, kind, rawInput };
+  const mcp = mcpToolFromAcp(update);
+  if (mcp) return { toolName: mcp.toolName, input: mcp.input };
+  if (kind === "execute") {
+    const summary = stringOr(rawInput.toolSummary);
+    return {
+      toolName: "Bash",
+      input: {
+        command: stringOr(rawInput.CommandLine),
+        ...(summary ? { description: summary } : {}),
+      },
+    };
+  }
+  if (kind === "edit") {
+    const path = firstString(rawInput, ["Path", "TargetFile", "AbsolutePath"]);
+    return {
+      toolName: "FileChange",
+      input: {
+        changes: path ? [{ path: displayPath(path, cwd), kind: "update", diff: "" }] : [],
+      },
+    };
+  }
+  const described = describeAcpTool(update, cwd);
+  // The transcript has no results, so nothing would ever close these: a
+  // question stays a plain call, an image generation is shown as finished.
+  if (!described || described.toolName === "AskUserQuestion") {
+    return { toolName: name, input: rawInput };
+  }
+  if (described.toolName === "ImageGeneration") {
+    return {
+      toolName: described.toolName,
+      input: { ...described.input, status: "completed" },
+    };
+  }
+  return described;
+}
+
+/** The user's own words in a stored `USER_INPUT` entry, without the wrapper agy adds. */
+export function storedUserInputText(content: string): string {
+  const match = /<USER_REQUEST>\n?([\s\S]*?)\n?<\/USER_REQUEST>/.exec(content);
+  return match ? (match[1] ?? "") : content;
 }
 
 /** Turns an ACP elicitation form schema into the questions clients render. */
@@ -1486,7 +1619,8 @@ export class AntigravityProcess extends EventEmitter<AntigravityProcessEvents> {
     if (this.activeSwarmWorkers().length > 0) return true;
     let command = false;
     for (const call of this.toolCalls.values()) {
-      if (!call.background) continue;
+      // A server left running says nothing more; the turn that started it is done.
+      if (!call.background || call.daemon) continue;
       if (call.timer) return true;
       command = true;
     }
@@ -2217,17 +2351,24 @@ export class AntigravityProcess extends EventEmitter<AntigravityProcessEvents> {
   ): void {
     if (!keepOpen) {
       this.closePendingImageGenerations(closeImageStatus);
-      this.toolCalls.clear();
+      // A server started in an earlier turn keeps running whatever happens
+      // to this one.
+      for (const [id, call] of this.toolCalls) {
+        if (!(call.daemon && call.background)) this.toolCalls.delete(id);
+      }
     } else {
       for (const [id, call] of this.toolCalls) {
         if (call.finished || call.rejected) this.toolCalls.delete(id);
-        else call.background = true;
+        else {
+          call.background = true;
+          call.detached = false;
+        }
       }
     }
     if (this.followUpTimer) clearTimeout(this.followUpTimer);
     this.followUpTimer = null;
     this.followUpDeadline = 0;
-    if ([...this.toolCalls.values()].some((call) => !call.timer)) {
+    if ([...this.toolCalls.values()].some((call) => !call.timer && !call.daemon)) {
       this.followUpDeadline = Date.now() + FOLLOW_UP_WAIT_MS;
       // Lets whoever holds the completion back look again.
       this.followUpTimer = setTimeout(() => {
@@ -2242,11 +2383,30 @@ export class AntigravityProcess extends EventEmitter<AntigravityProcessEvents> {
     this.emitBackgroundTasks();
   }
 
+  /**
+   * Since agy 1.5.15 a turn stays open while a timer or a background command
+   * runs. A usage report means the model was called again, so whatever was
+   * started before it and is still open now runs beside the turn: list it as
+   * background work, or the session only looks busy with nothing to show.
+   */
+  private noteDetachedCalls(): void {
+    if (this.replaying || this.outstandingPrompts === 0) return;
+    let changed = false;
+    for (const [id, call] of this.toolCalls) {
+      if (call.finished || call.rejected || call.hidden) continue;
+      if (call.background || call.detached) continue;
+      if (this.pendingPermissions.has(id) || this.pendingElicitations.has(id)) continue;
+      call.detached = true;
+      changed = true;
+    }
+    if (changed) this.emitBackgroundTasks();
+  }
+
   /** Calls that outlived their turn, in the shape Claude and Codex report. */
   private emitBackgroundTasks(force = false): void {
     const tasks: BackgroundTaskInfo[] = [];
     for (const [taskId, call] of this.toolCalls) {
-      if (!call.background) continue;
+      if (!call.background && !call.detached) continue;
       tasks.push({
         taskId,
         taskType: call.timer
@@ -2810,6 +2970,18 @@ export class AntigravityProcess extends EventEmitter<AntigravityProcessEvents> {
     }
   }
 
+  /**
+   * Since agy 1.5.16 a child agent's call that needs approval is forwarded to
+   * the parent's session with `<child conversation id>:<call id>`. This
+   * happens for a swarm worker whose conversation is not open here yet (or
+   * could not be opened); name it so the approval says whose it is.
+   */
+  private forwardedWorkerName(toolUseId: string): string | undefined {
+    const separator = toolUseId.indexOf(":");
+    if (separator <= 0) return undefined;
+    return this.swarmWorkers.get(toolUseId.slice(0, separator))?.name;
+  }
+
   private noteSwarmWorkerUpdate(
     conversationId: string,
     update: Record<string, unknown>,
@@ -3029,6 +3201,7 @@ export class AntigravityProcess extends EventEmitter<AntigravityProcessEvents> {
       }
       case "usage_update": {
         this.armSelfTurnEnd();
+        this.noteDetachedCalls();
         const used = numberOr(update.used);
         const size = numberOr(update.size);
         if (used === undefined || size === undefined || size <= 0) return;
@@ -3108,6 +3281,16 @@ export class AntigravityProcess extends EventEmitter<AntigravityProcessEvents> {
     // Antigravity says nothing more after a denial, not even a usage report.
     else if (call?.rejected) this.armSelfTurnEnd();
     const endsBackground = closing && !!call?.background && !call.finished;
+    if (closing && call?.detached && !call.finished) {
+      // What the agent said before the wait and what it says after it are
+      // two messages, with this result between them.
+      this.flushAssistant();
+      // An image generation closes at once and goes on until its file is named.
+      if (!call.imageGeneration) {
+        call.detached = false;
+        this.emitBackgroundTasks();
+      }
+    }
     if (!call) {
       this.flushAssistant();
       const kind = stringOr(update.kind, "other");
@@ -3139,6 +3322,8 @@ export class AntigravityProcess extends EventEmitter<AntigravityProcessEvents> {
         toolName = stringOr(update.name) || title || kind;
         input = { ...rawInput };
       }
+      const forwardedFrom = this.forwardedWorkerName(toolUseId);
+      if (forwardedFrom) input = { ...input, swarmWorker: forwardedFrom };
       if (!this.replaying) this.turnToolCalls++;
       const timer = stringOr(update.name) === "schedule";
       const swarmTool = SWARM_TOOL_NAMES.has(stringOr(update.name));
@@ -3165,7 +3350,10 @@ export class AntigravityProcess extends EventEmitter<AntigravityProcessEvents> {
             : stringOr(rawInput.CommandLine, title),
         timer,
         background: false,
-        ...(imageGen ? { imageGeneration: { prompt: imagePrompt } } : {}),
+        ...(rawInput.IsDaemon === true ? { daemon: true } : {}),
+        ...(imageGen
+          ? { imageGeneration: { prompt: imagePrompt, startedAt: Date.now() } }
+          : {}),
         ...(hidden ? { hidden } : {}),
       };
       this.toolCalls.set(toolUseId, call);
@@ -3232,12 +3420,15 @@ export class AntigravityProcess extends EventEmitter<AntigravityProcessEvents> {
           : cleanCommandOutput(textFromToolContent(update.content));
       const exitCode = rawOutput.exit_code;
       content =
-        output ||
-        (typeof exitCode === "number"
-          ? `exit code: ${exitCode}`
-          : status === "failed"
-            ? "Failed"
-            : "Done");
+        call.toolName === "ExitPlanMode" && status === "completed"
+          ? // The plan card shows the plan; clients hide this row.
+            "Plan handed to the executor"
+          : output ||
+            (typeof exitCode === "number"
+              ? `exit code: ${exitCode}`
+              : status === "failed"
+                ? "Failed"
+                : "Done");
     }
     const rawContentBlocks = imageBlocksFromToolContent(update.content);
     this.emitMessage({
@@ -3437,6 +3628,8 @@ export class AntigravityProcess extends EventEmitter<AntigravityProcessEvents> {
       });
       return;
     }
+    const forwardedFrom = this.forwardedWorkerName(toolUseId);
+    if (forwardedFrom) input = { ...input, swarmWorker: forwardedFrom };
     this.pendingPermissions.set(toolUseId, {
       requestId,
       toolUseId,
@@ -3444,6 +3637,9 @@ export class AntigravityProcess extends EventEmitter<AntigravityProcessEvents> {
       input,
       options,
       ...(sessionGrant ? { sessionGrant } : {}),
+      // The worker's request, like one from its own conversation: it outlives
+      // the coordinator's turn and a denial names the worker.
+      ...(forwardedFrom ? { worker: forwardedFrom } : {}),
     });
     // Status first: the session summary broadcast with the request must
     // already say "waiting_approval", or clients drop the approval again.
@@ -3561,10 +3757,30 @@ export class AntigravityProcess extends EventEmitter<AntigravityProcessEvents> {
    * execution, the turn that launched `invoke_subagent` has not yet yielded
    * any generated file (it may still mention input reference images), so only
    * calls that outlived their launch turn (`call.background`) can match.
+   * Since agy 1.5.15 that turn stays open until the image is done, so a call
+   * the model has moved on from (`call.detached`) can match too; there, only
+   * a file written after the launch counts (see `isNewForPendingImages`).
    */
   private resolvableImageGenerationCalls(): Array<[string, ToolCallState]> {
     const all = this.allPendingImageGenerationCalls();
-    return this.replaying ? all : all.filter(([, call]) => call.background);
+    return this.replaying
+      ? all
+      : all.filter(([, call]) => call.background || call.detached);
+  }
+
+  /** Whether an image can be the output of the pending calls, not their input. */
+  private isNewForPendingImages(filePath: string): boolean {
+    if (this.replaying) return true;
+    const inTurn = this.resolvableImageGenerationCalls()
+      .filter(([, call]) => !call.background)
+      .map(([, call]) => call.imageGeneration?.startedAt ?? 0);
+    if (inTurn.length === 0) return true;
+    try {
+      return statSync(filePath).mtimeMs >= Math.min(...inTurn) - 2000;
+    } catch {
+      // Not on disk (unit tests use made-up paths).
+      return true;
+    }
   }
 
   /**
@@ -3622,8 +3838,9 @@ export class AntigravityProcess extends EventEmitter<AntigravityProcessEvents> {
           ? imagePaths.slice(i)
           : [imagePaths[i]];
       call.finished = true;
-      if (call.background) {
+      if (call.background || call.detached) {
         call.background = false;
+        call.detached = false;
         backgroundChanged = true;
       }
       this.emitMessage({
@@ -3651,8 +3868,9 @@ export class AntigravityProcess extends EventEmitter<AntigravityProcessEvents> {
     let backgroundChanged = false;
     for (const [toolUseId, call] of pending) {
       call.finished = true;
-      if (call.background) {
+      if (call.background || call.detached) {
         call.background = false;
+        call.detached = false;
         backgroundChanged = true;
       }
       this.emitMessage({
@@ -3721,7 +3939,8 @@ export class AntigravityProcess extends EventEmitter<AntigravityProcessEvents> {
             this.cwd,
             (candidate) =>
               this.isAllowedGeneratedImagePath(candidate) &&
-              this.isImageFile(candidate),
+              this.isImageFile(candidate) &&
+              this.isNewForPendingImages(candidate),
           )
         : [];
     this.emitMessage({
