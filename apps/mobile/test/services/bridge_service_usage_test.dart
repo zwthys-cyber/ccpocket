@@ -8,6 +8,8 @@ import 'package:ccpocket/models/offline_pending_action.dart';
 import 'package:ccpocket/models/protocol_version.dart';
 import 'package:ccpocket/services/bridge_service.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Map<String, dynamic> _galleryImageJson(
@@ -4497,25 +4499,8 @@ void main() {
         bridge.dispose();
         await server.close(force: true);
       });
-      final deletion = Completer<({String method, Uri uri, String? authorization})>();
-      server.listen((request) async {
-        if (io.WebSocketTransformer.isUpgradeRequest(request)) {
-          final socket = await io.WebSocketTransformer.upgrade(request);
-          socket.add(jsonEncode({'type': 'session_list', 'sessions': []}));
-          socket.listen((_) {});
-          return;
-        }
-
-        final authorization = request.headers.value(HttpHeaders.authorizationHeader);
-        deletion.complete((
-          method: request.method,
-          uri: request.uri,
-          authorization: authorization,
-        ));
-        request.response.statusCode = authorization == 'Bearer $token'
-            ? HttpStatus.ok
-            : HttpStatus.unauthorized;
-        await request.response.close();
+      server.transform(WebSocketTransformer()).listen((socket) {
+        socket.listen((_) {});
       });
       final connected = bridge.connectionStatus.firstWhere(
         (status) => status == BridgeConnectionState.connected,
@@ -4530,12 +4515,25 @@ void main() {
       );
       await connected.timeout(const Duration(seconds: 5));
 
-      expect(await bridge.deleteGalleryImage('gallery-image'), isTrue);
-      final request = await deletion.future;
+      final requests = <http.Request>[];
+      final deleted = await http.runWithClient(
+        () => bridge.deleteGalleryImage('gallery-image'),
+        () => MockClient((request) async {
+          requests.add(request);
+          final statusCode =
+              request.headers[HttpHeaders.authorizationHeader] == 'Bearer $token'
+              ? HttpStatus.ok
+              : HttpStatus.unauthorized;
+          return http.Response('', statusCode);
+        }),
+      );
+
+      expect(deleted, isTrue);
+      final request = requests.single;
       expect(request.method, 'DELETE');
-      expect(request.uri.path, '/api/gallery/gallery-image');
-      expect(request.uri.query, isEmpty);
-      expect(request.authorization, 'Bearer $token');
+      expect(request.url.path, '/api/gallery/gallery-image');
+      expect(request.url.query, isEmpty);
+      expect(request.headers[HttpHeaders.authorizationHeader], 'Bearer $token');
     });
 
     test('gallery timeout preserves cache, retries, and disconnect cancels timeout', () async {
