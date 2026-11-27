@@ -5,8 +5,12 @@ on:
     inputs:
       verification:
         type: choice
-        options: [screenshots, bridge, icons, ipa]
+        options: [screenshots, bridge, icons, ipa, menubar, polish]
         default: screenshots
+      source_ref:
+        description: App commit to build or generate from
+        type: string
+        default: feat/zh-gallery-polish
       ipa_run:
         description: Successful TrollStore build run ID
         type: string
@@ -565,3 +569,60 @@ jobs:
           assert.equal(removed.status, 404);
           console.log('Uploaded, authenticated, deleted, and confirmed removal of the disposable gallery image.');
           JS
+  menubar:
+    if: inputs.verification == 'menubar'
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_ref }}
+      - name: Build localized macOS menu bar app
+        run: |
+          xcodebuild -project apps/menubar/CCPocketMenubar.xcodeproj -scheme CCPocketMenubar -configuration Release -derivedDataPath "$RUNNER_TEMP/build" CODE_SIGNING_ALLOWED=NO build
+          app="$RUNNER_TEMP/build/Build/Products/Release/CCPocketMenubar.app"
+          plutil -convert json -o "$RUNNER_TEMP/compiled.json" "$app/Contents/Resources/zh-Hans.lproj/Localizable.strings"
+          python3 - <<'PY'
+          import json, os, pathlib
+          compiled = json.loads((pathlib.Path(os.environ['RUNNER_TEMP']) / 'compiled.json').read_text())
+          catalog = json.loads(pathlib.Path('apps/menubar/CCPocketMenubar/Localizable.xcstrings').read_text())
+          for key, entry in catalog['strings'].items():
+              assert compiled[key] == entry['localizations']['zh-Hans']['stringUnit']['value'], key
+          print(f"{len(catalog['strings'])} Simplified Chinese entries match compiled resources.")
+          PY
+          ditto -c -k --keepParent "$app" "$RUNNER_TEMP/CCPocketMenubar.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: CCPocketMenubar-zh-Hans
+          path: ${{ runner.temp }}/CCPocketMenubar.zip
+  polish:
+    if: inputs.verification == 'polish'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+      - name: Read Flutter version
+        id: sdk
+        run: echo "version=$(sed -n 's/^flutter = "\(.*\)"/\1/p' .mise.toml)" >> "$GITHUB_OUTPUT"
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: ${{ steps.sdk.outputs.version }}
+          cache: true
+      - name: Generate Flutter translations and format affected Dart files
+        working-directory: apps/mobile
+        run: |
+          flutter pub get
+          flutter gen-l10n
+          git diff --name-only -z --relative --diff-filter=AM origin/feat/ui-icon-refresh...HEAD -- lib test |
+            (while IFS= read -r -d '' file; do case "$file" in *.dart) printf '%s\0' "$file";; esac; done) |
+            xargs -0 -r dart format
+          git diff --binary -- lib test > "$RUNNER_TEMP/generated.patch"
+          git diff --stat -- lib test
+      - uses: actions/upload-artifact@v7
+        with:
+          name: generated-source-patch
+          path: ${{ runner.temp }}/generated.patch
+          if-no-files-found: error
