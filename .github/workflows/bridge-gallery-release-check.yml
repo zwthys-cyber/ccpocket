@@ -1,0 +1,72 @@
+name: Verify gallery upgrade archives
+on:
+  push:
+    branches: [ci/bridge-gallery-release-check]
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRIDGE_HOST: 127.0.0.1
+      BRIDGE_PORT: '18765'
+      BRIDGE_API_KEY: synthetic-runner-gallery-key
+      BRIDGE_DISABLE_MDNS: '1'
+      BRIDGE_DEMO_MODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.22.1'
+      - name: Verify digests, source revisions, and files in the packaged upgrade
+        run: |
+          set -euo pipefail
+          gh run download 45939314858 --repo "$GITHUB_REPOSITORY" --name bridge-linux-x64-45939314858 --dir "$RUNNER_TEMP/baseline"
+          gh run download 45973399976 --repo "$GITHUB_REPOSITORY" --name deepseek-server-update --dir "$RUNNER_TEMP/update"
+          gh run download 45973399976 --repo "$GITHUB_REPOSITORY" --name deepseek-server-runtime --dir "$RUNNER_TEMP/full"
+          for package in baseline update full; do
+            (cd "$RUNNER_TEMP/$package" && sha256sum --check *.sha256 && tar -xzf *.tar.gz)
+          done
+          test "$(cat "$RUNNER_TEMP/baseline/BUILD_COMMIT")" = fe64d775a1b23b71938f06d827e98e2ded5cf0a3
+          test "$(cat "$RUNNER_TEMP/update/BUILD_COMMIT")" = 8b985987590d3901a1780336ffa5f0d146c26226
+          cmp "$RUNNER_TEMP/update/BUILD_COMMIT" "$RUNNER_TEMP/full/BUILD_COMMIT"
+          cmp "$RUNNER_TEMP/baseline/package-lock.json" "$RUNNER_TEMP/update/package-lock.json"
+          cmp "$RUNNER_TEMP/update/package-lock.json" "$RUNNER_TEMP/full/package-lock.json"
+          diff -qr "$RUNNER_TEMP/update/packages/bridge/dist" "$RUNNER_TEMP/full/packages/bridge/dist"
+          test -f "$RUNNER_TEMP/update/packages/bridge/dist/gallery-thumbnails.js"
+          test ! -e "$RUNNER_TEMP/update/node_modules"
+          echo "## Verified archive digests" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/update/"*.sha256 "$RUNNER_TEMP/full/"*.sha256 >> "$GITHUB_STEP_SUMMARY"
+      - name: Upgrade an existing gallery and verify thumbnails and deletion across restart
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/baseline"
+          server_pid=''
+          start_bridge() {
+            node packages/bridge/dist/cli.js > "$RUNNER_TEMP/gallery-smoke.log" 2>&1 &
+            server_pid=$!
+            for attempt in {1..40}; do
+              if curl -fsS http://127.0.0.1:18765/health >/dev/null 2>&1; then return; fi
+              if ! kill -0 "$server_pid" 2>/dev/null; then break; fi
+              sleep 1
+            done
+            cat "$RUNNER_TEMP/gallery-smoke.log"
+            return 1
+          }
+          stop_bridge() {
+            if [[ -n "$server_pid" ]]; then kill "$server_pid" 2>/dev/null || true; wait "$server_pid" || true; server_pid=''; fi
+          }
+          trap stop_bridge EXIT
+          start_bridge
+          node "$GITHUB_WORKSPACE/.github/gallery-upgrade-check.mjs" seed
+          stop_bridge
+          tar -xzf "$RUNNER_TEMP/update/bridge-deepseek-update.tar.gz"
+          start_bridge
+          node "$GITHUB_WORKSPACE/.github/gallery-upgrade-check.mjs" upgrade
+          stop_bridge
+          start_bridge
+          node "$GITHUB_WORKSPACE/.github/gallery-upgrade-check.mjs" persistence
