@@ -5,7 +5,7 @@ on:
     inputs:
       verification:
         type: choice
-        options: [screenshots, bridge]
+        options: [screenshots, bridge, icons]
         default: screenshots
 
 permissions:
@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   screenshots:
-    if: inputs.verification != 'bridge'
+    if: inputs.verification == 'screenshots'
     name: Flutter UI (${{ matrix.variant }})
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -421,6 +421,36 @@ jobs:
           path: ${{ runner.temp }}/ccpocket-ui
           if-no-files-found: error
           retention-days: 30
+  icons:
+    if: inputs.verification == 'icons'
+    name: Generate application and launcher icons
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: c60c212b54ed35592e595e1162bc2ba3dee15a34
+          path: project
+      - name: Read Flutter version
+        id: mise
+        run: echo "flutter_version=$(grep 'flutter' project/.mise.toml | sed 's/.*= *\"//' | sed 's/\"//')" >> "$GITHUB_OUTPUT"
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: ${{ steps.mise.outputs.flutter_version }}
+          cache: true
+      - name: Generate and validate icon assets
+        run: |
+          flutter_sdk="$(dirname "$(dirname "$(readlink -f "$(command -v flutter)")")")"
+          python3 -m venv "$RUNNER_TEMP/icon-generator"
+          "$RUNNER_TEMP/icon-generator/bin/pip" install fonttools==4.56.0 Pillow==11.3.0
+          "$RUNNER_TEMP/icon-generator/bin/python" scripts/ui-icon-assets/generate.py project/apps/mobile "$flutter_sdk"
+          git -C project ls-files -m -o --exclude-standard -z apps/mobile +            | tar --null -C project -T - -czf "$RUNNER_TEMP/ccpocket-icon-assets.tar.gz"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: CC-Pocket-icon-assets
+          path: ${{ runner.temp }}/ccpocket-icon-assets.tar.gz
+          if-no-files-found: error
   bridge:
     if: inputs.verification == 'bridge'
     name: Verify packaged Bridge 1.122.0 and authenticated gallery deletion
