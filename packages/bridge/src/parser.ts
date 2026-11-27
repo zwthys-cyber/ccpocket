@@ -1356,6 +1356,8 @@ export type ServerMessage =
       text: string;
       clientMessageId?: string;
       userMessageUuid?: string;
+      /** Immutable Codex item ID, when reported by the provider. */
+      rawItemId?: string;
       isSynthetic?: boolean;
       isMeta?: boolean;
       imageCount?: number;

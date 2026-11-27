@@ -159,6 +159,7 @@ export function httpRouteRequiresAuth(
   if (method === "GET" && (pathname === "/usage" || pathname === "/doctor" || pathname === "/tools")) {
     return true;
   }
+  if (method === "GET" && pathname === "/api/gallery") return true;
   if (method === "POST" && pathname === "/api/gallery/upload") return true;
   if (method === "DELETE" && pathname.startsWith("/api/gallery/")) return true;
   return false;

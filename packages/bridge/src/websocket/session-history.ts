@@ -11,6 +11,7 @@ import {
   getCodexSessionHistory,
   getSessionHistory,
   codexThreadToSessionHistory,
+  codexThreadUserTimes,
   type SessionHistoryMessage,
   extractMessageImages,
 } from "../sessions-index.js";
@@ -78,6 +79,77 @@ export function codexThreadIdForSession(session: SessionInfo): string | undefine
   return undefined;
 }
 
+type UserInput = Extract<ServerMessage, { type: "user_input" }>;
+
+// User items can move across tool/assistant anchors between the live stream
+// and thread/read. Match their identities against the entire snapshot before
+// the ordered merge advances its cursor; content alone never identifies a send.
+function reconcileCodexUserInputs(
+  session: SessionInfo,
+  canonical: HistoryEntry[],
+  live: HistoryEntry[],
+): Map<ServerMessage, number> {
+  const indices = new Map<string, number[]>();
+  const remember = (key: string, index: number) => {
+    const bucket = indices.get(key) ?? [];
+    if (!bucket.includes(index)) bucket.push(index);
+    indices.set(key, bucket);
+  };
+  canonical.forEach(({ message }, index) => {
+    if (message.type !== "user_input") return;
+    if (message.rawItemId) {
+      remember(`raw:${message.rawItemId}`, index);
+      const previous = session.codexUserTurnUuidByRawId?.get(message.rawItemId);
+      if (previous) remember(`uuid:${previous}`, index);
+    }
+    if (message.clientMessageId) remember(`client:${message.clientMessageId}`, index);
+    if (message.userMessageUuid) remember(`uuid:${message.userMessageUuid}`, index);
+  });
+
+  const matches = new Map<ServerMessage, number>();
+  for (const { message } of live) {
+    if (message.type !== "user_input") continue;
+    const keys = [
+      message.rawItemId && `raw:${message.rawItemId}`,
+      message.clientMessageId && `client:${message.clientMessageId}`,
+      message.userMessageUuid && `uuid:${message.userMessageUuid}`,
+    ];
+    for (const key of keys) {
+      if (!key) continue;
+      const eligible = (indices.get(key) ?? []).filter(index => {
+        const candidate = canonical[index].message as UserInput;
+        if (candidate.rawItemId && message.rawItemId &&
+            candidate.rawItemId !== message.rawItemId) return false;
+        if (candidate.clientMessageId && message.clientMessageId &&
+            candidate.clientMessageId !== message.clientMessageId) return false;
+        // The ordinal is display/rewind metadata, not a provider item ID.
+        return !key.startsWith("uuid:") || (candidate.text === message.text &&
+          (candidate.imageCount ?? 0) === (message.imageCount ?? 0));
+      });
+      if (eligible.length !== 1) continue;
+      const index = eligible[0];
+      const entry = canonical[index];
+      const candidate = entry.message as UserInput;
+      const merged: UserInput = {
+        ...candidate,
+        ...(message.clientMessageId && { clientMessageId: message.clientMessageId }),
+        ...(!candidate.rawItemId && message.rawItemId && { rawItemId: message.rawItemId }),
+        // For a steer, thread/read has either the provider receipt or no time.
+        // Its acknowledged live delivery is the fallback on older providers.
+        ...(!candidate.timestamp && message.clientMessageId && message.timestamp &&
+          { timestamp: message.timestamp }),
+      };
+      entry.message = merged;
+      if (merged.clientMessageId) remember(`client:${merged.clientMessageId}`, index);
+      if (merged.rawItemId) remember(`raw:${merged.rawItemId}`, index);
+      matches.set(message, index);
+      if (session.codexLatestUserInput === message) session.codexLatestUserInput = merged;
+      break;
+    }
+  }
+  return matches;
+}
+
 export function applyCodexCanonicalHistoryBaseline(
   server: BridgeWebSocketServer,
   session: SessionInfo,
@@ -93,18 +165,18 @@ export function applyCodexCanonicalHistoryBaseline(
     message: entry.message,
   }));
   const latestUserInput = session.codexLatestUserInput;
-  const latestUserKeys = latestUserInput
-    ? server.codexHistoryMessageIdentityKeys(latestUserInput)
-    : [];
   if (
     latestUserInput &&
     !liveEntries.some(
       (entry) =>
         entry.message === latestUserInput ||
-        (entry.message.type === "user_input" &&
-          server.codexHistoryMessageIdentityKeys(entry.message).some((key) =>
-            latestUserKeys.includes(key),
-          )),
+        (entry.message.type === "user_input" && latestUserInput.type === "user_input" &&
+          (entry.message.rawItemId && latestUserInput.rawItemId
+            ? entry.message.rawItemId === latestUserInput.rawItemId
+            : entry.message.clientMessageId && latestUserInput.clientMessageId
+            ? entry.message.clientMessageId === latestUserInput.clientMessageId
+            : !!entry.message.userMessageUuid && entry.message.userMessageUuid === latestUserInput.userMessageUuid &&
+              entry.message.text === latestUserInput.text)),
     )
   ) {
     const historySeq = (latestUserInput as Record<string, unknown>)
@@ -122,7 +194,12 @@ export function applyCodexCanonicalHistoryBaseline(
     }
   }
 
+  const userMatches = reconcileCodexUserInputs(session, canonicalEntries, liveEntries);
   seedCodexCanonicalUserTurnUuidMap(session, history);
+  const findMatch = (msg: ServerMessage, start: number, allowAssistantContent: boolean): number =>
+    msg.type === "user_input"
+      ? userMatches.get(msg) ?? -1
+      : findCodexCanonicalMatchIndex(server, canonicalEntries, msg, start, allowAssistantContent);
 
   const merged: Array<{ message: ServerMessage; retained: boolean }> = [];
   let canonicalCursor = 0;
@@ -142,13 +219,9 @@ export function applyCodexCanonicalHistoryBaseline(
 
   for (let liveIndex = 0; liveIndex < liveEntries.length; liveIndex++) {
     const liveEntry = liveEntries[liveIndex];
-    const matchIndex = findCodexCanonicalMatchIndex(
-        server,
-      canonicalEntries,
-      liveEntry.message,
-      canonicalCursor,
-      canMatchAssistantContent,
-    );
+    const matchIndex = findMatch(liveEntry.message, canonicalCursor, canMatchAssistantContent);
+    // The canonical user row was already emitted while aligning a later tool.
+    if (matchIndex >= 0 && matchIndex < canonicalCursor) continue;
     if (matchIndex === -1) {
       let nextMatchIndex = -1;
       for (
@@ -156,14 +229,11 @@ export function applyCodexCanonicalHistoryBaseline(
         nextLiveIndex < liveEntries.length;
         nextLiveIndex++
       ) {
-        nextMatchIndex = findCodexCanonicalMatchIndex(
-            server,
-          canonicalEntries,
-          liveEntries[nextLiveIndex].message,
-          canonicalCursor,
-          canMatchAssistantContent,
-        );
-        if (nextMatchIndex !== -1) break;
+        const next = findMatch(liveEntries[nextLiveIndex].message, canonicalCursor, canMatchAssistantContent);
+        if (next >= canonicalCursor) {
+          nextMatchIndex = next;
+          break;
+        }
       }
       if (nextMatchIndex !== -1) {
         appendCanonicalUntil(nextMatchIndex);
@@ -631,7 +701,7 @@ export async function getCodexThreadHistoryFromRpc(
   const isStandalone = process !== activeProcess;
   try {
     const thread = await process.readThread(threadId, true);
-    return codexThreadToSessionHistory(thread);
+    return codexThreadToSessionHistory(thread, await codexThreadUserTimes(threadId, thread));
   } catch (err) {
     if (isCodexThreadNotMaterializedError(err)) return [];
     throw err;

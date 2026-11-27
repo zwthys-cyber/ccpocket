@@ -1489,9 +1489,17 @@ export class SessionManager {
       if (current.type !== "user_input") continue;
       if (!this.isSameUserInput(session, current, msg)) continue;
 
+      const userMessageUuid = this.mergeUserMessageUuid(current, msg);
+      const rawItemId = session.provider === "codex" && msg.userMessageUuid && !isCodexUserTurnUuid(msg.userMessageUuid)
+        ? msg.userMessageUuid : msg.rawItemId;
+      if (rawItemId && userMessageUuid) {
+        session.codexUserTurnUuidByRawId ??= new Map();
+        session.codexUserTurnUuidByRawId.set(rawItemId, userMessageUuid);
+      }
       const mergedMsg = {
         ...current,
-        userMessageUuid: this.mergeUserMessageUuid(current, msg),
+        ...(rawItemId && { rawItemId }),
+        userMessageUuid,
         timestamp:
           ("timestamp" in current && current.timestamp) ||
           ("timestamp" in msg ? msg.timestamp : undefined),
@@ -1503,6 +1511,9 @@ export class SessionManager {
         entry.message = mergedMsg;
       }
       session.history[i] = mergedMsg;
+      if (session.codexLatestUserInput === current && mergedMsg.type === "user_input") {
+        session.codexLatestUserInput = mergedMsg;
+      }
       this.clearPendingCodexUserEcho(session, current);
       this.clearPendingCodexUserEcho(session, msg);
       return mergedMsg;
@@ -1592,6 +1603,7 @@ export class SessionManager {
     if (!uuid || isCodexUserTurnUuid(uuid)) return msg;
     return {
       ...msg,
+      rawItemId: uuid,
       userMessageUuid: this.codexUserTurnUuidForRawItem(session, uuid),
     } as ServerMessage;
   }
@@ -1603,6 +1615,10 @@ export class SessionManager {
   ): boolean {
     if (existing.type !== "user_input" || incoming.type !== "user_input") {
       return false;
+    }
+    if (session.provider === "codex" && existing.rawItemId && incoming.userMessageUuid &&
+        !isCodexUserTurnUuid(incoming.userMessageUuid)) {
+      return existing.rawItemId === incoming.userMessageUuid;
     }
 
     const existingClientId =
@@ -1988,6 +2004,8 @@ export class SessionManager {
     input: QueuedSessionInput,
     beforeHistory?: () => void,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const beforeSteer = session.historyRevision;
+    const outputBeforeSteer = session.turnOutputSinceUserInput;
     try {
       if (session.process instanceof CodexProcess) {
         await session.process.steerInputStructured(input.text, {
@@ -2017,7 +2035,22 @@ export class SessionManager {
     const userMsg = this.buildQueuedUserInputMessage(input);
     // A steer joins the running turn: output already shown for that turn
     // still makes it non-retractable.
-    const hadTurnOutput = session.turnOutputSinceUserInput;
+    const hadTurnOutput = outputBeforeSteer || session.turnOutputSinceUserInput;
+    // A provider item completion may precede the turn/steer RPC reply. Claim
+    // that newly observed item once instead of recording a second acceptance.
+    const earlyEcho = session.provider === "codex" && input.userMessageUuid
+      ? session.historyEntries.find(({ seq, message }) => seq > beforeSteer &&
+          message.type === "user_input" && message.rawItemId && !message.clientMessageId &&
+          message.userMessageUuid === input.userMessageUuid && message.text === input.text)
+      : undefined;
+    if (earlyEcho?.message.type === "user_input" && userMsg.type === "user_input") {
+      const acceptedAt = earlyEcho.message.timestamp ?? userMsg.timestamp;
+      Object.assign(earlyEcho.message, userMsg, { timestamp: acceptedAt });
+      session.codexLatestUserInput = earlyEcho.message;
+      session.turnOutputSinceUserInput = hadTurnOutput;
+      this.onMessage(session.id, earlyEcho.message);
+      return { ok: true };
+    }
     this.appendHistoryToSession(session, userMsg);
     session.turnOutputSinceUserInput = hadTurnOutput;
     this.markPendingCodexUserEcho(session, userMsg);

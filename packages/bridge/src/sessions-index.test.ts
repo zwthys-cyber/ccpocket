@@ -25,6 +25,7 @@ import {
   loadCodexSessionNames,
   extractMessageImages,
   codexThreadToSessionHistory,
+  codexThreadUserTimes,
   getSessionHistory,
   getClaudeSessionName,
 } from "./sessions-index.js";
@@ -1766,6 +1767,42 @@ describe("codex sessions integration", () => {
         (m.content as Array<{ text?: string }>).map((b) => b.text).join(""),
       ),
     ).toEqual(["ONE", "EDITED"]);
+  });
+
+  it("recovers a mid-turn user's own time from the rollout after a cold history read", async () => {
+    const threadId = "c8ddc96c-e4aa-4170-b3df-3a2c02ef01c4";
+    const dir = join(tempHome, ".codex", "sessions", "2026", "11", "27");
+    mkdirSync(dir, { recursive: true });
+    const startedAt = "2026-11-27T09:18:41.123Z";
+    const sentAt = "2026-11-27T09:32:09.859Z";
+    const thread = { turns: [{ startedAt: Date.parse(startedAt) / 1000, items: [
+      { type: "userMessage", id: "initial", content: [{ type: "text", text: "begin" }] },
+      { type: "userMessage", id: "completed-item", content: [{ type: "text", text: "confirm" }] },
+      { type: "userMessage", id: "another", startedAtMs: Date.parse(sentAt) + 1000,
+        content: [{ type: "text", text: "confirm" }] },
+    ] }] };
+    writeFileSync(join(dir, `rollout-${threadId}.jsonl`), [
+      { type: "session_meta", payload: { id: threadId } },
+      { timestamp: "2026-11-27T09:32:09.853Z", type: "response_item", payload: {
+        id: "distinct-model-item", type: "message", role: "user", content: [{ type: "input_text", text: "confirm" }],
+      } },
+      { timestamp: sentAt, type: "event_msg", payload: { type: "item_completed",
+        started_at_ms: Date.parse(sentAt), item: { id: "completed-item", type: "UserMessage" },
+      } },
+    ].map(entry => JSON.stringify(entry)).join("\n"));
+    const partial = { turns: [{ items: [
+      { type: "agentMessage", text: "Still working" }, thread.turns[0].items[1],
+    ] }] };
+    expect((await codexThreadUserTimes(threadId, partial))?.get("completed-item")).toBe(sentAt);
+    expect(codexThreadToSessionHistory(thread)[1].timestamp).toBeUndefined();
+    const times = await codexThreadUserTimes(threadId, thread);
+    const users = codexThreadToSessionHistory(thread, times);
+    expect(users.map(message => message.timestamp)).toEqual([
+      startedAt, sentAt, "2026-11-27T09:32:10.859Z",
+    ]);
+    expect(users.map(message => message.uuid)).toEqual([
+      "codex:user-turn:1", "codex:user-turn:2", "codex:user-turn:3",
+    ]);
   });
 
   it("reads codex history from jsonl", async () => {
