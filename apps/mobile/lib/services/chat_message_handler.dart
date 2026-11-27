@@ -93,6 +93,7 @@ class ChatStateUpdate {
   final ({
     String text,
     String uuid,
+    String? rawItemId,
     String? clientMessageId,
     int imageCount,
     List<String> imageUrls,
@@ -286,6 +287,7 @@ class ChatMessageHandler {
         :final text,
         :final clientMessageId,
         :final userMessageUuid,
+        :final rawItemId,
         :final isSynthetic,
         :final isMeta,
         :final imageCount,
@@ -302,6 +304,7 @@ class ChatMessageHandler {
             userUuidUpdate: (
               text: text,
               uuid: userMessageUuid,
+              rawItemId: rawItemId,
               clientMessageId: clientMessageId,
               imageCount: imageCount,
               imageUrls: imageUrls,
@@ -315,6 +318,7 @@ class ChatMessageHandler {
             UserChatEntry(
               text,
               clientMessageId: clientMessageId,
+              rawItemId: rawItemId,
               imageCount: imageCount,
               imageUrls: imageUrls,
               bridgeTimestamp: timestamp == null
@@ -666,6 +670,8 @@ class ChatMessageHandler {
             status: MessageStatus.sent,
             clientMessageId: m.clientMessageId,
             messageUuid: m.userMessageUuid,
+            rawItemId: m.rawItemId,
+            fromHistory: true,
             imageCount: m.imageCount,
             imageUrls: m.imageUrls,
             bridgeTimestamp: ts,
