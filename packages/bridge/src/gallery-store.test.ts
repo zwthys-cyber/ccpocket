@@ -188,7 +188,10 @@ describe("GalleryStore deletion and media", () => {
     await mkdir(staged);
     await expect(store.delete(meta.id)).rejects.toThrow();
     expect(await readFile(store.getImagePath(meta.id)!)).toEqual(Buffer.from("still here"));
-    await rm(staged, { recursive: true });
+    await rm(join(gallery, "pending-delete"), { recursive: true });
+    await expect(store.delete(meta.id)).rejects.toThrow();
+    expect(await readFile(store.getImagePath(meta.id)!)).toEqual(Buffer.from("still here"));
+    await mkdir(join(gallery, "pending-delete"));
     await unlink(store.getImagePath(meta.id)!);
     expect(await store.delete(meta.id)).toBe(true);
     expect(await store.delete(meta.id)).toBe(false);

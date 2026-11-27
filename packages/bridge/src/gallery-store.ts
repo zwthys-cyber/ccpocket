@@ -282,6 +282,9 @@ export class GalleryStore {
         await rename(original, staged);
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+        // rename also returns ENOENT when its destination directory vanished.
+        // Only a missing original is an already-completed file removal.
+        await stat(PENDING_DELETE_DIR);
       }
       try {
         await this.replaceIndex(this.index.filter((entry) => entry.id !== id));
