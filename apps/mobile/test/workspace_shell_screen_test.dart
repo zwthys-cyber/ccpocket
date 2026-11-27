@@ -169,8 +169,9 @@ class _MockBridgeService extends BridgeService {
   }) {}
 
   @override
-  void requestGallery({String? projectPath, String? sessionId}) {
+  Future<GalleryLoadResult> requestGallery({String? projectPath, String? sessionId}) async {
     _galleryController.add(_images);
+    return GalleryLoadResult.loaded;
   }
 
   @override

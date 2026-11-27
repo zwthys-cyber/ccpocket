@@ -17,6 +17,19 @@ import '../utils/network_endpoint.dart';
 import 'bridge_service_base.dart';
 import 'session_runtime_store.dart';
 
+enum GalleryLoadResult { loaded, offline, timedOut, failed }
+
+enum GalleryDeleteResult {
+  deleted,
+  alreadyMissing,
+  unauthorized,
+  offline,
+  timedOut,
+  failed;
+
+  bool get removed => this == deleted || this == alreadyMissing;
+}
+
 enum SessionLinkResolveSupport { resolved, unsupported, unavailable }
 
 class SessionLinkResolveResult {
@@ -54,6 +67,7 @@ class BridgeService implements BridgeServiceBase {
       StreamController<List<RecentSession>>.broadcast();
   final _galleryController = StreamController<List<GalleryImage>>.broadcast();
   final Map<String, _GalleryScopeState> _galleryScopeStates = {};
+  final Map<String, Future<GalleryDeleteResult>> _galleryDeletes = {};
   final _fileListController = StreamController<List<String>>.broadcast();
   final _fileListMessageController =
       StreamController<FileListMessage>.broadcast();
@@ -960,6 +974,15 @@ class BridgeService implements BridgeServiceBase {
                 _messageController.add(msg);
               case ErrorMessage(:final message):
                 _routeProjectRequestError(msg);
+                final galleryRequest = _pendingGalleryRequestsById[msg.requestId];
+                if (galleryRequest != null) {
+                  _finishGalleryRequest(galleryRequest, GalleryLoadResult.failed);
+                } else if (msg.errorCode == 'unsupported_message' &&
+                    msg.message == 'list_gallery') {
+                  for (final request in _pendingGalleryRequestsById.values.toList()) {
+                    _finishGalleryRequest(request, GalleryLoadResult.failed);
+                  }
+                }
                 final isDownloadResponse = _isFileDownloadResponseError(msg);
                 final isUploadResponse = _isFileUploadResponseError(msg);
                 if (isDownloadResponse || isUploadResponse) {
@@ -1365,6 +1388,7 @@ class BridgeService implements BridgeServiceBase {
     _clearRecentSessionsRequestState();
     _clearPendingGalleryRequests();
     _currentProjectFilter = null;
+    _galleryDeletes.clear();
     _galleryImages = const [];
     for (final state in _galleryScopeStates.values) {
       state.images = const [];
@@ -2891,14 +2915,7 @@ class BridgeService implements BridgeServiceBase {
     final queuedGalleryRequestIds = _queuedRequestIds('list_gallery');
     for (final pending in _pendingGalleryRequestsById.values.toList()) {
       if (queuedGalleryRequestIds.contains(pending.requestId)) continue;
-      pending.timeoutTimer?.cancel();
-      _pendingGalleryRequestsById.remove(pending.requestId);
-      if (identical(
-        _pendingGalleryRequestsByScope[pending.scopeKey],
-        pending,
-      )) {
-        _pendingGalleryRequestsByScope.remove(pending.scopeKey);
-      }
+      _finishGalleryRequest(pending, GalleryLoadResult.offline);
     }
 
     final queuedFileListRequestIds = _queuedRequestIds('list_files');
@@ -3596,18 +3613,21 @@ class BridgeService implements BridgeServiceBase {
       return false;
     }
 
-    pending.timeoutTimer?.cancel();
-    _pendingGalleryRequestsById.remove(pending.requestId);
-    _pendingGalleryRequestsByScope.remove(pending.scopeKey);
+    // An older list response may arrive after an HTTP deletion has finished.
+    final removedIds = pending.removedIds;
+    final images = removedIds.isEmpty
+        ? message.images
+        : message.images.where((img) => !removedIds.contains(img.id)).toList();
+    _finishGalleryRequest(pending, GalleryLoadResult.loaded);
     if (pending.projectPath == null && pending.sessionId == null) {
-      _galleryImages = message.images;
+      _galleryImages = images;
       _galleryController.add(_galleryImages);
     } else {
       final state = _galleryScopeState(
         projectPath: pending.projectPath,
         sessionId: pending.sessionId,
       );
-      state.images = message.images;
+      state.images = images;
       state.controller.add(state.images);
     }
     return true;
@@ -3632,20 +3652,34 @@ class BridgeService implements BridgeServiceBase {
     }
   }
 
-  void _clearPendingGalleryRequests() {
-    for (final pending in _pendingGalleryRequestsById.values) {
-      pending.timeoutTimer?.cancel();
+  void _finishGalleryRequest(
+    _PendingGalleryRequest pending,
+    GalleryLoadResult result,
+  ) {
+    pending.timeoutTimer?.cancel();
+    _pendingGalleryRequestsById.remove(pending.requestId);
+    if (identical(_pendingGalleryRequestsByScope[pending.scopeKey], pending)) {
+      _pendingGalleryRequestsByScope.remove(pending.scopeKey);
     }
-    _pendingGalleryRequestsById.clear();
-    _pendingGalleryRequestsByScope.clear();
+    pending.completion.complete(result);
   }
 
-  void requestGallery({String? projectPath, String? sessionId}) {
+  void _clearPendingGalleryRequests() {
+    for (final pending in _pendingGalleryRequestsById.values.toList()) {
+      _finishGalleryRequest(pending, GalleryLoadResult.offline);
+    }
+  }
+
+  Future<GalleryLoadResult> requestGallery({
+    String? projectPath,
+    String? sessionId,
+  }) {
     final scopeKey = _galleryScopeKey(
       projectPath: projectPath,
       sessionId: sessionId,
     );
-    if (_pendingGalleryRequestsByScope.containsKey(scopeKey)) return;
+    final existing = _pendingGalleryRequestsByScope[scopeKey];
+    if (existing != null) return existing.completion.future;
     if (projectPath != null || sessionId != null) {
       _galleryScopeState(projectPath: projectPath, sessionId: sessionId);
     }
@@ -3666,6 +3700,7 @@ class BridgeService implements BridgeServiceBase {
         requestId: requestId,
       ),
     );
+    return pending.completion.future;
   }
 
   void _armGalleryRequestTimeout(_PendingGalleryRequest pending) {
@@ -3675,8 +3710,7 @@ class BridgeService implements BridgeServiceBase {
       if (!identical(_pendingGalleryRequestsByScope[scopeKey], pending)) {
         return;
       }
-      _pendingGalleryRequestsById.remove(pending.requestId);
-      _pendingGalleryRequestsByScope.remove(scopeKey);
+      _finishGalleryRequest(pending, GalleryLoadResult.timedOut);
       final error = ErrorMessage(
         message: 'Gallery did not load in time',
         errorCode: 'gallery_failed',
@@ -4287,14 +4321,26 @@ class BridgeService implements BridgeServiceBase {
     }
   }
 
-  /// Delete a gallery image by ID.
-  /// Returns true on success, false on failure.
-  /// On success, immediately removes the image from the local cache
-  /// and pushes the updated list to [galleryStream].
-  Future<bool> deleteGalleryImage(String id) async {
-    final baseUrl = httpBaseUrl;
-    if (baseUrl == null) return false;
+  /// Preserves the boolean result used by clients that only need confirmation.
+  Future<bool> deleteGalleryImage(String id) async =>
+      await deleteGalleryImageWithResult(id) == GalleryDeleteResult.deleted;
 
+  Future<GalleryDeleteResult> deleteGalleryImageWithResult(String id) {
+    final existing = _galleryDeletes[id];
+    if (existing != null) return existing;
+
+    late final Future<GalleryDeleteResult> operation;
+    operation = _deleteGalleryImage(id).whenComplete(() {
+      if (identical(_galleryDeletes[id], operation)) _galleryDeletes.remove(id);
+    });
+    _galleryDeletes[id] = operation;
+    return operation;
+  }
+
+  Future<GalleryDeleteResult> _deleteGalleryImage(String id) async {
+    final baseUrl = httpBaseUrl;
+    if (baseUrl == null || _disposed) return GalleryDeleteResult.offline;
+    final epoch = _connectionEpoch;
     try {
       final connectionUrl = _lastUrl;
       final token = connectionUrl == null
@@ -4312,23 +4358,33 @@ class BridgeService implements BridgeServiceBase {
             },
           )
           .timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
+      if (epoch != _connectionEpoch || _disposed) return GalleryDeleteResult.offline;
+      final result = switch (response.statusCode) {
+        200 || 204 => GalleryDeleteResult.deleted,
+        404 || 410 => GalleryDeleteResult.alreadyMissing,
+        401 || 403 => GalleryDeleteResult.unauthorized,
+        _ => GalleryDeleteResult.failed,
+      };
+      if (result.removed) {
+        for (final pending in _pendingGalleryRequestsById.values) {
+          pending.removedIds.add(id);
+        }
         _galleryImages = _galleryImages.where((img) => img.id != id).toList();
         _galleryController.add(_galleryImages);
         for (final state in _galleryScopeStates.values) {
-          final remaining = state.images
-              .where((image) => image.id != id)
-              .toList();
+          final remaining = state.images.where((image) => image.id != id).toList();
           if (remaining.length == state.images.length) continue;
           state.images = remaining;
           state.controller.add(state.images);
         }
-        return true;
       }
-      return false;
+      return result;
+    } on TimeoutException {
+      return GalleryDeleteResult.timedOut;
+    } on http.ClientException {
+      return GalleryDeleteResult.offline;
     } catch (_) {
-      return false;
+      return GalleryDeleteResult.failed;
     }
   }
 
@@ -4530,6 +4586,8 @@ class _PendingGalleryRequest {
   final String scopeKey;
   final String? projectPath;
   final String? sessionId;
+  final completion = Completer<GalleryLoadResult>();
+  final removedIds = <String>{};
   Timer? timeoutTimer;
 }
 

@@ -25,7 +25,7 @@ class GalleryTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final imageUrl = '$httpBaseUrl${image.url}';
+    final imageUrl = '$httpBaseUrl${image.thumbnailUrl ?? image.url}';
 
     return Card(
       margin: EdgeInsets.zero,

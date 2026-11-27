@@ -228,6 +228,11 @@ class ReplayBridgeService extends BridgeService {
   @override
   String? get httpBaseUrl => null;
 
+  // Preview and replay sessions have no live gallery transport.
+  @override
+  Future<GalleryLoadResult> requestGallery({String? projectPath, String? sessionId}) async =>
+      GalleryLoadResult.loaded;
+
   @override
   bool get isConnected => true;
 

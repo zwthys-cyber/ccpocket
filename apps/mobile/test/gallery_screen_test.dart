@@ -17,6 +17,10 @@ class _MockBridgeService extends BridgeService {
       StreamController<List<GalleryImage>>.broadcast();
   List<GalleryImage> _mockImages = [];
   bool galleryRequested = false;
+  Completer<GalleryLoadResult>? pending;
+
+  @override
+  bool get isConnected => true;
 
   @override
   Stream<List<GalleryImage>> get galleryStream =>
@@ -29,10 +33,10 @@ class _MockBridgeService extends BridgeService {
   String? get httpBaseUrl => 'http://localhost:8765';
 
   @override
-  void requestGallery({String? projectPath, String? sessionId}) {
+  Future<GalleryLoadResult> requestGallery({String? projectPath, String? sessionId}) {
     galleryRequested = true;
-    // Immediately emit the mock images
     _galleryStreamController.add(_mockImages);
+    return pending?.future ?? Future.value(GalleryLoadResult.loaded);
   }
 
   void setImages(List<GalleryImage> images) {
@@ -41,7 +45,7 @@ class _MockBridgeService extends BridgeService {
   }
 }
 
-Widget _wrapWithTheme(Widget child, _MockBridgeService mock) {
+Widget _wrapWithTheme(Widget child, _MockBridgeService mock, {Locale locale = const Locale('en')}) {
   return RepositoryProvider<BridgeService>.value(
     value: mock,
     child: MultiBlocProvider(
@@ -53,7 +57,7 @@ Widget _wrapWithTheme(Widget child, _MockBridgeService mock) {
       child: MaterialApp(
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
-        locale: const Locale('en'),
+        locale: locale,
         theme: AppTheme.darkTheme,
         home: child,
       ),
@@ -71,6 +75,28 @@ void main() {
       expect(find.text('No screenshots yet'), findsOneWidget);
       expect(find.text('Gallery'), findsOneWidget);
       expect(mock.galleryRequested, isTrue);
+    });
+
+    testWidgets('shows loading, localized timeout and retry before a confirmed empty list', (tester) async {
+      final mock = _MockBridgeService()..pending = Completer<GalleryLoadResult>();
+      await tester.pumpWidget(_wrapWithTheme(const GalleryScreen(), mock, locale: const Locale('zh')));
+      final l = AppLocalizations.of(tester.element(find.byType(GalleryScreen)));
+      expect(
+        tester.widget<CircularProgressIndicator>(find.byType(CircularProgressIndicator)).semanticsLabel,
+        l.galleryLoading,
+      );
+      expect(find.text(l.noScreenshotsYet), findsNothing);
+      mock.pending!.complete(GalleryLoadResult.timedOut);
+      await tester.pump();
+      await tester.pump();
+      expect(find.text(l.galleryTimedOut), findsOneWidget);
+      expect(find.text(l.noScreenshotsYet), findsNothing);
+      mock.pending = null;
+      await tester.tap(find.text(l.retry));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text(l.noScreenshotsYet), findsOneWidget);
+      expect(find.text(l.galleryTimedOut), findsNothing);
     });
 
     testWidgets('shows images in grid when images exist', (tester) async {
@@ -142,9 +168,15 @@ void main() {
       await tester.tap(chipFinder);
       await tester.pump();
 
-      // Grid should now show only project-a images
-      final gridTiles = tester.widgetList(find.byType(GridView));
-      expect(gridTiles, isNotEmpty);
+      expect(find.byKey(const ValueKey('gallery_tile_img-1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('gallery_tile_img-2')), findsNothing);
+
+      // Removing the last image in the selected project must reveal the other project.
+      mock.setImages([mock.galleryImages.last]);
+      await tester.pump();
+      await tester.pump();
+      expect(find.byType(ChoiceChip), findsNothing);
+      expect(find.byKey(const ValueKey('gallery_tile_img-2')), findsOneWidget);
     });
 
     testWidgets('no filter chips when single project', (tester) async {
@@ -201,6 +233,7 @@ void main() {
       final json = {
         'id': 'uuid-123',
         'url': '/api/gallery/uuid-123',
+        'thumbnailUrl': '/api/gallery/uuid-123?variant=thumbnail',
         'mimeType': 'image/png',
         'projectPath': '/Users/demo/myapp',
         'projectName': 'myapp',
@@ -211,6 +244,7 @@ void main() {
       final img = GalleryImage.fromJson(json);
       expect(img.id, 'uuid-123');
       expect(img.url, '/api/gallery/uuid-123');
+      expect(img.thumbnailUrl, '/api/gallery/uuid-123?variant=thumbnail');
       expect(img.mimeType, 'image/png');
       expect(img.projectName, 'myapp');
       expect(img.sessionId, 'sess-abc');
@@ -228,6 +262,7 @@ void main() {
       };
       final img = GalleryImage.fromJson(json);
       expect(img.sessionId, isNull);
+      expect(img.thumbnailUrl, isNull);
       expect(img.sizeBytes, 0);
     });
   });

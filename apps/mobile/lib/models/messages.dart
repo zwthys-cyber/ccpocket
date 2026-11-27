@@ -621,6 +621,7 @@ class WorktreeInfo {
 class GalleryImage {
   final String id;
   final String url;
+  final String? thumbnailUrl;
   final String mimeType;
   final String projectPath;
   final String projectName;
@@ -631,6 +632,7 @@ class GalleryImage {
   const GalleryImage({
     required this.id,
     required this.url,
+    this.thumbnailUrl,
     required this.mimeType,
     required this.projectPath,
     required this.projectName,
@@ -643,6 +645,7 @@ class GalleryImage {
     return GalleryImage(
       id: json['id'] as String,
       url: json['url'] as String,
+      thumbnailUrl: json['thumbnailUrl'] as String?,
       mimeType: json['mimeType'] as String,
       projectPath: json['projectPath'] as String,
       projectName: json['projectName'] as String,

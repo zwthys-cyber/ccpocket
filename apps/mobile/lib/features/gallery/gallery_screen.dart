@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../../models/messages.dart';
 import '../../providers/bridge_cubits.dart';
 import '../../services/bridge_service.dart';
 import '../../widgets/workspace_pane_chrome.dart';
@@ -28,7 +29,6 @@ class GalleryScreen extends HookWidget {
 
   @override
   Widget build(BuildContext context) {
-    final selectedProject = useState<String?>(null);
     final isSessionMode = sessionId != null;
     final bridge = context.read<BridgeService>();
     final scopedGalleryStream = useMemoized(
@@ -38,6 +38,7 @@ class GalleryScreen extends HookWidget {
     final scopedGallerySnapshot = useStream(
       scopedGalleryStream,
       initialData: bridge.galleryImagesFor(sessionId: sessionId),
+      preserveState: false,
     );
     final shell = WorkspaceShellScreen.maybeOf(context);
     final chrome = resolveWorkspacePaneChrome(
@@ -49,10 +50,26 @@ class GalleryScreen extends HookWidget {
           : WorkspacePaneSlot.right,
     );
 
-    useEffect(() {
-      bridge.requestGallery(sessionId: sessionId);
-      return null;
-    }, [bridge, sessionId]);
+    final attempt = useState(0);
+    final connection = useStream(
+      useMemoized(() => bridge.connectionStatus, [bridge]),
+      initialData: bridge.isConnected
+          ? BridgeConnectionState.connected
+          : bridge.currentBridgeConnectionState,
+    );
+    final online = connection.data == BridgeConnectionState.connected;
+    final request = useMemoized(
+      () => online
+          ? bridge.requestGallery(sessionId: sessionId)
+          : Future.value(GalleryLoadResult.offline),
+      [bridge, sessionId, online, attempt.value],
+    );
+    final load = useFuture(request, preserveState: false);
+    final result = load.connectionState == ConnectionState.done ? load.data : null;
+    void retry() {
+      if (!online) bridge.ensureConnected();
+      attempt.value++;
+    }
 
     final globalImages = context.watch<GalleryCubit>().state;
     final images = isSessionMode
@@ -107,15 +124,68 @@ class GalleryScreen extends HookWidget {
           ]),
         ),
       ),
-      body: images.isEmpty
-          ? GalleryEmptyState(isSessionMode: isSessionMode)
-          : GalleryContent(
-              images: images,
-              selectedProject: selectedProject.value,
-              isSessionMode: isSessionMode,
-              httpBaseUrl: bridge.httpBaseUrl ?? '',
-              onProjectSelected: (p) => selectedProject.value = p,
+      body: Column(
+        children: [
+          if (result == null)
+            if (images.isEmpty)
+              Expanded(
+                child: Center(
+                  child: CircularProgressIndicator(
+                    semanticsLabel: AppLocalizations.of(context).galleryLoading,
+                  ),
+                ),
+              )
+            else
+              LinearProgressIndicator(
+                semanticsLabel: AppLocalizations.of(context).galleryLoading,
+              ),
+          if (result != null && result != GalleryLoadResult.loaded)
+            if (images.isEmpty)
+              Expanded(child: Center(child: _GalleryRetry(result: result, retry: retry)))
+            else
+              _GalleryRetry(result: result, retry: retry),
+          if (images.isEmpty && result == GalleryLoadResult.loaded)
+            Expanded(child: GalleryEmptyState(isSessionMode: isSessionMode)),
+          if (images.isNotEmpty)
+            Expanded(
+              child: GalleryContent(
+                key: ValueKey((bridge, sessionId)),
+                images: images,
+                isSessionMode: isSessionMode,
+                httpBaseUrl: bridge.httpBaseUrl ?? '',
+              ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GalleryRetry extends StatelessWidget {
+  const _GalleryRetry({required this.result, required this.retry});
+
+  final GalleryLoadResult result;
+  final VoidCallback retry;
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    final message = switch (result) {
+      GalleryLoadResult.offline => l.galleryOffline,
+      GalleryLoadResult.timedOut => l.galleryTimedOut,
+      _ => l.galleryLoadFailed,
+    };
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 8,
+        children: [
+          Text(message, textAlign: TextAlign.center),
+          TextButton(onPressed: retry, child: Text(l.retry)),
+        ],
+      ),
     );
   }
 }
