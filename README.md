@@ -5,7 +5,7 @@
 用手机聊天的方式操作 Codex 和 Claude：发出指令、批准下一步、查看结果。
 换到平板或 Mac，也能继续同一项工作。
 
-**[下载 iPhone / iPad 安装包（1.140.9，构建 272）](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.9%2B272/CC-Pocket-TrollStore-unsigned.ipa)** · [版本说明与 SHA-256](https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.9%2B272) · [安装指南](https://zwthys-cyber.github.io/ccpocket/install/?lang=zh)
+**[下载 iPhone / iPad 安装包（1.140.10，构建 273）](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.10%2B273/CC-Pocket-TrollStore-unsigned.ipa)** · [版本说明与 SHA-256](https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.10%2B273) · [安装指南](https://zwthys-cyber.github.io/ccpocket/install/?lang=zh)
 
 [English README](README.en.md) | [日本語 README](README.ja.md) | [한국어 README](README.ko.md)
 
@@ -49,7 +49,7 @@
 
 | 平台 | 安装 |
 |------|------|
-| **iOS / iPadOS（TrollStore）** | 在支持 TrollStore 的设备上打开[1.140.9（272）未签名 IPA](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.9%2B272/CC-Pocket-TrollStore-unsigned.ipa)，用 TrollStore 安装。可下载 [SHA-256 校验文件](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.9%2B272/CC-Pocket-TrollStore-unsigned.ipa.sha256)。 |
+| **iOS / iPadOS（TrollStore）** | 在支持 TrollStore 的设备上打开[1.140.10（273）未签名 IPA](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.10%2B273/CC-Pocket-TrollStore-unsigned.ipa)，用 TrollStore 安装。可下载 [SHA-256 校验文件](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.10%2B273/CC-Pocket-TrollStore-unsigned.ipa.sha256)。 |
 | **Android / macOS / Linux / Windows** | 此分支暂未提供经过验证的公开安装包，可按开发说明自行构建。 |
 
 ## 免费使用

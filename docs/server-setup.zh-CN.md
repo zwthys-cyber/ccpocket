@@ -333,7 +333,7 @@ journalctl --user -u ccpocket-bridge -n 80 --no-pager
 
 ### 安装 App 并填写信息
 
-1. 下载 [CC Pocket 1.140.9（272）iOS 安装包](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.9%2B272/CC-Pocket-TrollStore-unsigned.ipa)，在支持的设备上用 TrollStore 打开。[发布说明与校验文件](https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.9%2B272)
+1. 下载 [CC Pocket 1.140.10（273）iOS 安装包](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.10%2B273/CC-Pocket-TrollStore-unsigned.ipa)，在支持的设备上用 TrollStore 打开。[发布说明与校验文件](https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.10%2B273)
 2. 打开 CC Pocket，添加服务器，选择手动填写连接信息。
 3. 服务器地址填第 5 步输出的地址，例如 `ws://你的新服务器IP:8765`；API Key / 连接密钥填同一步生成的密钥。
 4. 连接后选择 `/root/projects` 下的一个项目目录，再选择 **Codex**。

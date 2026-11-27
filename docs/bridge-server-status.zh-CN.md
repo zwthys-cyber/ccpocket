@@ -8,7 +8,7 @@
 | 构建分支 | [feat/bridge-gallery-reliability](https://github.com/zwthys-cyber/ccpocket/tree/feat/bridge-gallery-reliability) |
 | 运行环境 | Linux x64，要求 Node.js 22.19.0+，构建使用 Node.js 24.22.1 |
 | DeepSeek 模型 | 默认 `deepseek-flash[1m]`，可选 `deepseek-flash`、`deepseek-v4-pro`；设置 `DEEPSEEK_MODEL` 可修改默认模型 |
-| 配套手机安装包 | [CC Pocket 1.140.9（构建 272）TrollStore 发布页](https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.9%2B272) |
+| 配套手机安装包 | [CC Pocket 1.140.10（构建 273）TrollStore 发布页](https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.10%2B273) |
 
 ## 这次修复了什么
 

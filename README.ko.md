@@ -15,7 +15,7 @@
 
 ## 설치
 
-**CC Pocket 1.140.9 (272)** · TrollStore를 지원하는 iPhone 또는 iPad에서 [IPA를 다운로드](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.9%2B272/CC-Pocket-TrollStore-unsigned.ipa)한 뒤 TrollStore로 설치하세요. [변경 사항 및 SHA-256](https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.9%2B272)
+**CC Pocket 1.140.10 (273)** · TrollStore를 지원하는 iPhone 또는 iPad에서 [IPA를 다운로드](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.10%2B273/CC-Pocket-TrollStore-unsigned.ipa)한 뒤 TrollStore로 설치하세요. [변경 사항 및 SHA-256](https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.10%2B273)
 
 Linux x64 서버에는 [Bridge 1.122.0 전체 패키지](https://github.com/zwthys-cyber/ccpocket/releases/download/bridge-maintained/v1.122.0-fa20a82/deepseek-server-runtime.zip)를 다운로드할 수 있습니다. Node.js 22.19.0 이상을 준비하고 [중국어 설치 안내](docs/server-setup.zh-CN.md)에 따라 서비스를 설정한 뒤 휴대폰을 연결하세요. [Bridge 릴리스 및 업데이트 패키지](https://github.com/zwthys-cyber/ccpocket/releases/tag/bridge-maintained/v1.122.0-fa20a82)
 

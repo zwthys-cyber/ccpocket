@@ -18,7 +18,7 @@ step, and review the result. Pick up the same work on your tablet or Mac.
 
 ## Install
 
-**CC Pocket 1.140.9 (272)** · Install the [TrollStore IPA for iPhone and iPad](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.9%2B272/CC-Pocket-TrollStore-unsigned.ipa) on a device that supports TrollStore. [Release notes and SHA-256](https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.9%2B272)
+**CC Pocket 1.140.10 (273)** · Install the [TrollStore IPA for iPhone and iPad](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.10%2B273/CC-Pocket-TrollStore-unsigned.ipa) on a device that supports TrollStore. [Release notes and SHA-256](https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.10%2B273)
 
 For a new Linux x64 server, download the [complete Bridge 1.122.0 runtime](https://github.com/zwthys-cyber/ccpocket/releases/download/bridge-maintained/v1.122.0-fa20a82/deepseek-server-runtime.zip). The [Chinese installation guide](docs/server-setup.zh-CN.md) covers Node.js 22.19.0 or later, configuring the service and connecting your phone. [Bridge release and update packages](https://github.com/zwthys-cyber/ccpocket/releases/tag/bridge-maintained/v1.122.0-fa20a82)
 

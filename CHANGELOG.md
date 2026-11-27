@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.140.10+273 · TrollStore](https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.10%2B273) - 2026-11-27
+
+- Kept the connected home screen below the iPhone status bar when its toolbar collapses or reappears while scrolling. [Before and after screenshots](https://github.com/zwthys-cyber/ccpocket/pull/27)
+- Localized the button that loads more recent sessions.
+
 ## [1.140.9+272 · TrollStore](https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.9%2B272) - 2026-11-27
 
 - Updated the mobile palette and icons, expanded Simplified Chinese coverage and made the phone interface follow the system language.

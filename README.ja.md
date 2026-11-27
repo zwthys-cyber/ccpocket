@@ -15,7 +15,7 @@ CodexとClaudeを、スマホのチャット感覚で。指示を出し、次の
 
 ## インストール
 
-**CC Pocket 1.140.9 (272)** · TrollStore 対応の iPhone・iPad に [IPA をダウンロード](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.9%2B272/CC-Pocket-TrollStore-unsigned.ipa)して、TrollStore でインストールしてください。 [変更点と SHA-256](https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.9%2B272)
+**CC Pocket 1.140.10 (273)** · TrollStore 対応の iPhone・iPad に [IPA をダウンロード](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.10%2B273/CC-Pocket-TrollStore-unsigned.ipa)して、TrollStore でインストールしてください。 [変更点と SHA-256](https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.10%2B273)
 
 Linux x64 サーバーには [Bridge 1.122.0 の完全版](https://github.com/zwthys-cyber/ccpocket/releases/download/bridge-maintained/v1.122.0-fa20a82/deepseek-server-runtime.zip)をダウンロードできます。Node.js 22.19.0 以降を用意し、[中国語のセットアップ手順](docs/server-setup.zh-CN.md)に従ってサービスを設定してから、スマートフォンを接続してください。 [Bridge のリリースと更新パッケージ](https://github.com/zwthys-cyber/ccpocket/releases/tag/bridge-maintained/v1.122.0-fa20a82)
 
