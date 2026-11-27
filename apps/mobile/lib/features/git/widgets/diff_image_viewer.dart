@@ -6,6 +6,7 @@ import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../l10n/app_localizations.dart';
+import '../../../theme/app_theme.dart';
 import '../../../utils/diff_parser.dart';
 import '../../../widgets/workspace_pane_chrome.dart';
 import '../../../widgets/media_export_actions.dart';
@@ -63,13 +64,13 @@ class DiffImageViewer extends HookWidget {
     void toggleChrome() => chromeVisible.value = !chromeVisible.value;
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: AppColors.mediaSurface,
       extendBodyBehindAppBar: true,
       appBar: chromeVisible.value
           ? chrome.wrapAppBar(
               AppBar(
-                backgroundColor: Colors.black54,
-                foregroundColor: Colors.white,
+                backgroundColor: AppColors.mediaSurface.withValues(alpha: 0.80),
+                foregroundColor: AppColors.mediaForeground,
                 elevation: 0,
                 title: Text(fileName, style: const TextStyle(fontSize: 16)),
                 actions: [

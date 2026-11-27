@@ -19,6 +19,7 @@ class UnseenSessionsCubit extends Cubit<Set<String>> {
   Map<String, String> _seenAt = {};
   final Set<String> _pendingInitialSeen = <String>{};
   final Map<String, String> _lastActivityAt = <String, String>{};
+  final Map<String, String> _lastStatus = <String, String>{};
 
   UnseenSessionsCubit() : super(const {}) {
     _loadSeenAt();
@@ -49,10 +50,16 @@ class UnseenSessionsCubit extends Cubit<Set<String>> {
   /// Called whenever the active session list updates.
   /// Compares each session's [lastActivityAt] with the stored seen-at
   /// timestamp to determine unseen state.
-  void updateSessions(List<SessionInfo> sessions) {
+  void updateSessions(
+    List<SessionInfo> sessions, {
+    String? visibleSessionId,
+  }) {
     final unseen = <String>{};
+    var seenChanged = false;
 
     for (final session in sessions) {
+      final previousStatus = _lastStatus[session.id];
+      _lastStatus[session.id] = session.status;
       if (session.lastActivityAt.isNotEmpty) {
         _lastActivityAt[session.id] = session.lastActivityAt;
       }
@@ -64,12 +71,22 @@ class UnseenSessionsCubit extends Cubit<Set<String>> {
       final lastActivity = session.lastActivityAt;
       if (lastActivity.isEmpty) continue;
 
-      if (_pendingInitialSeen.remove(session.id)) {
-        _seenAt[session.id] = _bufferedTimestamp(lastActivity);
-      }
-
+      final initiallySeen = _pendingInitialSeen.remove(session.id);
+      final finishedWork = previousStatus == 'running' ||
+          previousStatus == 'compacting';
       final seenAt = _seenAt[session.id];
-      if (seenAt == null || lastActivity.compareTo(seenAt) > 0) {
+      final hasNewActivity = seenAt == null || lastActivity.compareTo(seenAt) > 0;
+      if (session.id == visibleSessionId || (initiallySeen && !finishedWork)) {
+        if (hasNewActivity) {
+          _seenAt[session.id] = _bufferedTimestamp(lastActivity);
+          seenChanged = true;
+        }
+      } else if (finishedWork || hasNewActivity) {
+        // A turn that ends while its conversation is hidden is new activity
+        // even when the send-time buffer is still in effect.
+        if (finishedWork && _seenAt.remove(session.id) != null) {
+          seenChanged = true;
+        }
         unseen.add(session.id);
       }
     }
@@ -78,8 +95,10 @@ class UnseenSessionsCubit extends Cubit<Set<String>> {
     final currentIds = sessions.map((s) => s.id).toSet();
     _seenAt.removeWhere((id, _) => !currentIds.contains(id));
     _lastActivityAt.removeWhere((id, _) => !currentIds.contains(id));
+    _lastStatus.removeWhere((id, _) => !currentIds.contains(id));
     _pendingInitialSeen.removeWhere((id) => !currentIds.contains(id));
 
+    if (seenChanged) unawaited(_saveSeenAt());
     emit(unseen);
   }
 

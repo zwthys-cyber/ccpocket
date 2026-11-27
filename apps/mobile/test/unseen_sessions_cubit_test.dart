@@ -198,11 +198,11 @@ void main() {
       );
 
       test(
-        'session transitions working → idle after markSeen stays seen',
+        'session transitions working → idle while visible stays seen',
         () async {
           // Simulates: user views session → sends message → session goes
           // to working → finishes → returns to idle with newer timestamp.
-          // Should remain seen because the work was initiated by this user.
+          // The result is seen because the conversation is still visible.
           final cubit = UnseenSessionsCubit();
           await Future<void>.delayed(Duration.zero);
 
@@ -223,18 +223,38 @@ void main() {
           expect(cubit.state, isEmpty);
 
           // Session returns to idle with newer timestamp.
-          cubit.updateSessions([
-            _session(id: 's1', lastActivityAt: '2026-03-11T10:02:00Z'),
-          ]);
+          cubit.updateSessions(
+            [_session(id: 's1', lastActivityAt: '2026-03-11T10:02:00Z')],
+            visibleSessionId: 's1',
+          );
           expect(
             cubit.isUnseen('s1'),
             isFalse,
-            reason: '+1 day buffer covers activity within same user session',
+            reason: 'The conversation was visible when the work finished',
           );
 
           await cubit.close();
         },
       );
+
+      test('work that finishes away from the conversation is unseen', () async {
+        final cubit = UnseenSessionsCubit();
+        await Future<void>.delayed(Duration.zero);
+
+        cubit.updateSessions([_session(id: 's1', status: 'running')]);
+        cubit.markSeen('s1');
+        final ready = _session(
+          id: 's1',
+          lastActivityAt: '2026-03-11T10:02:00Z',
+        );
+        cubit.updateSessions([ready], visibleSessionId: 'another-session');
+        expect(cubit.isUnseen('s1'), isTrue);
+
+        cubit.markSeen('s1');
+        cubit.updateSessions([ready]);
+        expect(cubit.isUnseen('s1'), isFalse);
+        await cubit.close();
+      });
 
       test(
         'genuinely new activity after buffer period is detected as unseen',

@@ -6,7 +6,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../../models/messages.dart';
 import '../../settings/state/settings_cubit.dart';
-import '../../settings/state/settings_state.dart';
 import '../state/chat_session_cubit.dart';
 import '../state/chat_session_state.dart';
 
@@ -69,23 +68,53 @@ class _DisplayModeSheet extends StatelessWidget {
   }
 }
 
-/// Kept outside the transcript: ticking must never rebuild the message list.
-class LiteModeActivityBar extends StatelessWidget {
-  const LiteModeActivityBar({super.key, required this.sessionId});
+/// Live activity is kept outside the transcript so its clock never reflows it.
+class SessionActivityBar extends StatelessWidget {
+  const SessionActivityBar({
+    super.key,
+    required this.sessionId,
+    this.isConnected = true,
+  });
+
   final String sessionId;
+  final bool isConnected;
 
   @override
   Widget build(BuildContext context) {
-    return BlocSelector<SettingsCubit, SettingsState, bool>(
-      selector: (state) => state.liteModeForSession(sessionId),
-      builder: (context, enabled) =>
-          enabled ? const _ActivityStatus() : const SizedBox.shrink(),
+    final liteMode = context.select<SettingsCubit, bool>(
+      (settings) => settings.state.liteModeForSession(sessionId),
+    );
+    return BlocSelector<ChatSessionCubit, ChatSessionState, (ProcessStatus, bool)>(
+      selector: (state) => (state.status, state.approval is! ApprovalNone),
+      builder: (context, activity) {
+        final (status, hasApproval) = activity;
+        if (!liteMode &&
+            (!isConnected ||
+                hasApproval ||
+                status == ProcessStatus.idle ||
+                status == ProcessStatus.waitingApproval)) {
+          return const SizedBox.shrink();
+        }
+        return _ActivityStatus(
+          status: status,
+          liteMode: liteMode,
+          hasApproval: hasApproval,
+        );
+      },
     );
   }
 }
 
 class _ActivityStatus extends StatefulWidget {
-  const _ActivityStatus();
+  const _ActivityStatus({
+    required this.status,
+    required this.liteMode,
+    required this.hasApproval,
+  });
+
+  final ProcessStatus status;
+  final bool liteMode;
+  final bool hasApproval;
 
   @override
   State<_ActivityStatus> createState() => _ActivityStatusState();
@@ -97,12 +126,20 @@ class _ActivityStatusState extends State<_ActivityStatus> {
   @override
   void initState() {
     super.initState();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted &&
-          context.read<ChatSessionCubit>().state.status != ProcessStatus.idle) {
-        setState(() {});
-      }
-    });
+    _updateTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ActivityStatus oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.status != widget.status) _updateTimer();
+  }
+
+  void _updateTimer() {
+    _timer?.cancel();
+    _timer = widget.status == ProcessStatus.idle
+        ? null
+        : Timer.periodic(const Duration(seconds: 1), (_) => setState(() {}));
   }
 
   @override
@@ -113,9 +150,11 @@ class _ActivityStatusState extends State<_ActivityStatus> {
 
   @override
   Widget build(BuildContext context) {
-    final cubit = context.watch<ChatSessionCubit>();
+    final cubit = context.read<ChatSessionCubit>();
     final l = AppLocalizations.of(context);
-    final status = cubit.state.status;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final status = widget.status;
     final active = status != ProcessStatus.idle;
     final label = switch (status) {
       ProcessStatus.running => l.liteModeRunning,
@@ -125,57 +164,82 @@ class _ActivityStatusState extends State<_ActivityStatus> {
       ProcessStatus.idle => l.liteModeIdle,
     };
     final now = DateTime.now();
-    final summary = [
-      label,
-      if (active && cubit.activityObservedSince != null)
-        l.liteModeObserved(
-          formatLiteModeDuration(
-            now.difference(cubit.activityObservedSince!),
-            l,
-          ),
-        ),
-      if (active && cubit.lastAgentActivityAt != null)
-        l.liteModeLastActivity(
-          formatLiteModeDuration(now.difference(cubit.lastAgentActivityAt!), l),
-        ),
-      if (active && cubit.latestActivityTool != null) cubit.latestActivityTool!,
+    final observedSince = cubit.activityObservedSince;
+    final lastActivity = cubit.lastAgentActivityAt;
+    final tool = status == ProcessStatus.running ? cubit.latestActivityTool : null;
+    final details = [
+      if (tool != null && tool.summary.isNotEmpty)
+        '${tool.name} · ${tool.summary}'
+      else if (tool != null)
+        tool.name,
+      if (active && observedSince != null)
+        l.liteModeObserved(formatLiteModeDuration(now.difference(observedSince), l)),
+      if (active && lastActivity != null)
+        l.liteModeLastActivity(formatLiteModeDuration(now.difference(lastActivity), l)),
     ].join(' · ');
+
     return Padding(
-      key: const ValueKey('lite_mode_activity_indicator'),
-      padding: EdgeInsets.fromLTRB(
-        16,
-        6,
-        16,
-        6 +
-            (cubit.state.approval is ApprovalNone
-                ? 0
-                : MediaQuery.paddingOf(context).bottom),
+      key: ValueKey<String>(
+        widget.liteMode
+            ? 'lite_mode_activity_indicator'
+            : 'session_activity_indicator',
       ),
-      child: Row(
-        children: [
-          const Icon(Icons.bolt_outlined, size: 16),
-          const SizedBox(width: 8),
-          Expanded(
-            child: DefaultTextStyle(
-              style: Theme.of(context).textTheme.bodySmall!,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Tooltip(
-                    message: summary,
-                    child: Text(
-                      summary,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  if (!cubit.supportsPerformanceMode)
-                    Text(l.performanceModeBridgeUpdate),
-                ],
+      padding: EdgeInsets.fromLTRB(
+        12,
+        2,
+        12,
+        6 + (widget.hasApproval ? MediaQuery.paddingOf(context).bottom : 0),
+      ),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: colors.surfaceContainerLow,
+          border: Border.all(color: colors.outlineVariant),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            children: [
+              Icon(
+                widget.liteMode ? Icons.bolt_outlined : Icons.sensors_rounded,
+                size: 18,
+                color: colors.primary,
               ),
-            ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Tooltip(
+                  message: details.isEmpty ? label : '$label · $details',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        label,
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: colors.onSurface,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (details.isNotEmpty)
+                        Text(
+                          details,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: colors.onSurfaceVariant,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      if (widget.liteMode && !cubit.supportsPerformanceMode)
+                        Text(
+                          l.performanceModeBridgeUpdate,
+                          style: theme.textTheme.bodySmall,
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

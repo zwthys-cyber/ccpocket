@@ -97,7 +97,10 @@ class _RunningSessionCardState extends State<RunningSessionCard> {
   @override
   Widget build(BuildContext context) {
     final session = widget.session;
-    final appColors = Theme.of(context).extension<AppColors>()!;
+    final theme = Theme.of(context);
+    final l = AppLocalizations.of(context);
+    final appColors = theme.extension<AppColors>()!;
+    final colorScheme = theme.colorScheme;
     final visualStatus = sessionVisualStatusFor(
       rawStatus: session.status,
       permissionMode: session.effectivePermissionMode,
@@ -110,10 +113,17 @@ class _RunningSessionCardState extends State<RunningSessionCard> {
       SessionPrimaryStatus.working => appColors.statusRunning,
       SessionPrimaryStatus.needsYou => appColors.statusApproval,
       SessionPrimaryStatus.ready =>
-        isReadyUnseen
-            ? Theme.of(context).colorScheme.onSurface
-            : appColors.statusIdle,
+        isReadyUnseen ? appColors.statusOnline : appColors.statusIdle,
     };
+    final statusLabel = switch (visualStatus.primary) {
+      SessionPrimaryStatus.working => l.statusWorking,
+      SessionPrimaryStatus.needsYou => l.statusNeedsYou,
+      SessionPrimaryStatus.ready =>
+        isReadyUnseen ? l.sessionNewActivity : l.statusReady,
+    };
+    final cardColor = visualStatus.primary == SessionPrimaryStatus.needsYou
+        ? appColors.approvalBar
+        : colorScheme.surfaceContainerHigh;
 
     final permission = session.pendingPermission;
     final hasPermission = permission != null;
@@ -130,7 +140,6 @@ class _RunningSessionCardState extends State<RunningSessionCard> {
     }
     final projectName = widget.projectNameOverride ?? session.projectName;
     final provider = providerFromRaw(session.provider);
-    final providerStyle = providerStyleFor(context, provider);
     final elapsed = _formatElapsed(session.lastActivityAt);
     final agentLabel = _formatAgentLabel(
       session.agentNickname,
@@ -139,17 +148,16 @@ class _RunningSessionCardState extends State<RunningSessionCard> {
     final displayMessage = formatCommandText(
       session.lastMessage.replaceAll(RegExp(r'\s+'), ' ').trim(),
     );
-    final colorScheme = Theme.of(context).colorScheme;
     final card = Card(
-      margin: const EdgeInsets.symmetric(vertical: 3, horizontal: 0),
+      margin: const EdgeInsets.only(bottom: 8),
       elevation: 0,
-      color: colorScheme.surfaceContainerHigh,
+      color: cardColor,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         side: BorderSide(
           color: widget.isSelected
               ? statusColor.withValues(alpha: 0.95)
-              : colorScheme.outlineVariant.withValues(alpha: 0.5),
+              : colorScheme.outlineVariant,
           width: widget.isSelected ? 2.2 : 1,
         ),
       ),
@@ -160,67 +168,71 @@ class _RunningSessionCardState extends State<RunningSessionCard> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Status bar with gradient
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    statusColor.withValues(alpha: 0.15),
-                    statusColor.withValues(alpha: 0.04),
-                  ],
-                ),
-              ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 6, 12, 2),
               child: Row(
                 children: [
                   Expanded(
-                    child: Row(
-                      children: [
-                        _StatusDot(
-                          color: statusColor,
-                          animate: visualStatus.animate,
-                          glow: isReadyUnseen,
-                          inPlanMode:
-                              visualStatus.showPlanBadge &&
-                              visualStatus.animate,
+                    child: Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
                         ),
-                        const SizedBox(width: 6),
-                        Text(
-                          visualStatus.label,
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: isReadyUnseen
-                                ? FontWeight.w800
-                                : FontWeight.w600,
-                            color: statusColor,
-                          ),
+                        decoration: BoxDecoration(
+                          color: statusColor.withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(8),
                         ),
-                        if (visualStatus.detail != null) ...[
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(
-                              visualStatus.detail!,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: statusColor.withValues(alpha: 0.82),
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _StatusDot(
+                              color: statusColor,
+                              animate: visualStatus.animate &&
+                                  !MediaQuery.disableAnimationsOf(context),
+                              glow: isReadyUnseen,
+                              inPlanMode:
+                                  visualStatus.showPlanBadge &&
+                                  visualStatus.animate,
                             ),
-                          ),
-                        ],
-                      ],
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                statusLabel,
+                                style: theme.textTheme.labelMedium?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  color: statusColor,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (visualStatus.detail != null) ...[
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  visualStatus.detail!,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: statusColor.withValues(alpha: 0.82),
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                   PinToggleButton(
                     key: ValueKey('running_session_pin_${session.id}_button'),
                     isPinned: widget.isPinned,
                     onPressed: widget.onTogglePinned,
-                    pinTooltip: AppLocalizations.of(context).pin,
-                    unpinTooltip: AppLocalizations.of(context).unpin,
+                    pinTooltip: l.pin,
+                    unpinTooltip: l.unpin,
                   ),
                   if (queuedInput != null) ...[
                     const SizedBox(width: 4),
@@ -325,193 +337,13 @@ class _RunningSessionCardState extends State<RunningSessionCard> {
                             widget.onReject?.call(permission.toolUseId),
                       ),
                     },
-            // Content (same structure as RecentSessionCard)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Title row: session name + project badge + elapsed
-                  Row(
-                    children: [
-                      // Left-aligned group: badge/name
-                      Expanded(
-                        child: Row(
-                          children: [
-                            if (session.name != null &&
-                                session.name!.isNotEmpty) ...[
-                              Flexible(
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .surfaceContainer,
-                                    borderRadius: BorderRadius.circular(6),
-                                    border: Border.all(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .outlineVariant,
-                                      width: 0.5,
-                                    ),
-                                  ),
-                                  child: Text(
-                                    session.name!,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w500,
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                            ],
-                            Hero(
-                              tag: 'project_name_${session.id}',
-                              child: Material(
-                                color: Colors.transparent,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: providerStyle.background,
-                                    borderRadius: BorderRadius.circular(6),
-                                    border: Border.all(
-                                      color: providerStyle.border,
-                                      width: 0.5,
-                                    ),
-                                  ),
-                                  child: Text(
-                                    projectName,
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w500,
-                                      fontSize: 12,
-                                      color: providerStyle.foreground,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (agentLabel != null) ...[
-                    const SizedBox(height: 8),
-                    _AgentLabel(label: agentLabel),
-                  ],
-                  // Last message
-                  if (displayMessage.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      displayMessage,
-                      style: const TextStyle(fontSize: 13),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                  const SizedBox(height: 4),
-                  if (isCodexSession)
-                    CodexEnvironmentSummary(
-                      leadingLabel:
-                          (session.status == 'running' ||
-                                  session.status == 'starting') &&
-                              session.resolvedPlanMode
-                          ? 'Planning'
-                          : null,
-                      model: session.codexModel,
-                      reasoningEffort: session.codexModelReasoningEffort,
-                      serviceTier: session.codexServiceTier,
-                      approvalPolicy: session.codexApprovalPolicy,
-                      approvalsReviewer: session.codexApprovalsReviewer,
-                      sandboxMode: session.codexSandboxMode,
-                      showDefaultReasoning: true,
-                      compact: true,
-                    )
-                  else
-                    Text(
-                      _buildSettingsSummary(
-                        isCodex: false,
-                        model: session.model,
-                        permissionMode: session.effectivePermissionMode,
-                        executionMode: session.resolvedExecutionMode.value,
-                        planMode: session.resolvedPlanMode,
-                      ),
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: appColors.subtleText,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  // Meta Row: branch + worktree (left) + elapsed (right)
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Row(
-                          children: [
-                            if (session.gitBranch.isNotEmpty) ...[
-                              Icon(
-                                Icons.fork_right,
-                                size: 13,
-                                color: appColors.subtleText,
-                              ),
-                              const SizedBox(width: 2),
-                              Flexible(
-                                child: Text(
-                                  session.gitBranch,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: appColors.subtleText,
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ],
-                            if (session.worktreePath != null) ...[
-                              const SizedBox(width: 12),
-                              Icon(
-                                Icons.account_tree_outlined,
-                                size: 12,
-                                color: appColors.subtleText,
-                              ),
-                              const SizedBox(width: 2),
-                              Text(
-                                'worktree',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: appColors.subtleText,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        elapsed,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: appColors.subtleText,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+            _LiveSessionSummary(
+              session: session,
+              projectName: projectName,
+              provider: provider,
+              message: displayMessage,
+              elapsed: elapsed,
+              agentLabel: agentLabel,
             ),
           ],
         ),
@@ -535,6 +367,141 @@ class _RunningSessionCardState extends State<RunningSessionCard> {
     } catch (_) {
       return '';
     }
+  }
+}
+
+class _LiveSessionSummary extends StatelessWidget {
+  final SessionInfo session;
+  final String projectName;
+  final Provider provider;
+  final String message;
+  final String elapsed;
+  final String? agentLabel;
+
+  const _LiveSessionSummary({
+    required this.session,
+    required this.projectName,
+    required this.provider,
+    required this.message,
+    required this.elapsed,
+    required this.agentLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final metadataStyle = theme.textTheme.bodySmall?.copyWith(
+      color: colors.onSurfaceVariant,
+    );
+    final name = session.name?.trim() ?? '';
+    final branch = session.worktreeBranch ?? session.gitBranch;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 3, 14, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (name.isNotEmpty || message.isNotEmpty)
+            Text(
+              name.isNotEmpty ? name : message,
+              style: theme.textTheme.titleMedium,
+              maxLines: name.isNotEmpty ? 1 : 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          if (name.isNotEmpty && message.isNotEmpty) ...[
+            const SizedBox(height: 3),
+            Text(
+              message,
+              style: metadataStyle,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+          if (name.isNotEmpty || message.isNotEmpty)
+            const Divider(height: 18)
+          else
+            const SizedBox(height: 4),
+          Row(
+            children: [
+              Icon(
+                providerStyleFor(context, provider).icon,
+                size: 15,
+                color: colors.onSurfaceVariant,
+              ),
+              const SizedBox(width: 5),
+              Flexible(
+                child: Hero(
+                  tag: 'project_name_${session.id}',
+                  child: Material(
+                    color: Colors.transparent,
+                    child: Text(
+                      projectName,
+                      style: metadataStyle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(provider.label, style: metadataStyle),
+              const Spacer(),
+              Text(elapsed, style: metadataStyle),
+            ],
+          ),
+          if (agentLabel case final label?) _AgentLabel(label: label),
+          if (branch.isNotEmpty || session.worktreePath != null)
+            Row(
+              children: [
+                const Icon(Icons.fork_right, size: 13),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    branch,
+                    style: metadataStyle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (session.worktreePath != null)
+                  Icon(
+                    Icons.account_tree_outlined,
+                    size: 13,
+                    color: colors.onSurfaceVariant,
+                  ),
+              ],
+            ),
+          if (provider == Provider.codex)
+            CodexEnvironmentSummary(
+              leadingLabel:
+                  (session.status == 'running' || session.status == 'starting') &&
+                      session.resolvedPlanMode
+                  ? 'Planning'
+                  : null,
+              model: session.codexModel,
+              reasoningEffort: session.codexModelReasoningEffort,
+              serviceTier: session.codexServiceTier,
+              approvalPolicy: session.codexApprovalPolicy,
+              approvalsReviewer: session.codexApprovalsReviewer,
+              sandboxMode: session.codexSandboxMode,
+              showDefaultReasoning: true,
+              compact: true,
+            )
+          else
+            Text(
+              _buildClaudeSettingsSummary(
+                model: session.model,
+                permissionMode: session.effectivePermissionMode,
+                executionMode: session.resolvedExecutionMode.value,
+                planMode: session.resolvedPlanMode,
+              ),
+              style: metadataStyle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+        ],
+      ),
+    );
   }
 }
 
@@ -2601,7 +2568,6 @@ class RecentSessionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final appColors = theme.extension<AppColors>()!;
     final provider = providerFromRaw(session.provider);
     final providerStyle = providerStyleFor(context, provider);
     final isCodex = session.provider == 'codex';
@@ -2609,21 +2575,27 @@ class RecentSessionCard extends StatelessWidget {
       session.agentNickname,
       session.agentRole,
     );
-    final dateStr = _formatDateRange(session.created, session.modified);
+    final dateStr = _formatDate(
+      session.modified.isNotEmpty ? session.modified : session.created,
+    );
 
-    final card = Card(
-      margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 0),
-      elevation: 0,
-      color: colorScheme.surfaceContainerHigh,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(
-          color: isSelected
-              ? colorScheme.primary.withValues(alpha: 0.9)
-              : colorScheme.outlineVariant.withValues(alpha: 0.5),
-          width: isSelected ? 2.2 : 1,
-        ),
-      ),
+    final l = AppLocalizations.of(context);
+    final name = session.name?.trim() ?? '';
+    final description = _displayTextForMode(session, displayMode);
+    final draft = draftText?.trim() ?? '';
+    final title = name.isNotEmpty
+        ? name
+        : (draft.isNotEmpty ? draft : description);
+    final secondaryText = draft.isNotEmpty ? draft : description;
+    final metadataStyle = theme.textTheme.bodySmall?.copyWith(
+      color: colorScheme.onSurfaceVariant,
+    );
+
+    final card = Material(
+      color: isSelected ? colorScheme.primaryContainer : Colors.transparent,
+      shape: isSelected
+          ? RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))
+          : Border(bottom: BorderSide(color: colorScheme.outlineVariant)),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: isProcessing ? null : onTap,
@@ -2631,189 +2603,113 @@ class RecentSessionCard extends StatelessWidget {
         child: Stack(
           children: [
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Column(
+              padding: const EdgeInsets.fromLTRB(10, 10, 8, 10),
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Title Row
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Expanded(
-                        child: Row(
-                          children: [
-                            if (session.name != null &&
-                                session.name!.isNotEmpty) ...[
-                              Flexible(
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: colorScheme.surfaceContainer,
-                                    borderRadius: BorderRadius.circular(6),
-                                    border: Border.all(
-                                      color: colorScheme.outlineVariant,
-                                      width: 0.5,
-                                    ),
-                                  ),
-                                  child: Text(
-                                    session.name!,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w500,
-                                      color: colorScheme.onSurfaceVariant,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                            ],
-                            if (!hideProjectBadge) ...[
-                              Flexible(
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: providerStyle.background,
-                                    borderRadius: BorderRadius.circular(6),
-                                    border: Border.all(
-                                      color: providerStyle.border,
-                                      width: 0.5,
-                                    ),
-                                  ),
-                                  child: Text(
-                                    projectNameOverride ?? session.projectName,
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w500,
-                                      fontSize: 12,
-                                      color: providerStyle.foreground,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                    maxLines: 1,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
+                  SizedBox.square(
+                    dimension: 34,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: providerStyle.background,
+                        borderRadius: BorderRadius.circular(8),
                       ),
-                      const SizedBox(width: 8),
-                      PinToggleButton(
-                        key: ValueKey(
-                          'recent_session_pin_${session.sessionId}_button',
-                        ),
-                        isPinned: isPinned,
-                        onPressed: onTogglePinned,
-                        pinTooltip: AppLocalizations.of(context).pin,
-                        unpinTooltip: AppLocalizations.of(context).unpin,
+                      child: Icon(
+                        providerStyle.icon,
+                        color: providerStyle.foreground,
+                        size: 17,
                       ),
-                    ],
+                    ),
                   ),
-                  if (agentLabel != null) ...[
-                    const SizedBox(height: 8),
-                    _AgentLabel(label: agentLabel),
-                  ],
-                  const SizedBox(height: 8),
-
-                  // Body Content
-                  if (draftText != null && draftText!.isNotEmpty) ...[
-                    Row(
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2, right: 6),
-                          child: Icon(
-                            Icons.edit_note,
-                            size: 16,
-                            color: appColors.subtleText,
-                          ),
+                        Text(
+                          title,
+                          style: theme.textTheme.titleSmall,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        Expanded(
-                          child: Text(
-                            draftText!,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontStyle: FontStyle.italic,
-                              color: appColors.subtleText,
-                              height: 1.4,
-                            ),
-                            maxLines: 2,
+                        if (name.isNotEmpty && secondaryText != title)
+                          Text(
+                            secondaryText,
+                            style: metadataStyle,
+                            maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
-                        ),
-                      ],
-                    ),
-                  ] else
-                    Text(
-                      _displayTextForMode(session, displayMode),
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: colorScheme.onSurface,
-                        height: 1.4,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-
-                  if (isCodex) ...[
-                    const SizedBox(height: 6),
-                    CodexEnvironmentSummary(
-                      model: session.codexModel,
-                      reasoningEffort: session.codexModelReasoningEffort,
-                      serviceTier: session.codexServiceTier,
-                      approvalPolicy: session.codexApprovalPolicy,
-                      approvalsReviewer: session.codexApprovalsReviewer,
-                      sandboxMode: session.codexSandboxMode,
-                      showDefaultReasoning: true,
-                      showApprovalMode: false,
-                      compact: true,
-                    ),
-                  ],
-
-                  const SizedBox(height: 8),
-
-                  // Meta Row: branch (left) + date (right)
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Row(
+                        Row(
                           children: [
-                            if (session.gitBranch.isNotEmpty) ...[
-                              Icon(
-                                Icons.fork_right,
-                                size: 14,
-                                color: appColors.subtleText,
-                              ),
-                              const SizedBox(width: 4),
+                            if (!hideProjectBadge)
                               Flexible(
                                 child: Text(
-                                  session.gitBranch,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: appColors.subtleText,
-                                  ),
+                                  projectNameOverride ?? session.projectName,
+                                  style: metadataStyle,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
+                            if (!hideProjectBadge) const SizedBox(width: 6),
+                            Text(provider.label, style: metadataStyle),
+                            if (draft.isNotEmpty) ...[
+                              const SizedBox(width: 6),
+                              Icon(
+                                Icons.edit_note,
+                                size: 16,
+                                color: colorScheme.onSurfaceVariant,
+                              ),
                             ],
                           ],
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        dateStr,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: appColors.subtleText,
+                        if (agentLabel != null) _AgentLabel(label: agentLabel),
+                        if (session.gitBranch.isNotEmpty)
+                          Text(
+                            session.gitBranch,
+                            style: metadataStyle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        if (isCodex)
+                          CodexEnvironmentSummary(
+                            model: session.codexModel,
+                            reasoningEffort: session.codexModelReasoningEffort,
+                            serviceTier: session.codexServiceTier,
+                            approvalPolicy: session.codexApprovalPolicy,
+                            approvalsReviewer: session.codexApprovalsReviewer,
+                            sandboxMode: session.codexSandboxMode,
+                            showDefaultReasoning: true,
+                            showApprovalMode: false,
+                            compact: true,
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 76),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        PinToggleButton(
+                          key: ValueKey(
+                            'recent_session_pin_${session.sessionId}_button',
+                          ),
+                          isPinned: isPinned,
+                          onPressed: onTogglePinned,
+                          pinTooltip: l.pin,
+                          unpinTooltip: l.unpin,
                         ),
-                      ),
-                    ],
+                        if (dateStr.isNotEmpty)
+                          Text(
+                            dateStr,
+                            textAlign: TextAlign.end,
+                            style: metadataStyle,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -2862,44 +2758,6 @@ class RecentSessionCard extends StatelessWidget {
     return formatCommandText(raw);
   }
 
-  String _formatDateRange(String createdIso, String modifiedIso) {
-    if (modifiedIso.isEmpty) return _formatDate(createdIso);
-    final modified = _formatDate(modifiedIso);
-    if (createdIso.isEmpty || createdIso == modifiedIso) return modified;
-    try {
-      final first = DateTime.parse(createdIso).toLocal();
-      final last = DateTime.parse(modifiedIso).toLocal();
-      // Same minute → single timestamp
-      if (first.year == last.year &&
-          first.month == last.month &&
-          first.day == last.day &&
-          first.hour == last.hour &&
-          first.minute == last.minute) {
-        return modified;
-      }
-      final firstTime =
-          '${first.hour.toString().padLeft(2, '0')}:${first.minute.toString().padLeft(2, '0')}';
-      final lastTime =
-          '${last.hour.toString().padLeft(2, '0')}:${last.minute.toString().padLeft(2, '0')}';
-      // Same day → "Today 10:00–12:30"
-      if (first.year == last.year &&
-          first.month == last.month &&
-          first.day == last.day) {
-        final now = DateTime.now();
-        final today = DateTime(now.year, now.month, now.day);
-        final yesterday = today.subtract(const Duration(days: 1));
-        final dtDate = DateTime(first.year, first.month, first.day);
-        if (dtDate == today) return 'Today $firstTime–$lastTime';
-        if (dtDate == yesterday) return 'Yesterday $firstTime–$lastTime';
-        return '${first.month}/${first.day} $firstTime–$lastTime';
-      }
-      // Different days → "1/10 10:00–1/11 12:30"
-      return '${first.month}/${first.day} $firstTime–${last.month}/${last.day} $lastTime';
-    } catch (_) {
-      return modified;
-    }
-  }
-
   String _formatDate(String isoDate) {
     if (isoDate.isEmpty) return '';
     try {
@@ -2922,14 +2780,12 @@ class RecentSessionCard extends StatelessWidget {
 }
 
 /// Build a compact settings summary for Claude session cards.
-String _buildSettingsSummary({
-  required bool isCodex,
+String _buildClaudeSettingsSummary({
   String? model,
   String? permissionMode,
   String? executionMode,
   bool planMode = false,
 }) {
-  if (isCodex) return model ?? '';
   final parts = <String>[
     if (permissionMode == PermissionMode.auto.value)
       'auto'

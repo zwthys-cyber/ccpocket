@@ -981,6 +981,9 @@ class _ChatScreenBody extends HookWidget {
                         sessionId: sessionId,
                         projectPath: effectiveProjectPath,
                         workspace: workspace,
+                        branch: currentBranch.value,
+                        provider: Provider.claude,
+                        status: status,
                       ),
                     ),
                     flexibleSpace: StatusLineFlexibleSpace(
@@ -1259,6 +1262,15 @@ class _ChatScreenBody extends HookWidget {
                 if (bridgeState == BridgeConnectionState.reconnecting ||
                     bridgeState == BridgeConnectionState.disconnected)
                   ReconnectBanner(bridgeState: bridgeState),
+                if (sessionState.sessionContextLoaded)
+                  SessionModeBar(
+                    onBeforeRestart: () async {
+                      draftService.saveDraft(
+                        sessionId,
+                        chatInputController.text,
+                      );
+                    },
+                  ),
                 Expanded(
                   child: BottomOverlayLayout(
                     overlay:
@@ -1319,23 +1331,6 @@ class _ChatScreenBody extends HookWidget {
                               ),
                             ),
                           ),
-                    topOverlay: sessionState.sessionContextLoaded
-                        ? Positioned(
-                            top: 0,
-                            left: 0,
-                            right: 0,
-                            child: Center(
-                              child: SessionModeBar(
-                                onBeforeRestart: () async {
-                                  draftService.saveDraft(
-                                    sessionId,
-                                    chatInputController.text,
-                                  );
-                                },
-                              ),
-                            ),
-                          )
-                        : null,
                     floatingButtonBuilder: (overlayHeight) {
                       if (!scroll.showScrollToLatest) {
                         return const SizedBox.shrink();
@@ -1380,7 +1375,10 @@ class _ChatScreenBody extends HookWidget {
                     ),
                   ),
                 ),
-                LiteModeActivityBar(sessionId: sessionId),
+                SessionActivityBar(
+                  sessionId: sessionId,
+                  isConnected: bridgeState == BridgeConnectionState.connected,
+                ),
                 if (approval is ApprovalNone)
                   ChatInputWithOverlays(
                     sessionId: sessionId,

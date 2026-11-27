@@ -119,7 +119,7 @@ void main() {
       await tester.pumpWidget(_buildSummary(UsageDisplayMode.remaining));
       final usageHeight = tester.getSize(find.byType(SectionHeader)).height;
 
-      expect(plainHeight, 40);
+      expect(plainHeight, greaterThanOrEqualTo(44));
       expect(usageHeight, plainHeight);
     });
 

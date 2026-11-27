@@ -4296,8 +4296,21 @@ class BridgeService implements BridgeServiceBase {
     if (baseUrl == null) return false;
 
     try {
+      final connectionUrl = _lastUrl;
+      final token = connectionUrl == null
+          ? null
+          : Uri.parse(connectionUrl).queryParametersAll['token']?.firstOrNull;
+      final endpoint = Uri.parse(baseUrl).replace(
+        pathSegments: ['api', 'gallery', id],
+      );
       final response = await http
-          .delete(Uri.parse('$baseUrl/api/gallery/$id'))
+          .delete(
+            endpoint,
+            headers: {
+              if (token != null && token.isNotEmpty)
+                'Authorization': 'Bearer $token',
+            },
+          )
           .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {

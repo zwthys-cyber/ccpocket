@@ -2053,6 +2053,46 @@ class AppLocalizationsEn extends AppLocalizations {
   String get noActiveSessions => 'No active sessions';
 
   @override
+  String get statusWorking => 'Working';
+
+  @override
+  String get statusNeedsYou => 'Needs You';
+
+  @override
+  String get statusReady => 'Ready';
+
+  @override
+  String get sessionNewActivity => 'New activity';
+
+  @override
+  String get chatResultStopped => 'Stopped';
+
+  @override
+  String get chatResultFailed => 'Task failed';
+
+  @override
+  String get chatResultTruncated => 'Output truncated';
+
+  @override
+  String chatResultToolCalls(int count) {
+    return '$count tool calls';
+  }
+
+  @override
+  String chatResultFileEdits(int count) {
+    return '$count file edits';
+  }
+
+  @override
+  String get sessionOpenSessions => 'Open Sessions';
+
+  @override
+  String get bridgeConnected => 'Connected';
+
+  @override
+  String get clearSessionSearch => 'Clear search';
+
+  @override
   String get startSessionToBegin =>
       'Start a session to begin receiving approval requests.';
 
@@ -2568,6 +2608,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get tooltipIndent => 'Increase indent';
+
+  @override
+  String get composerMoreActions => 'More composer actions';
 
   @override
   String get tooltipDedent => 'Decrease indent';

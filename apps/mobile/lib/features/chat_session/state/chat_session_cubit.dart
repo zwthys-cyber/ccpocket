@@ -10,6 +10,7 @@ import '../../../core/logger.dart';
 import '../../../models/messages.dart';
 import '../../../services/bridge_service.dart';
 import '../../../services/chat_message_handler.dart';
+import '../../../utils/tool_categories.dart';
 import '../permission_transcript.dart';
 import 'chat_session_state.dart';
 import 'streaming_state_cubit.dart';
@@ -269,21 +270,22 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
   // Observation time, not a fabricated server-side execution start time.
   DateTime? _activityObservedSince = DateTime.now();
   DateTime? _lastAgentActivityAt;
-  String? _latestActivityTool;
+  final _activeTools = <String, ({String name, String summary})>{};
   DateTime? get activityObservedSince => _activityObservedSince;
   DateTime? get lastAgentActivityAt => _lastAgentActivityAt;
-  String? get latestActivityTool => _latestActivityTool;
+  ({String name, String summary})? get latestActivityTool =>
+      _activeTools.values.lastOrNull;
 
   @override
   void emit(ChatSessionState state) {
     if (state.status == ProcessStatus.idle) {
       _activityObservedSince = null;
-      _latestActivityTool = null;
+      _activeTools.clear();
     } else if (this.state.status == ProcessStatus.idle ||
         _activityObservedSince == null) {
       _activityObservedSince = DateTime.now();
       _lastAgentActivityAt = null;
-      _latestActivityTool = null;
+      _activeTools.clear();
     }
     super.emit(state);
   }
@@ -291,26 +293,35 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
   bool get supportsPerformanceMode => _bridge.supportsPerformanceMode;
 
   void _recordAgentActivity(ServerMessage msg) {
-    if (msg is AssistantServerMessage ||
-        msg is ToolResultMessage ||
-        msg is StreamDeltaMessage ||
-        msg is ThinkingDeltaMessage) {
+    if (state.status != ProcessStatus.idle &&
+        (msg is AssistantServerMessage ||
+            msg is ToolResultMessage ||
+            msg is ToolUseSummaryMessage ||
+            msg is StreamDeltaMessage ||
+            msg is ThinkingDeltaMessage)) {
       final now = DateTime.now();
       _lastAgentActivityAt = now;
       _activityObservedSince ??= now;
       if (msg case AssistantServerMessage(:final message)) {
-        final tools = message.content.whereType<ToolUseContent>();
-        _latestActivityTool = tools.lastOrNull?.name;
-      } else if (msg is ToolResultMessage ||
-          msg is StreamDeltaMessage ||
-          msg is ThinkingDeltaMessage) {
-        _latestActivityTool = null;
+        for (final tool in message.content.whereType<ToolUseContent>()) {
+          final summary = tool.input.isEmpty
+              ? ''
+              : getToolSummary(categorizeToolName(tool.name), tool.input);
+          _activeTools[tool.id] = (name: tool.name, summary: summary);
+        }
+      } else if (msg is ToolResultMessage) {
+        _activeTools.remove(msg.toolUseId);
+      } else if (msg is ToolUseSummaryMessage) {
+        for (final id in msg.precedingToolUseIds) {
+          _activeTools.remove(id);
+        }
       }
     }
   }
 
   void _onMessage(ServerMessage msg) {
     if (msg is SessionHistoryResetMessage) {
+      _activeTools.clear();
       final localUsers = state.entries
           .skip(_pastEntryCount)
           .whereType<UserChatEntry>()
@@ -325,7 +336,6 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
     if (msg is SessionActivityMessage) {
       _lastAgentActivityAt = DateTime.now();
       _activityObservedSince ??= _lastAgentActivityAt;
-      _latestActivityTool = null;
       return;
     }
     if (msg is SessionContextMessage) {

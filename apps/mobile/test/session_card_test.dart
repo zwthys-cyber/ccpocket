@@ -545,7 +545,7 @@ void main() {
     });
 
     testWidgets(
-      'selected running session uses border emphasis without selection fill',
+      'selected running session uses a neutral fill and a status border',
       (tester) async {
         final session = SessionInfo(
           id: 'selected-running',

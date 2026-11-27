@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 
 import '../../../l10n/app_localizations.dart';
+import '../../../theme/app_theme.dart';
 import '../../../models/messages.dart';
 import '../../../widgets/workspace_pane_chrome.dart';
 import '../../../widgets/media_export_actions.dart';
@@ -54,7 +55,7 @@ class GalleryImageViewer extends HookWidget {
 
     if (imageList.value.isEmpty) {
       return Scaffold(
-        backgroundColor: Colors.black,
+        backgroundColor: AppColors.mediaSurface,
         body: Center(
           child: Text(
             AppLocalizations.of(context).noImages,
@@ -101,13 +102,13 @@ class GalleryImageViewer extends HookWidget {
     }
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: AppColors.mediaSurface,
       extendBodyBehindAppBar: true,
       appBar: chromeVisible.value
           ? chrome.wrapAppBar(
               AppBar(
-                backgroundColor: Colors.black54,
-                foregroundColor: Colors.white,
+                backgroundColor: AppColors.mediaSurface.withValues(alpha: 0.80),
+                foregroundColor: AppColors.mediaForeground,
                 elevation: 0,
                 title: Text(
                   '${safeIndex + 1} / ${imageList.value.length}',

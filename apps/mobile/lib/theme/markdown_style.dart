@@ -12,6 +12,7 @@ import '../core/logger.dart';
 import '../l10n/app_localizations.dart';
 import '../widgets/google_search_text_selection.dart';
 import 'app_theme.dart';
+import 'app_spacing.dart';
 import 'code_text_style.dart';
 
 final _syntaxHighlight = _SyntaxHighlightRegistry();
@@ -107,7 +108,7 @@ MarkdownStyleSheet buildMarkdownStyle(BuildContext context) {
     ),
     codeblockDecoration: BoxDecoration(
       color: appColors.codeBackground,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(AppSpacing.codeRadius),
       border: Border.all(color: appColors.codeBorder),
     ),
     codeblockPadding: const EdgeInsets.all(12),
@@ -248,7 +249,7 @@ class FencedCodeBlockBuilder extends MarkdownElementBuilder {
       width: double.infinity,
       decoration: BoxDecoration(
         color: appColors.codeBackground,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppSpacing.codeRadius),
         border: Border.all(color: appColors.codeBorder),
       ),
       child: Column(

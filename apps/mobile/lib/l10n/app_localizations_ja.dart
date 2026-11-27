@@ -1974,6 +1974,46 @@ class AppLocalizationsJa extends AppLocalizations {
   String get noActiveSessions => '実行中のセッションはありません';
 
   @override
+  String get statusWorking => '作業中';
+
+  @override
+  String get statusNeedsYou => '要対応';
+
+  @override
+  String get statusReady => '待機中';
+
+  @override
+  String get sessionNewActivity => '新しいアクティビティ';
+
+  @override
+  String get chatResultStopped => '停止しました';
+
+  @override
+  String get chatResultFailed => 'タスクに失敗しました';
+
+  @override
+  String get chatResultTruncated => '出力が途中で切れています';
+
+  @override
+  String chatResultToolCalls(int count) {
+    return 'ツール呼び出し $count 回';
+  }
+
+  @override
+  String chatResultFileEdits(int count) {
+    return 'ファイル編集 $count 回';
+  }
+
+  @override
+  String get sessionOpenSessions => '開いているセッション';
+
+  @override
+  String get bridgeConnected => '接続済み';
+
+  @override
+  String get clearSessionSearch => '検索をクリア';
+
+  @override
   String get startSessionToBegin => 'セッションを開始して承認リクエストの受信を始めましょう。';
 
   @override
@@ -2478,6 +2518,9 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get tooltipIndent => 'インデントを増やす';
+
+  @override
+  String get composerMoreActions => '入力欄のその他の操作';
 
   @override
   String get tooltipDedent => 'インデントを減らす';

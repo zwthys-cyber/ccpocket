@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../../router/app_router.dart';
 import '../../../services/app_update_service.dart';
+import '../../../theme/app_theme.dart';
 import '../../../widgets/workspace_pane_chrome.dart';
 
 /// Floating SliverAppBar for the session list screen.
@@ -18,6 +19,7 @@ class SessionListSliverAppBar extends StatelessWidget {
   final bool forceElevated;
   final double? toolbarHeight;
   final String? bridgeLabel;
+  final bool isConnected;
 
   const SessionListSliverAppBar({
     super.key,
@@ -28,6 +30,7 @@ class SessionListSliverAppBar extends StatelessWidget {
     this.forceElevated = false,
     this.toolbarHeight,
     this.bridgeLabel,
+    this.isConnected = false,
   });
 
   @override
@@ -41,7 +44,11 @@ class SessionListSliverAppBar extends StatelessWidget {
       toolbarHeight: toolbarHeight ?? kToolbarHeight,
       title: GestureDetector(
         onTap: onTitleTap,
-        child: _SessionListTitle(title: l.appTitle, subtitle: bridgeLabel),
+        child: _SessionListTitle(
+          title: l.appTitle,
+          subtitle: bridgeLabel ?? (isConnected ? l.bridgeConnected : null),
+          isConnected: isConnected,
+        ),
       ),
       actions: [
         IconButton(
@@ -49,7 +56,7 @@ class SessionListSliverAppBar extends StatelessWidget {
           icon: Badge(
             isLabelVisible: AppUpdateService.instance.cachedUpdate != null,
             smallSize: 8,
-            child: const Icon(Icons.settings),
+            child: const Icon(Icons.settings_outlined),
           ),
           onPressed:
               onOpenSettings ?? () => context.router.navigate(SettingsRoute()),
@@ -57,7 +64,7 @@ class SessionListSliverAppBar extends StatelessWidget {
         ),
         IconButton(
           key: const ValueKey('gallery_button'),
-          icon: const Icon(Icons.collections),
+          icon: const Icon(Icons.collections_outlined),
           onPressed:
               onOpenGallery ?? () => context.router.navigate(GalleryRoute()),
           tooltip: l.gallery,
@@ -171,12 +178,14 @@ class _SessionListTitle extends StatelessWidget {
   final String title;
   final String? subtitle;
   final TextStyle? titleStyle;
+  final bool isConnected;
 
   const _SessionListTitle({
     super.key,
     required this.title,
     this.subtitle,
     this.titleStyle,
+    this.isConnected = false,
   });
 
   @override
@@ -205,14 +214,30 @@ class _SessionListTitle extends StatelessWidget {
           style: titleStyle ?? defaultTitleStyle,
         ),
         const SizedBox(height: 1),
-        Text(
-          subtitle,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-            fontSize: 11,
-          ),
+        Row(
+          children: [
+            if (isConnected) ...[
+              Icon(
+                Icons.circle,
+                size: 6,
+                color: theme.extension<AppColors>()?.statusOnline,
+              ),
+              const SizedBox(width: 5),
+            ],
+            Flexible(
+              child: Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: isConnected
+                      ? theme.extension<AppColors>()?.statusOnline
+                      : theme.colorScheme.onSurfaceVariant,
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          ],
         ),
       ],
     );

@@ -226,11 +226,11 @@ class HomeContentState extends State<HomeContent> {
   static const _groupRecentSessionsPreferenceKey =
       'session_list_group_recent_sessions';
 
-  bool _isSearching = false;
   bool _updateBannerDismissed = false;
   bool _showSupportBanner = false;
-  bool _groupRecentSessions = true;
+  bool _groupRecentSessions = false;
   final _searchController = TextEditingController();
+  final _searchFocus = FocusNode();
   SessionDisplayMode _displayMode = SessionDisplayMode.first;
   RevenueCatService? _revenueCatService;
   VoidCallback? _catalogStateListener;
@@ -247,7 +247,7 @@ class HomeContentState extends State<HomeContent> {
     final prefs = await SharedPreferences.getInstance();
     final modeStr = prefs.getString(_displayModePreferenceKey);
     final groupRecentSessions =
-        prefs.getBool(_groupRecentSessionsPreferenceKey) ?? true;
+        prefs.getBool(_groupRecentSessionsPreferenceKey) ?? false;
     if (!mounted) return;
     setState(() {
       if (modeStr != null) {
@@ -307,9 +307,8 @@ class HomeContentState extends State<HomeContent> {
   @override
   void didUpdateWidget(covariant HomeContent oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 外部から searchQuery がクリアされたら検索UIも閉じる
+    // Keep the visible search field in sync when a filter clears the query.
     if (widget.searchQuery.isEmpty && oldWidget.searchQuery.isNotEmpty) {
-      setState(() => _isSearching = false);
       _searchController.clear();
     }
     // Reset dismiss state when reconnected (new bridgeVersion received)
@@ -328,25 +327,12 @@ class HomeContentState extends State<HomeContent> {
       _supportBannerService!.removeListener(_supportBannerListener!);
     }
     _searchController.dispose();
+    _searchFocus.dispose();
     super.dispose();
   }
 
-  void _toggleSearch() {
-    setState(() {
-      _isSearching = !_isSearching;
-      if (!_isSearching) {
-        _searchController.clear();
-        context.read<SessionListCubit>().setSearchQuery('');
-      }
-    });
-  }
-
-  /// Open search field programmatically (e.g. from keyboard shortcut).
-  void openSearch() {
-    if (!_isSearching) {
-      _toggleSearch();
-    }
-  }
+  /// Focus search from the workspace keyboard shortcut.
+  void openSearch() => _searchFocus.requestFocus();
 
   Widget? _buildAppUpdateBanner() {
     if (widget.appUpdateInfo == null) return null;
@@ -489,7 +475,7 @@ class HomeContentState extends State<HomeContent> {
     final l = AppLocalizations.of(context);
     final appColors = Theme.of(context).extension<AppColors>()!;
     final hasPendingActions = widget.offlinePendingActions.isNotEmpty;
-    final hasRunningSessions = widget.sessions.isNotEmpty || hasPendingActions;
+    final hasLiveSessions = widget.sessions.isNotEmpty || hasPendingActions;
     final hasRecentSessions = widget.recentSessions.isNotEmpty;
     final hasKnownProjects =
         widget.accumulatedProjectPaths.isNotEmpty ||
@@ -527,14 +513,6 @@ class HomeContentState extends State<HomeContent> {
       ),
       _ => null,
     };
-    final runningSessionsHeader = _RunningSessionsHeader(
-      label: l.running,
-      emptyLabel: l.noActiveSessions,
-      color: appColors.statusOnline,
-      usageSummary: usageSummary,
-      showEmptyMessage: !hasRunningSessions,
-    );
-
     // Compute derived state
     // Exclude running sessions from recent list to avoid duplicates
     final runningSessionIds = widget.sessions
@@ -654,7 +632,7 @@ class HomeContentState extends State<HomeContent> {
       sessions: filteredSessions,
       currentProjectNames: currentProjectNames,
     ).where((group) => group.sessions.isNotEmpty).toList();
-    final runningSessions = prioritizePinned(
+    final liveSessions = prioritizePinned(
       widget.sessions,
       isPinned: (session) {
         final key = runningSessionPinKey(session);
@@ -663,6 +641,25 @@ class HomeContentState extends State<HomeContent> {
       isProjectPinned: (session) =>
           widget.pinnedProjectPaths.contains(session.workspaceGroupKey),
     );
+    bool isWorking(SessionInfo session) {
+      if (session.pendingPermission != null) return true;
+      return switch (session.status) {
+        'starting' || 'running' || 'compacting' || 'waiting_approval' => true,
+        _ => false,
+      };
+    }
+    final workingSessions = liveSessions.where(isWorking);
+    final hasWorkingSessions = workingSessions.isNotEmpty || hasPendingActions;
+    final idleSessions = liveSessions.where((session) => !isWorking(session));
+    final orderedIdleSessions = [
+      ...idleSessions.where(
+        (session) => widget.unseenSessionIds.contains(session.id),
+      ),
+      ...idleSessions.where(
+        (session) => !widget.unseenSessionIds.contains(session.id),
+      ),
+    ];
+    final firstIdleSession = orderedIdleSessions.firstOrNull;
 
     final hasActiveFilter =
         widget.currentProjectFilter != null ||
@@ -670,10 +667,20 @@ class HomeContentState extends State<HomeContent> {
         widget.namedOnly ||
         widget.searchQuery.isNotEmpty;
 
-    if (!hasRunningSessions &&
+    final hasEmptyHome =
+        !hasLiveSessions &&
         !hasRecentSessions &&
         !hasKnownProjects &&
-        !hasActiveFilter) {
+        !hasActiveFilter;
+    final runningSessionsHeader = _RunningSessionsHeader(
+      label: l.running,
+      emptyLabel: l.noActiveSessions,
+      color: appColors.statusRunning,
+      usageSummary: usageSummary,
+      showEmptyMessage: hasEmptyHome,
+    );
+
+    if (hasEmptyHome) {
       // Show skeleton while initial data is loading
       if (widget.isInitialLoading) {
         return ListView(
@@ -725,15 +732,21 @@ class HomeContentState extends State<HomeContent> {
       key: const ValueKey('session_list'),
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 16),
       children: [
         if (isReconnecting) const SessionReconnectBanner(),
         ?connectedBridgeBanner,
         ?updateBanner,
         ?supportBanner,
         ?macOSNativeAppBanner,
-        runningSessionsHeader,
-        if (hasRunningSessions) ...[
+        _HomeSessionActions(
+          controller: _searchController,
+          focusNode: _searchFocus,
+          onChanged: context.read<SessionListCubit>().setSearchQuery,
+          onNewSession: widget.onNewSession,
+        ),
+        if (hasWorkingSessions || usageSummary != null) runningSessionsHeader,
+        if (hasLiveSessions) ...[
           for (final action in widget.offlinePendingActions)
             OfflinePendingSessionCard(
               key: ValueKey('pending_session_${action.id}'),
@@ -744,7 +757,13 @@ class HomeContentState extends State<HomeContent> {
                   ? null
                   : () => widget.onCancelOfflinePendingAction!(action.id),
             ),
-          for (final session in runningSessions)
+          for (final session in [...workingSessions, ...orderedIdleSessions]) ...[
+            if (session == firstIdleSession)
+              SectionHeader(
+                icon: Icons.forum_outlined,
+                label: l.sessionOpenSessions,
+                color: appColors.subtleText,
+              ),
             Slidable(
               key: ValueKey('running_session_${session.id}'),
               endActionPane: ActionPane(
@@ -762,9 +781,9 @@ class HomeContentState extends State<HomeContent> {
                         color: Theme.of(context).colorScheme.error,
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(
+                      child: Icon(
                         Icons.stop_circle_outlined,
-                        color: Colors.white,
+                        color: Theme.of(context).colorScheme.onError,
                         size: 22,
                       ),
                     ),
@@ -824,6 +843,7 @@ class HomeContentState extends State<HomeContent> {
                 ),
               ),
             ),
+          ],
         ],
         const SizedBox(height: 16),
         if (widget.isInitialLoading ||
@@ -834,57 +854,7 @@ class HomeContentState extends State<HomeContent> {
             icon: Icons.history,
             label: l.recentSessions,
             color: appColors.subtleText,
-            trailing: IconButton(
-              key: const ValueKey('search_button'),
-              icon: Icon(
-                _isSearching ? Icons.close : Icons.search,
-                size: 18,
-                color: appColors.subtleText,
-              ),
-              onPressed: _toggleSearch,
-              tooltip: l.search,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-              visualDensity: VisualDensity.compact,
-            ),
           ),
-          if (_isSearching) ...[
-            const SizedBox(height: 4),
-            TextField(
-              key: const ValueKey('search_field'),
-              controller: _searchController,
-              autofocus: true,
-              onTapOutside: (_) => FocusScope.of(context).unfocus(),
-              decoration: InputDecoration(
-                hintText: l.searchSessions,
-                prefixIcon: Icon(
-                  Icons.search,
-                  size: 18,
-                  color: appColors.subtleText,
-                ),
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(
-                    color: appColors.subtleText.withValues(alpha: 0.3),
-                  ),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(
-                    color: appColors.subtleText.withValues(alpha: 0.3),
-                  ),
-                ),
-              ),
-              style: const TextStyle(fontSize: 14),
-              onChanged: (v) =>
-                  context.read<SessionListCubit>().setSearchQuery(v),
-            ),
-          ],
           const SizedBox(height: 8),
           SessionFilterBar(
             displayMode: _displayMode,
@@ -999,6 +969,91 @@ class HomeContentState extends State<HomeContent> {
   }
 }
 
+class _HomeSessionActions extends StatelessWidget {
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onNewSession;
+
+  const _HomeSessionActions({
+    required this.controller,
+    required this.focusNode,
+    required this.onChanged,
+    required this.onNewSession,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final search = ValueListenableBuilder<TextEditingValue>(
+      valueListenable: controller,
+      builder: (context, value, _) => TextField(
+        key: const ValueKey('search_field'),
+        controller: controller,
+        focusNode: focusNode,
+        textInputAction: TextInputAction.search,
+        onTapOutside: (_) => focusNode.unfocus(),
+        onChanged: onChanged,
+        style: theme.textTheme.bodyMedium,
+        decoration: InputDecoration(
+          hintText: l.searchSessions,
+          fillColor: colors.surfaceContainerHigh,
+          contentPadding: const EdgeInsets.symmetric(vertical: 12),
+          prefixIcon: const Icon(Icons.search, size: 20),
+          suffixIcon: value.text.isEmpty
+              ? null
+              : IconButton(
+                  key: const ValueKey('clear_search_button'),
+                  icon: const Icon(Icons.close, size: 20),
+                  tooltip: l.clearSessionSearch,
+                  onPressed: () {
+                    controller.clear();
+                    onChanged('');
+                  },
+                ),
+        ),
+      ),
+    );
+    const newSessionKey = ValueKey('new_session_button');
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact =
+            constraints.maxWidth < 330 ||
+            MediaQuery.textScalerOf(context).scale(14) > 18;
+        return Row(
+          children: [
+            Expanded(child: search),
+            const SizedBox(width: 8),
+            if (compact)
+              IconButton.filled(
+                key: newSessionKey,
+                tooltip: l.newSession,
+                onPressed: onNewSession,
+                style: IconButton.styleFrom(
+                  fixedSize: const Size.square(48),
+                ),
+                icon: const Icon(Icons.add_rounded),
+              )
+            else
+              FilledButton.icon(
+                key: newSessionKey,
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 48),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                ),
+                onPressed: onNewSession,
+                icon: const Icon(Icons.add_rounded, size: 20),
+                label: Text(l.newSession),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _RunningSessionsHeader extends StatelessWidget {
   final String label;
   final String emptyLabel;
@@ -1017,7 +1072,7 @@ class _RunningSessionsHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final appColors = Theme.of(context).extension<AppColors>()!;
-    final header = Column(
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SectionHeader(
@@ -1025,6 +1080,10 @@ class _RunningSessionsHeader extends StatelessWidget {
           icon: Icons.play_circle_filled,
           label: label,
           color: color,
+          shrinkTrailingToFit: true,
+          trailing: usageSummary == null
+              ? null
+              : SizedBox(height: 44, child: usageSummary),
         ),
         const SizedBox(height: 4),
         if (showEmptyMessage)
@@ -1037,37 +1096,6 @@ class _RunningSessionsHeader extends StatelessWidget {
             ),
           ),
       ],
-    );
-    if (usageSummary == null) return header;
-
-    final labelPainter = TextPainter(
-      text: TextSpan(
-        text: label,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.8,
-          color: color,
-        ),
-      ),
-      textDirection: Directionality.of(context),
-      textScaler: MediaQuery.textScalerOf(context),
-    )..layout();
-    final tapTargetLeft = 4 + 16 + 6 + labelPainter.width + 8;
-
-    return LayoutBuilder(
-      builder: (context, constraints) => Stack(
-        children: [
-          header,
-          Positioned(
-            top: 0,
-            left: tapTargetLeft.clamp(0, constraints.maxWidth).toDouble(),
-            right: 0,
-            height: 44,
-            child: usageSummary!,
-          ),
-        ],
-      ),
     );
   }
 }
@@ -1146,9 +1174,9 @@ class _RecentSessionSlidable extends StatelessWidget {
                 color: Theme.of(context).colorScheme.error,
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.archive_outlined,
-                color: Colors.white,
+                color: Theme.of(context).colorScheme.onError,
                 size: 22,
               ),
             ),
@@ -1260,8 +1288,8 @@ class _ProjectRecentSessionGroup extends StatelessWidget {
     final visibleSessions = group.sessions.take(displayLimit).toList();
     final hasHiddenLoadedSessions = group.sessions.length > displayLimit;
     final canShowMore = hasHiddenLoadedSessions || canLoadFromBridge;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1365,13 +1393,13 @@ class _ProjectRecentSessionHeader extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     return Material(
-      color: Colors.transparent,
+      color: colorScheme.surfaceContainer,
       child: InkWell(
         key: ValueKey('project_header_$groupKey'),
         borderRadius: BorderRadius.circular(8),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           child: Row(
             children: [
               AnimatedRotation(

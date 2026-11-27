@@ -236,6 +236,7 @@ class ToolResultBubbleState extends State<ToolResultBubble> {
 
     final l = AppLocalizations.of(context);
     final presentation = _presentationFor(widget.message);
+    final opensDiff = _isDiffContent;
     final summary = _buildSummary(
       presentation,
       widget.message.content,
@@ -248,6 +249,7 @@ class ToolResultBubbleState extends State<ToolResultBubble> {
         toolName: widget.message.toolName,
         category: _category,
         summary: summary,
+        opensDiff: opensDiff,
         onTap: _onTap,
         onLongPress: () => _copyContent(context),
       );
@@ -259,6 +261,7 @@ class ToolResultBubbleState extends State<ToolResultBubble> {
       summary: summary,
       presentation: presentation,
       expansion: _expansion,
+      opensDiff: opensDiff,
       onTap: _onTap,
       onLongPress: () => _copyContent(context),
     );
@@ -294,6 +297,7 @@ class _CollapsedToolResult extends StatelessWidget {
   final String? toolName;
   final ToolCategory category;
   final String summary;
+  final bool opensDiff;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
 
@@ -301,14 +305,15 @@ class _CollapsedToolResult extends StatelessWidget {
     required this.toolName,
     required this.category,
     required this.summary,
+    required this.opensDiff,
     required this.onTap,
     required this.onLongPress,
   });
 
   @override
   Widget build(BuildContext context) {
-    final appColors = Theme.of(context).extension<AppColors>()!;
     final l = AppLocalizations.of(context);
+    final colors = Theme.of(context).colorScheme;
 
     return Padding(
       padding: const EdgeInsets.symmetric(
@@ -318,37 +323,24 @@ class _CollapsedToolResult extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         onLongPress: onLongPress,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2),
-          child: Row(
-            children: [
-              // Category icon
-              Icon(
-                getToolCategoryIcon(category),
-                size: 12,
-                color: getToolCategoryColor(category, appColors),
+        borderRadius: BorderRadius.circular(8),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: colors.outlineVariant)),
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 36),
+            child: Center(
+              child: _ToolResultHeader(
+                name: toolName ?? l.toolResult,
+                category: category,
+                summary: summary,
+                trailingIcon: opensDiff
+                    ? Icons.open_in_new
+                    : Icons.chevron_right,
+                iconSize: 12,
               ),
-              const SizedBox(width: 6),
-              // Tool name
-              Text(
-                toolName ?? l.toolResult,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(width: 8),
-              // Summary -- plain text, no badge
-              Expanded(
-                child: Text(
-                  summary,
-                  style: TextStyle(fontSize: 11, color: appColors.subtleText),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              // Chevron
-              Icon(Icons.chevron_right, size: 14, color: appColors.subtleText),
-            ],
+            ),
           ),
         ),
       ),
@@ -364,6 +356,7 @@ class _ExpandedToolResult extends StatelessWidget {
   final String summary;
   final _ToolResultPresentation presentation;
   final ToolResultExpansion expansion;
+  final bool opensDiff;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
 
@@ -376,6 +369,7 @@ class _ExpandedToolResult extends StatelessWidget {
     required this.summary,
     required this.presentation,
     required this.expansion,
+    required this.opensDiff,
     required this.onTap,
     required this.onLongPress,
   });
@@ -388,7 +382,9 @@ class _ExpandedToolResult extends StatelessWidget {
     final toolName = message.toolName;
     final hasMore = presentation.lineCount > _previewLines;
 
-    final chevronIcon = expansion == ToolResultExpansion.preview
+    final trailingIcon = opensDiff
+        ? Icons.open_in_new
+        : expansion == ToolResultExpansion.preview
         ? Icons.expand_more
         : Icons.expand_less;
 
@@ -417,35 +413,12 @@ class _ExpandedToolResult extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
               ],
-              // Header row
-              Row(
-                children: [
-                  Icon(
-                    getToolCategoryIcon(category),
-                    size: 14,
-                    color: getToolCategoryColor(category, appColors),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    toolName ?? l.toolResult,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      summary,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: appColors.subtleText,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  Icon(chevronIcon, size: 16, color: appColors.subtleText),
-                ],
+              _ToolResultHeader(
+                name: toolName ?? l.toolResult,
+                category: category,
+                summary: summary,
+                trailingIcon: trailingIcon,
+                iconSize: 14,
               ),
               // Content
               if (expansion == ToolResultExpansion.preview) ...[
@@ -490,6 +463,61 @@ class _ExpandedToolResult extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ToolResultHeader extends StatelessWidget {
+  const _ToolResultHeader({
+    required this.name,
+    required this.category,
+    required this.summary,
+    required this.trailingIcon,
+    required this.iconSize,
+  });
+
+  final String name;
+  final ToolCategory category;
+  final String summary;
+  final IconData trailingIcon;
+  final double iconSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final appColors = theme.extension<AppColors>()!;
+    return LayoutBuilder(
+      builder: (context, constraints) => Row(
+        children: [
+          Icon(
+            getToolCategoryIcon(category),
+            size: iconSize,
+            color: getToolCategoryColor(category, appColors),
+          ),
+          const SizedBox(width: 8),
+          ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: constraints.maxWidth * 0.45),
+            child: Text(
+              name,
+              style: theme.textTheme.labelMedium,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              summary,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: appColors.subtleText,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Icon(trailingIcon, size: 16, color: appColors.subtleText),
+        ],
       ),
     );
   }

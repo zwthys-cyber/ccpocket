@@ -606,7 +606,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
                 physics: MaintainReadingPositionOnResizePhysics(
                   shouldMaintain: () => widget.isReadingHistory,
                 ),
-                padding: EdgeInsets.only(top: 36, bottom: widget.bottomPadding),
+                padding: EdgeInsets.only(top: 8, bottom: widget.bottomPadding),
                 itemCount: totalCount,
                 findChildIndexCallback: (key) {
                   if (key is! ValueKey<String>) return null;

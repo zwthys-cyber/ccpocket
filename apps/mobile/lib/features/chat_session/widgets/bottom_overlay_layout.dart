@@ -3,14 +3,12 @@ import 'package:flutter/material.dart';
 class BottomOverlayLayout extends StatefulWidget {
   final Widget content;
   final Widget? overlay;
-  final Widget? topOverlay;
   final Widget Function(double overlayHeight)? floatingButtonBuilder;
 
   const BottomOverlayLayout({
     super.key,
     required this.content,
     this.overlay,
-    this.topOverlay,
     this.floatingButtonBuilder,
   });
 
@@ -70,7 +68,6 @@ class _BottomOverlayLayoutState extends State<BottomOverlayLayout> {
               padding: EdgeInsets.only(bottom: clampedObstruction),
               child: widget.content,
             ),
-            if (widget.topOverlay != null) widget.topOverlay!,
             if (widget.floatingButtonBuilder != null)
               widget.floatingButtonBuilder!(bottomObstruction),
             if (widget.overlay != null)

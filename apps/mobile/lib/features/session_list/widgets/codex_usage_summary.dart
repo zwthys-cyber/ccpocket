@@ -188,13 +188,13 @@ Color _indicatorColor(
       percentage >= 90
           ? colorScheme.error
           : percentage >= 70
-          ? Colors.orange
+          ? colorScheme.tertiary
           : appColors.statusOnline,
     UsageDisplayMode.remaining =>
       percentage <= 10
           ? colorScheme.error
           : percentage <= 30
-          ? Colors.orange
+          ? colorScheme.tertiary
           : appColors.statusOnline,
   };
 }

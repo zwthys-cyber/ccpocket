@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:share_plus/share_plus.dart';
 
 import '../../l10n/app_localizations.dart';
+import '../../theme/app_theme.dart';
 import '../../widgets/workspace_pane_chrome.dart';
 import '../../widgets/media_export_actions.dart';
 import 'generated_image_preview_item.dart';
@@ -154,13 +155,13 @@ class _GeneratedImagePreviewScreenState
       autofocus: true,
       onKeyEvent: _handleKeyEvent,
       child: Scaffold(
-        backgroundColor: Colors.black,
+        backgroundColor: AppColors.mediaSurface,
         extendBodyBehindAppBar: true,
         appBar: _chromeVisible
             ? chrome.wrapAppBar(
                 AppBar(
-                  backgroundColor: Colors.black45,
-                  foregroundColor: Colors.white,
+                  backgroundColor: AppColors.mediaSurface.withValues(alpha: 0.80),
+                  foregroundColor: AppColors.mediaForeground,
                   elevation: 0,
                   centerTitle: true,
                   title: Text(
@@ -345,8 +346,8 @@ class _PreviewNavigationButton extends StatelessWidget {
               onPressed: onPressed,
               tooltip: tooltip,
               style: IconButton.styleFrom(
-                backgroundColor: Colors.black45,
-                foregroundColor: Colors.white,
+                backgroundColor: AppColors.mediaSurface.withValues(alpha: 0.80),
+                foregroundColor: AppColors.mediaForeground,
                 minimumSize: const Size(42, 42),
               ),
               icon: Icon(icon, size: 28),

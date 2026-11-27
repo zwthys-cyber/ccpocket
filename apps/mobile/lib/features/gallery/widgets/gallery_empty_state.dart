@@ -22,7 +22,7 @@ class GalleryEmptyState extends StatelessWidget {
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.primary
                     .withValues(alpha: 0.08),
-                shape: BoxShape.circle,
+                borderRadius: BorderRadius.circular(14),
               ),
               child: Icon(
                 Icons.collections,

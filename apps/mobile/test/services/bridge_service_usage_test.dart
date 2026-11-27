@@ -8,6 +8,8 @@ import 'package:ccpocket/models/offline_pending_action.dart';
 import 'package:ccpocket/models/protocol_version.dart';
 import 'package:ccpocket/services/bridge_service.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Map<String, dynamic> _galleryImageJson(
@@ -4488,6 +4490,51 @@ void main() {
         bridge.dispose();
       },
     );
+
+    test('gallery deletion authenticates with the connected Bridge key', () async {
+      const token = 'test+token/encoded';
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final bridge = BridgeService();
+      addTearDown(() async {
+        bridge.dispose();
+        await server.close(force: true);
+      });
+      server.transform(WebSocketTransformer()).listen((socket) {
+        socket.listen((_) {});
+      });
+      final connected = bridge.connectionStatus.firstWhere(
+        (status) => status == BridgeConnectionState.connected,
+      );
+      bridge.connect(
+        Uri(
+          scheme: 'ws',
+          host: InternetAddress.loopbackIPv4.address,
+          port: server.port,
+          queryParameters: {'token': token},
+        ).toString(),
+      );
+      await connected.timeout(const Duration(seconds: 5));
+
+      final requests = <http.Request>[];
+      final deleted = await http.runWithClient(
+        () => bridge.deleteGalleryImage('gallery-image'),
+        () => MockClient((request) async {
+          requests.add(request);
+          final statusCode =
+              request.headers[HttpHeaders.authorizationHeader] == 'Bearer $token'
+              ? HttpStatus.ok
+              : HttpStatus.unauthorized;
+          return http.Response('', statusCode);
+        }),
+      );
+
+      expect(deleted, isTrue);
+      final request = requests.single;
+      expect(request.method, 'DELETE');
+      expect(request.url.path, '/api/gallery/gallery-image');
+      expect(request.url.query, isEmpty);
+      expect(request.headers[HttpHeaders.authorizationHeader], 'Bearer $token');
+    });
 
     test('gallery timeout preserves cache, retries, and disconnect cancels timeout', () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);

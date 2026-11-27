@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:share_plus/share_plus.dart';
@@ -118,11 +117,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!widget.focusSupport || _didHandleSupportFocus) return;
     _didHandleSupportFocus = true;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (_supportSectionKey.currentContext == null &&
-          _scrollController.hasClients) {
-        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-        await WidgetsBinding.instance.endOfFrame;
-      }
       if (!mounted) return;
       final targetContext = _supportSectionKey.currentContext;
       if (targetContext == null) {
@@ -294,13 +288,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           return ListView(
             key: const PageStorageKey('settings_list'),
             controller: _scrollController,
-            scrollCacheExtent:
-                widget.focusSupport ||
-                    widget.focusConnection ||
-                    widget.focusUsage
-                ? const ScrollCacheExtent.pixels(4096)
-                : null,
-            children: [
+            children: _scrollChildren([
               if (isConnected) ...[
                 Builder(
                   builder: (context) {
@@ -1265,11 +1253,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
               const SizedBox(height: 32),
-            ],
+            ]),
           );
         },
       ),
     );
+  }
+
+  List<Widget> _scrollChildren(List<Widget> sections) {
+    if (!widget.focusConnection && !widget.focusSupport && !widget.focusUsage) {
+      return sections;
+    }
+
+    // Deep links need their target laid out before ensureVisible runs.
+    return [
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: sections,
+      ),
+    ];
   }
 
   static String _getThemeLabel(BuildContext context, ThemeMode mode) {
@@ -1427,17 +1429,12 @@ class _SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
+      padding: const EdgeInsets.fromLTRB(18, 22, 18, 8),
       child: Text(
         title,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0.8,
-          color: cs.onSurfaceVariant,
-        ),
+        style: theme.textTheme.titleMedium,
       ),
     );
   }
