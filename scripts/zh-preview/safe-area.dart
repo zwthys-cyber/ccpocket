@@ -54,7 +54,7 @@ void registerSafeAreaCapture() {
       debugRecentSessions: List.generate(28, (index) => RecentSession(
         sessionId: 'recent-$index', name: '整理阅读笔记 $index',
         firstPrompt: '整理本周的阅读笔记。', projectPath: '/demo/project-$index',
-        provider: 'codex', created: '2026-11-27T09:00:00Z', modified: '2026-11-27T09:15:00Z',
+        provider: 'codex', gitBranch: 'main', created: '2026-11-27T09:00:00Z', modified: '2026-11-27T09:15:00Z',
         isSidechain: false,
       )),
       adaptiveHome: true,
