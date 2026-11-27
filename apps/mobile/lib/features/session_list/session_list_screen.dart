@@ -1919,7 +1919,8 @@ class _SessionListScreenState extends State<SessionListScreen>
             ),
       // The floating home toolbar can scroll away. Keep the display cutout
       // and status bar outside the viewport even while the toolbar is hidden.
-      body: showConnectedUI && !widget.embedded
+      // Keep the scroll subtree mounted when the layout switches panes.
+      body: showConnectedUI
           ? AnnotatedRegion<SystemUiOverlayStyle>(
               value: SystemUiOverlayStyle(
                 statusBarColor: Colors.transparent,
@@ -1928,7 +1929,13 @@ class _SessionListScreenState extends State<SessionListScreen>
                     ? Brightness.light
                     : Brightness.dark,
               ),
-              child: SafeArea(bottom: false, child: body),
+              child: SafeArea(
+                top: !widget.embedded,
+                left: !widget.embedded,
+                right: !widget.embedded,
+                bottom: false,
+                child: body,
+              ),
             )
           : body,
     );
