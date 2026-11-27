@@ -18,6 +18,7 @@ import 'package:ccpocket/services/machine_manager_service.dart';
 import 'package:ccpocket/services/revenuecat_service.dart';
 import 'package:ccpocket/services/ssh_startup_service.dart';
 import 'package:ccpocket/services/support_banner_service.dart';
+import 'package:ccpocket/theme/app_theme.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -302,6 +303,7 @@ class _StaticMachineManagerService implements MachineManagerService {
 }
 
 Future<Widget> _buildScreen({
+  ThemeData? theme,
   required BridgeService bridge,
   required SettingsCubit settingsCubit,
   required MachineManagerCubit machineManagerCubit,
@@ -331,6 +333,7 @@ Future<Widget> _buildScreen({
         BlocProvider<MachineManagerCubit>.value(value: machineManagerCubit),
       ],
       child: MaterialApp(
+        theme: theme,
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         locale: const Locale('en'),
@@ -400,6 +403,7 @@ void main() {
             bridge: bridge,
             settingsCubit: settings,
             machineManagerCubit: manager,
+            theme: AppTheme.lightTheme,
           ),
         );
         await tester.pumpAndSettle();
@@ -932,7 +936,6 @@ void main() {
           .getTopLeft(find.byKey(const ValueKey('app_icon_tile')))
           .dy;
       final themeTop = tester.getTopLeft(find.text(l.theme)).dy;
-      final languageTop = tester.getTopLeft(find.text(l.language)).dy;
       final voiceInputTop = tester.getTopLeft(find.text(l.voiceInput)).dy;
       final hideVoiceInputTop = tester
           .getTopLeft(find.text(l.hideVoiceInput))
@@ -943,8 +946,7 @@ void main() {
       final textDensityTop = tester.getTopLeft(find.text(l.textDensity)).dy;
 
       expect(appIconTop, lessThan(themeTop));
-      expect(themeTop, lessThan(languageTop));
-      expect(languageTop, lessThan(voiceInputTop));
+      expect(themeTop, lessThan(voiceInputTop));
       expect(voiceInputTop, lessThan(hideVoiceInputTop));
       expect(hideVoiceInputTop, lessThan(openGalleryDirectlyTop));
       expect(openGalleryDirectlyTop, lessThan(textDensityTop));
