@@ -17,8 +17,10 @@ jobs:
         include:
           - variant: before
             ref: 5d0f0bf53703dd8ce927e0e7d8559034531dee37
-          - variant: after
+          - variant: lavender
             ref: fea07efb0bf554797f559b7d445df956e6d19396
+          - variant: after
+            ref: c25d1a95ea983983cd5e06788980ebcb0a54357f
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -32,16 +34,20 @@ jobs:
           cache: true
       - name: Render the app's HomeContent at iPhone width with mock data
         working-directory: apps/mobile
+        env:
+          CCPOCKET_UI_VARIANT: ${{ matrix.variant }}
         run: |
           flutter pub get
           python3 - <<'PY'
           from pathlib import Path
+          from os import environ
 
           source = Path('test/home_content_skeleton_test.dart').read_text()
           imports = """import 'dart:io';
           import 'dart:typed_data';
           import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
           import 'package:flutter/services.dart' show FontLoader;
+          import 'package:ccpocket/features/session_list/widgets/session_list_app_bar.dart';
           import 'package:ccpocket/mock/store_screenshot_data.dart';
           """
           source = imports + source
@@ -49,6 +55,10 @@ jobs:
               'Widget _buildHomeContent({',
               "Widget _buildHomeContent({\n  GlobalKey? screenshotKey,\n  ThemeData? screenshotTheme,",
               1,
+          )
+          new_session_action = (
+              'isConnected: true, onNewSession: () {},'
+              if environ['CCPOCKET_UI_VARIANT'] != 'before' else ''
           )
           source = source.replace(
               '      theme: AppTheme.darkTheme,\n      home: Scaffold(',
@@ -60,10 +70,26 @@ jobs:
                 ),
                 home: Scaffold(
                   appBar: screenshotKey != null
-                      ? AppBar(title: const Text('CC Pocket'))
+                      ? PreferredSize(
+                          preferredSize: const Size.fromHeight(kToolbarHeight),
+                          child: CustomScrollView(
+                            physics: const NeverScrollableScrollPhysics(),
+                            slivers: [
+                              SessionListSliverAppBar(
+                                bridgeLabel: 'Demo Bridge',
+                                onTitleTap: () {},
+                                onDisconnect: () {},
+                                onOpenSettings: () {},
+                                onOpenGallery: () {},
+                                NEW_SESSION_ACTION
+                              ),
+                            ],
+                          ),
+                        )
                       : null,""",
               1,
           )
+          source = source.replace('NEW_SESSION_ACTION', new_session_action, 1)
           marker = "  group('HomeContent skeleton', () {"
           assert source.count(marker) == 1
           source = source.replace(marker, """  testWidgets('capture refresh evidence', (tester) async {
@@ -90,7 +116,7 @@ jobs:
                 final key = GlobalKey();
                 await tester.pumpWidget(
                   _buildHomeContent(
-                    sessions: storeHomeRunningSessions(),
+                    sessions: storeHomeRunningSessions().take(1).toList(),
                     recentSessions: storeRecentSessions(),
                     screenshotKey: key,
                     screenshotTheme: theme.copyWith(
