@@ -4489,6 +4489,55 @@ void main() {
       },
     );
 
+    test('gallery deletion authenticates with the connected Bridge key', () async {
+      const token = 'test+token/encoded';
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final bridge = BridgeService();
+      addTearDown(() async {
+        bridge.dispose();
+        await server.close(force: true);
+      });
+      final deletion = Completer<({String method, Uri uri, String? authorization})>();
+      server.listen((request) async {
+        if (io.WebSocketTransformer.isUpgradeRequest(request)) {
+          final socket = await io.WebSocketTransformer.upgrade(request);
+          socket.add(jsonEncode({'type': 'session_list', 'sessions': []}));
+          socket.listen((_) {});
+          return;
+        }
+
+        final authorization = request.headers.value(HttpHeaders.authorizationHeader);
+        deletion.complete((
+          method: request.method,
+          uri: request.uri,
+          authorization: authorization,
+        ));
+        request.response.statusCode = authorization == 'Bearer $token'
+            ? HttpStatus.ok
+            : HttpStatus.unauthorized;
+        await request.response.close();
+      });
+      final connected = bridge.connectionStatus.firstWhere(
+        (status) => status == BridgeConnectionState.connected,
+      );
+      bridge.connect(
+        Uri(
+          scheme: 'ws',
+          host: InternetAddress.loopbackIPv4.address,
+          port: server.port,
+          queryParameters: {'token': token},
+        ).toString(),
+      );
+      await connected.timeout(const Duration(seconds: 5));
+
+      expect(await bridge.deleteGalleryImage('gallery-image'), isTrue);
+      final request = await deletion.future;
+      expect(request.method, 'DELETE');
+      expect(request.uri.path, '/api/gallery/gallery-image');
+      expect(request.uri.query, isEmpty);
+      expect(request.authorization, 'Bearer $token');
+    });
+
     test('gallery timeout preserves cache, retries, and disconnect cancels timeout', () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       final socketReady = Completer<WebSocket>();
