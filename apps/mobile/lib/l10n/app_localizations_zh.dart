@@ -1991,6 +1991,18 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsTitle => '设置';
 
   @override
+  String get settingsBridgeMachine => 'Bridge 主机';
+
+  @override
+  String get settingsNotConnected => '未连接';
+
+  @override
+  String get sectionAgents => '智能体';
+
+  @override
+  String get settingsBothAgents => '全部';
+
+  @override
   String get sectionGeneral => '通用';
 
   @override

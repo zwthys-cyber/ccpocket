@@ -1240,9 +1240,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   children: [
                     Text(
                       'ccpocket',
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        color: cs.onSurfaceVariant,
-                      ),
+                      style: Theme.of(context).textTheme.titleSmall
+                          ?.copyWith(color: cs.onSurfaceVariant),
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -1434,10 +1433,7 @@ class _SectionHeader extends StatelessWidget {
     final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 22, 18, 8),
-      child: Text(
-        title,
-        style: theme.textTheme.titleMedium,
-      ),
+      child: Text(title, style: theme.textTheme.titleMedium),
     );
   }
 }
@@ -1579,16 +1575,14 @@ class _BridgeUpdateStatusTile extends StatelessWidget {
                 children: [
                   Text(
                     l.bridgeUpdateSetupTitle,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                    style: Theme.of(context).textTheme.titleLarge
+                        ?.copyWith(fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     l.bridgeUpdateSetupDescription,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: cs.onSurfaceVariant,
-                    ),
+                    style: Theme.of(context).textTheme.bodyMedium
+                        ?.copyWith(color: cs.onSurfaceVariant),
                   ),
                   const SizedBox(height: 20),
                   _BridgeUpdateSetupStep(
@@ -1613,9 +1607,8 @@ class _BridgeUpdateStatusTile extends StatelessWidget {
                     ),
                     child: SelectableText(
                       l.bridgeUpdateSetupCommand,
-                      style: Theme.of(
-                        context,
-                      ).textTheme.bodyMedium?.copyWith(fontFamily: 'monospace'),
+                      style: Theme.of(context).textTheme.bodyMedium
+                          ?.copyWith(fontFamily: 'monospace'),
                     ),
                   ),
                 ],
@@ -1881,9 +1874,8 @@ class _TextScaleTile extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       l.textDensityDescription,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: cs.onSurfaceVariant,
-                      ),
+                      style: Theme.of(context).textTheme.bodySmall
+                          ?.copyWith(color: cs.onSurfaceVariant),
                     ),
                   ],
                 ),

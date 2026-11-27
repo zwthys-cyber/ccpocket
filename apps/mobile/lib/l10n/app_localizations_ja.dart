@@ -2020,6 +2020,18 @@ class AppLocalizationsJa extends AppLocalizations {
   String get settingsTitle => '設定';
 
   @override
+  String get settingsBridgeMachine => 'Bridge ホスト';
+
+  @override
+  String get settingsNotConnected => '未接続';
+
+  @override
+  String get sectionAgents => 'エージェント';
+
+  @override
+  String get settingsBothAgents => '両方';
+
+  @override
   String get sectionGeneral => '一般';
 
   @override

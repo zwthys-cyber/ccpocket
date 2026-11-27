@@ -3821,6 +3821,30 @@ abstract class AppLocalizations {
   /// **'設定'**
   String get settingsTitle;
 
+  /// No description provided for @settingsBridgeMachine.
+  ///
+  /// In ja, this message translates to:
+  /// **'Bridge ホスト'**
+  String get settingsBridgeMachine;
+
+  /// No description provided for @settingsNotConnected.
+  ///
+  /// In ja, this message translates to:
+  /// **'未接続'**
+  String get settingsNotConnected;
+
+  /// No description provided for @sectionAgents.
+  ///
+  /// In ja, this message translates to:
+  /// **'エージェント'**
+  String get sectionAgents;
+
+  /// No description provided for @settingsBothAgents.
+  ///
+  /// In ja, this message translates to:
+  /// **'両方'**
+  String get settingsBothAgents;
+
   /// No description provided for @sectionGeneral.
   ///
   /// In ja, this message translates to:

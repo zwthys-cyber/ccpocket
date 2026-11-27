@@ -2033,6 +2033,18 @@ class AppLocalizationsKo extends AppLocalizations {
   String get settingsTitle => '설정';
 
   @override
+  String get settingsBridgeMachine => 'Bridge 호스트';
+
+  @override
+  String get settingsNotConnected => '연결되지 않음';
+
+  @override
+  String get sectionAgents => '에이전트';
+
+  @override
+  String get settingsBothAgents => '모두';
+
+  @override
   String get sectionGeneral => '일반';
 
   @override

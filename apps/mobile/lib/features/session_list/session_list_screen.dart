@@ -2114,7 +2114,8 @@ class _SessionListScreenState extends State<SessionListScreen>
                   forceElevated: innerBoxIsScrolled,
                   toolbarHeight: chrome.toolbarHeight,
                   bridgeLabel: connectedBridgeLabel,
-                  isConnected: connectionState == BridgeConnectionState.connected,
+                  isConnected:
+                      connectionState == BridgeConnectionState.connected,
                 ),
               ],
         body: content,

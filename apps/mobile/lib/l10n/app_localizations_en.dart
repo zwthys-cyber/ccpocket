@@ -2100,6 +2100,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsTitle => 'Settings';
 
   @override
+  String get settingsBridgeMachine => 'Bridge machine';
+
+  @override
+  String get settingsNotConnected => 'Not connected';
+
+  @override
+  String get sectionAgents => 'AGENTS';
+
+  @override
+  String get settingsBothAgents => 'Both';
+
+  @override
   String get sectionGeneral => 'GENERAL';
 
   @override

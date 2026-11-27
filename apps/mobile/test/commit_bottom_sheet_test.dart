@@ -88,14 +88,20 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('自动生成提交说明'), findsOneWidget);
-      expect(find.descendant(
-        of: find.byKey(const ValueKey('commit_button_action')),
-        matching: find.text('提交'),
-      ), findsOneWidget);
-      expect(find.descendant(
-        of: find.byKey(const ValueKey('commit_push_button')),
-        matching: find.text('提交并推送'),
-      ), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('commit_button_action')),
+          matching: find.text('提交'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('commit_push_button')),
+          matching: find.text('提交并推送'),
+        ),
+        findsOneWidget,
+      );
     });
 
     testWidgets('renders action buttons', (tester) async {
