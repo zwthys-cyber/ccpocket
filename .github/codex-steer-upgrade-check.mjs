@@ -30,7 +30,7 @@ assert.equal(history.find(m => m.rawItemId === 'rpc-one').timestamp, receipt);
 const server = Object.create(BridgeWebSocketServer.prototype);
 const session = { id:'fixture', provider:'codex', historyRevision: 3, historyEntries: [
   { seq:1, message: { type:'assistant', messageUuid:'anchor', message:{ id:'anchor',role:'assistant',content:[{type:'text',text:'working'}],model:'' } } },
-  { seq:2, message: { type:'user_input',text:'confirm',clientMessageId:'accepted-A',userMessageUuid:'codex:user-turn:17',timestamp:receipt } },
+  { seq:2, message: { type:'user_input',text:'confirm',clientMessageId:'accepted-A',userMessageUuid:'codex:user-turn:17',timestamp:'2026-11-27T09:32:08.984Z' } },
   { seq:3, message: { type:'user_input',text:'confirm',clientMessageId:'accepted-B',userMessageUuid:'codex:user-turn:18',rawItemId:'rpc-two',timestamp:second } },
 ], codexUserTurnUuidByRawId: new Map([['rpc-one','codex:user-turn:17']]) };
 for (let i=0;i<3;i++) {
