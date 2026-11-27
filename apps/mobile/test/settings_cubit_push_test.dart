@@ -459,51 +459,54 @@ void main() {
       bridge.dispose();
     });
 
-    for (final platform in [TargetPlatform.iOS, TargetPlatform.android, TargetPlatform.macOS]) {
-    test('push language respects display language policy on ${platform.name}', () async {
-      debugDefaultTargetPlatformOverride = platform;
-      addTearDown(() => debugDefaultTargetPlatformOverride = null);
-      final dispatcher = binding.platformDispatcher;
-      dispatcher.localesTestValue = const [Locale('fr'), Locale('zh', 'CN')];
-      addTearDown(dispatcher.clearLocalesTestValue);
-      SharedPreferences.setMockInitialValues({
-        'settings_app_locale': 'ko',
-        'settings_fcm_machines': '["$_testMachineId"]',
-        'machines_v2':
-            '[{"id":"$_testMachineId","host":"$_testHost","port":$_testPort}]',
+    for (final platform in [
+      TargetPlatform.iOS,
+      TargetPlatform.android,
+      TargetPlatform.macOS,
+    ]) {
+      test('push language respects display language policy on ${platform.name}', () async {
+        debugDefaultTargetPlatformOverride = platform;
+        addTearDown(() => debugDefaultTargetPlatformOverride = null);
+        final dispatcher = binding.platformDispatcher;
+        dispatcher.localesTestValue = const [Locale('fr'), Locale('zh', 'CN')];
+        addTearDown(dispatcher.clearLocalesTestValue);
+        SharedPreferences.setMockInitialValues({
+          'settings_app_locale': 'ko',
+          'settings_fcm_machines': '["$_testMachineId"]',
+          'machines_v2':
+              '[{"id":"$_testMachineId","host":"$_testHost","port":$_testPort}]',
+        });
+        final prefs = await SharedPreferences.getInstance();
+        final manager = await _createMachineManager(prefs);
+        await manager.init();
+        final bridge = FakeBridgeService()
+          ..emitConnection(BridgeConnectionState.connected, url: _testUrl);
+        final fcm = FakeFcmService(available: true, token: 'token-1');
+        final cubit = SettingsCubit(
+          prefs,
+          bridgeService: bridge,
+          machineManager: manager,
+          fcmService: fcm,
+        );
+
+        await _flushAsync();
+
+        expect(bridge.registerCalls, hasLength(1));
+        final desktop = platform == TargetPlatform.macOS;
+        expect(bridge.registerCalls.first.locale, desktop ? 'ko' : 'zh');
+        if (!desktop) {
+          cubit.setAppLocaleId('en');
+          expect(cubit.state.appLocaleId, isEmpty);
+          expect(prefs.getString('settings_app_locale'), 'ko');
+          dispatcher.localesTestValue = const [Locale('ja')];
+          await cubit.syncPushLocale();
+          expect(bridge.registerCalls.last.locale, 'ja');
+        }
+
+        await cubit.close();
+        await fcm.disposeFake();
+        bridge.dispose();
       });
-      final prefs = await SharedPreferences.getInstance();
-      final manager = await _createMachineManager(prefs);
-      await manager.init();
-      final bridge = FakeBridgeService()
-        ..emitConnection(BridgeConnectionState.connected, url: _testUrl);
-      final fcm = FakeFcmService(available: true, token: 'token-1');
-      final cubit = SettingsCubit(
-        prefs,
-        bridgeService: bridge,
-        machineManager: manager,
-        fcmService: fcm,
-      );
-
-      await _flushAsync();
-
-      expect(bridge.registerCalls, hasLength(1));
-      final desktop = platform == TargetPlatform.macOS;
-      expect(bridge.registerCalls.first.locale, desktop ? 'ko' : 'zh');
-      if (!desktop) {
-        cubit.setAppLocaleId('en');
-        expect(cubit.state.appLocaleId, isEmpty);
-        expect(prefs.getString('settings_app_locale'), 'ko');
-        dispatcher.localesTestValue = const [Locale('ja')];
-        await cubit.syncPushLocale();
-        expect(bridge.registerCalls.last.locale, 'ja');
-      }
-
-      await cubit.close();
-      await fcm.disposeFake();
-      bridge.dispose();
-    });
-
     }
 
     test('toggle off unregisters active token', () async {

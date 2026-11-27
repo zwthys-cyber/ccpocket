@@ -48,21 +48,22 @@ class DebugScreen extends StatelessWidget {
                           context.read<SettingsCubit>().setThemeMode(mode),
                     ),
                   ),
-                  if (!followsDeviceLanguage) ListTile(
-                    key: const ValueKey('debug_language_button'),
-                    leading: Icon(Icons.language, color: cs.primary),
-                    title: Text(l.language),
-                    subtitle: Text(
-                      getAppLocaleLabel(context, settings.appLocaleId),
+                  if (!followsDeviceLanguage)
+                    ListTile(
+                      key: const ValueKey('debug_language_button'),
+                      leading: Icon(Icons.language, color: cs.primary),
+                      title: Text(l.language),
+                      subtitle: Text(
+                        getAppLocaleLabel(context, settings.appLocaleId),
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => showAppLocaleBottomSheet(
+                        context: context,
+                        current: settings.appLocaleId,
+                        onChanged: (id) =>
+                            context.read<SettingsCubit>().setAppLocaleId(id),
+                      ),
                     ),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => showAppLocaleBottomSheet(
-                      context: context,
-                      current: settings.appLocaleId,
-                      onChanged: (id) =>
-                          context.read<SettingsCubit>().setAppLocaleId(id),
-                    ),
-                  ),
                   SwitchListTile(
                     key: const ValueKey('debug_force_support_banner_toggle'),
                     secondary: Icon(Icons.favorite_border, color: cs.primary),

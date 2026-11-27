@@ -197,10 +197,16 @@ void registerStoreScreenshotExtensions() {
       }
 
       if (locale.isNotEmpty &&
-          !AppLocalizations.supportedLocales.any((item) => item.languageCode == locale)) {
-        return MarionetteExtensionResult.invalidParams('Unsupported locale: $locale');
+          !AppLocalizations.supportedLocales.any(
+            (item) => item.languageCode == locale,
+          )) {
+        return MarionetteExtensionResult.invalidParams(
+          'Unsupported locale: $locale',
+        );
       }
-      StoreScreenshotState.previewLocale.value = locale.isEmpty ? null : Locale(locale);
+      StoreScreenshotState.previewLocale.value = locale.isEmpty
+          ? null
+          : Locale(locale);
       return MarionetteExtensionResult.success({'locale': locale});
     },
   );

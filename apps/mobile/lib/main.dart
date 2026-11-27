@@ -333,16 +333,21 @@ class _CcpocketAppState extends State<CcpocketApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    _deviceLocale = resolveDeviceLocale(WidgetsBinding.instance.platformDispatcher.locales);
+    _deviceLocale = resolveDeviceLocale(
+      WidgetsBinding.instance.platformDispatcher.locales,
+    );
     WidgetsBinding.instance.addObserver(this);
-    if (kDebugMode) StoreScreenshotState.previewLocale.addListener(_onPreviewLocaleChanged);
+    if (kDebugMode)
+      StoreScreenshotState.previewLocale.addListener(_onPreviewLocaleChanged);
     _deepLinkDispatcher = DeepLinkDispatcher(_handleUri);
 
     // Clear stale notifications on launch and whenever the app is resumed.
     _lifecycleListener = AppLifecycleListener(
       onStateChange: (state) {
         if (state == AppLifecycleState.resumed) {
-          _refreshDeviceLocale(WidgetsBinding.instance.platformDispatcher.locales);
+          _refreshDeviceLocale(
+            WidgetsBinding.instance.platformDispatcher.locales,
+          );
           NotificationService.instance.cancelAll();
         }
       },
@@ -357,7 +362,9 @@ class _CcpocketAppState extends State<CcpocketApp> with WidgetsBindingObserver {
 
   @override
   void didChangeLocales(List<Locale>? locales) {
-    _refreshDeviceLocale(locales ?? WidgetsBinding.instance.platformDispatcher.locales);
+    _refreshDeviceLocale(
+      locales ?? WidgetsBinding.instance.platformDispatcher.locales,
+    );
   }
 
   void _refreshDeviceLocale(List<Locale> locales) {
@@ -435,7 +442,12 @@ class _CcpocketAppState extends State<CcpocketApp> with WidgetsBindingObserver {
     final body =
         notification?.body ??
         data['body']?.toString() ??
-        lookupAppLocalizations(displayLocaleOverride(context.read<SettingsCubit>().state.appLocaleId) ?? _deviceLocale).sessionNewActivity;
+        lookupAppLocalizations(
+          displayLocaleOverride(
+                context.read<SettingsCubit>().state.appLocaleId,
+              ) ??
+              _deviceLocale,
+        ).sessionNewActivity;
     final eventType = data['eventType']?.toString() ?? '';
     final payload = jsonEncode({'sessionId': sessionId, 'provider': provider});
 
@@ -530,7 +542,10 @@ class _CcpocketAppState extends State<CcpocketApp> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    if (kDebugMode) StoreScreenshotState.previewLocale.removeListener(_onPreviewLocaleChanged);
+    if (kDebugMode)
+      StoreScreenshotState.previewLocale.removeListener(
+        _onPreviewLocaleChanged,
+      );
     _lifecycleListener.dispose();
     _linkSub?.cancel();
     _fcmOnMessageSub?.cancel();
@@ -549,7 +564,8 @@ class _CcpocketAppState extends State<CcpocketApp> with WidgetsBindingObserver {
         if (settings.fcmEnabledMachines.isNotEmpty && settings.fcmAvailable) {
           _initFcmHandlers();
         }
-        final appLocale = (kDebugMode ? StoreScreenshotState.previewLocale.value : null) ??
+        final appLocale =
+            (kDebugMode ? StoreScreenshotState.previewLocale.value : null) ??
             displayLocaleOverride(settings.appLocaleId);
         final themeLocale = appLocale ?? _deviceLocale;
         updateReleaseErrorWidgetLocale(themeLocale);

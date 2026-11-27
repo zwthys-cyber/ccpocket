@@ -440,21 +440,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ),
                     // Desktop display language
-                    if (!followsDeviceLanguage) ListTile(
-                      key: const ValueKey('settings_display_language'),
-                      leading: Icon(Icons.language, color: cs.primary),
-                      title: Text(l.language),
-                      subtitle: Text(
-                        getAppLocaleLabel(context, state.appLocaleId),
+                    if (!followsDeviceLanguage)
+                      ListTile(
+                        key: const ValueKey('settings_display_language'),
+                        leading: Icon(Icons.language, color: cs.primary),
+                        title: Text(l.language),
+                        subtitle: Text(
+                          getAppLocaleLabel(context, state.appLocaleId),
+                        ),
+                        trailing: const Icon(Icons.chevron_right, size: 20),
+                        onTap: () => showAppLocaleBottomSheet(
+                          context: context,
+                          current: state.appLocaleId,
+                          onChanged: (id) =>
+                              context.read<SettingsCubit>().setAppLocaleId(id),
+                        ),
                       ),
-                      trailing: const Icon(Icons.chevron_right, size: 20),
-                      onTap: () => showAppLocaleBottomSheet(
-                        context: context,
-                        current: state.appLocaleId,
-                        onChanged: (id) =>
-                            context.read<SettingsCubit>().setAppLocaleId(id),
-                      ),
-                    ),
                     Divider(
                       height: 1,
                       indent: 16,
@@ -780,39 +781,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               .read<SettingsCubit>()
                               .toggleFcmPrivacy(enabled),
                         ),
-                        if (!followsDeviceLanguage || const {
-                          FcmStatusKey.unavailable, FcmStatusKey.bridgeNotInitialized,
-                          FcmStatusKey.tokenFailed, FcmStatusKey.registrationFailed,
-                        }.contains(state.fcmStatusKey)) ...[
-                        Divider(
-                          height: 1,
-                          indent: 16,
-                          endIndent: 16,
-                          color: cs.outlineVariant,
-                        ),
-                        _UpdateNotificationLanguageTile(
-                          syncInProgress: state.fcmSyncInProgress,
-                          onTap: () async {
-                            final cubit = context.read<SettingsCubit>();
-                            await cubit.syncPushLocale();
-                            if (context.mounted && !followsDeviceLanguage) {
-                              final status = cubit.state.fcmStatusKey;
-                              final isSuccess =
-                                  status == FcmStatusKey.enabled ||
-                                  status == FcmStatusKey.enabledPending;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    isSuccess
-                                        ? l.notificationLanguageUpdated
-                                        : l.fcmTokenFailed,
+                        if (!followsDeviceLanguage ||
+                            const {
+                              FcmStatusKey.unavailable,
+                              FcmStatusKey.bridgeNotInitialized,
+                              FcmStatusKey.tokenFailed,
+                              FcmStatusKey.registrationFailed,
+                            }.contains(state.fcmStatusKey)) ...[
+                          Divider(
+                            height: 1,
+                            indent: 16,
+                            endIndent: 16,
+                            color: cs.outlineVariant,
+                          ),
+                          _UpdateNotificationLanguageTile(
+                            syncInProgress: state.fcmSyncInProgress,
+                            onTap: () async {
+                              final cubit = context.read<SettingsCubit>();
+                              await cubit.syncPushLocale();
+                              if (context.mounted && !followsDeviceLanguage) {
+                                final status = cubit.state.fcmStatusKey;
+                                final isSuccess =
+                                    status == FcmStatusKey.enabled ||
+                                    status == FcmStatusKey.enabledPending;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      isSuccess
+                                          ? l.notificationLanguageUpdated
+                                          : l.fcmTokenFailed,
+                                    ),
+                                    duration: const Duration(seconds: 2),
                                   ),
-                                  duration: const Duration(seconds: 2),
-                                ),
-                              );
-                            }
-                          },
-                        ),
+                                );
+                              }
+                            },
+                          ),
                         ],
                       ],
                     ],
@@ -1744,8 +1748,12 @@ class _UpdateNotificationLanguageTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
     return ListTile(
-      leading: Icon(followsDeviceLanguage ? Icons.refresh : Icons.translate_outlined),
-      title: Text(followsDeviceLanguage ? l.retry : l.updateNotificationLanguage),
+      leading: Icon(
+        followsDeviceLanguage ? Icons.refresh : Icons.translate_outlined,
+      ),
+      title: Text(
+        followsDeviceLanguage ? l.retry : l.updateNotificationLanguage,
+      ),
       trailing: syncInProgress
           ? const SizedBox(
               width: 20,

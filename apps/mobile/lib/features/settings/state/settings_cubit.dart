@@ -160,7 +160,9 @@ class SettingsCubit extends Cubit<SettingsState> {
 
   static SettingsState _load(SharedPreferences prefs) {
     final themeModeIndex = prefs.getInt(_keyThemeMode);
-    final appLocale = followsDeviceLanguage ? '' : prefs.getString(_keyAppLocale) ?? '';
+    final appLocale = followsDeviceLanguage
+        ? ''
+        : prefs.getString(_keyAppLocale) ?? '';
     final speechLocale = prefs.getString(_keySpeechLocale);
 
     // Load per-machine FCM set
@@ -618,7 +620,9 @@ class SettingsCubit extends Cubit<SettingsState> {
 
   String _resolvePushLocale() =>
       (displayLocaleOverride(state.appLocaleId) ??
-              resolveDeviceLocale(WidgetsBinding.instance.platformDispatcher.locales))
+              resolveDeviceLocale(
+                WidgetsBinding.instance.platformDispatcher.locales,
+              ))
           .languageCode;
 
   Future<void> _syncPushRegistration() async {

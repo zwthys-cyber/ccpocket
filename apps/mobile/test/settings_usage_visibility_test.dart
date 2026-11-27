@@ -386,32 +386,47 @@ void main() {
   });
 
   group('Settings usage visibility', () {
-    testWidgets('display language picker is available on desktop only', (tester) async {
-      SharedPreferences.setMockInitialValues({'settings_app_locale': 'ko'});
-      final prefs = await SharedPreferences.getInstance();
-      final settings = SettingsCubit(prefs);
-      final machines = _StaticMachineManagerService([]);
-      final manager = _createMachineManagerCubit(machines);
-      final bridge = _FakeBridgeService(connected: false);
-      await tester.pumpWidget(await _buildScreen(
-        bridge: bridge, settingsCubit: settings, machineManagerCubit: manager,
-      ));
-      await tester.pumpAndSettle();
-      final tile = find.byKey(const ValueKey('settings_display_language'), skipOffstage: false);
-      final desktop = defaultTargetPlatform == TargetPlatform.macOS;
-      expect(tile, desktop ? findsOneWidget : findsNothing);
-      if (desktop) {
-        await tester.ensureVisible(tile);
-        await tester.tap(tile);
+    testWidgets(
+      'display language picker is available on desktop only',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({'settings_app_locale': 'ko'});
+        final prefs = await SharedPreferences.getInstance();
+        final settings = SettingsCubit(prefs);
+        final machines = _StaticMachineManagerService([]);
+        final manager = _createMachineManagerCubit(machines);
+        final bridge = _FakeBridgeService(connected: false);
+        await tester.pumpWidget(
+          await _buildScreen(
+            bridge: bridge,
+            settingsCubit: settings,
+            machineManagerCubit: manager,
+          ),
+        );
         await tester.pumpAndSettle();
-        expect(find.text('简体中文'), findsOneWidget);
-      }
-      await tester.pumpWidget(const SizedBox.shrink());
-      await settings.close();
-      await manager.close();
-      machines.dispose();
-      bridge.dispose();
-    }, variant: TargetPlatformVariant({TargetPlatform.iOS, TargetPlatform.android, TargetPlatform.macOS}));
+        final tile = find.byKey(
+          const ValueKey('settings_display_language'),
+          skipOffstage: false,
+        );
+        final desktop = defaultTargetPlatform == TargetPlatform.macOS;
+        expect(tile, desktop ? findsOneWidget : findsNothing);
+        if (desktop) {
+          await tester.ensureVisible(tile);
+          await tester.tap(tile);
+          await tester.pumpAndSettle();
+          expect(find.text('简体中文'), findsOneWidget);
+        }
+        await tester.pumpWidget(const SizedBox.shrink());
+        await settings.close();
+        await manager.close();
+        machines.dispose();
+        bridge.dispose();
+      },
+      variant: TargetPlatformVariant({
+        TargetPlatform.iOS,
+        TargetPlatform.android,
+        TargetPlatform.macOS,
+      }),
+    );
 
     testWidgets(
       'shows bridge update button only when connected machine is old',
