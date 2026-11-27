@@ -17,11 +17,12 @@ def replace_once(source, old, new):
 
 def harness(filename, dest, marker, case, extras=""):
     source = (test / filename).read_text()
+    case = case.replace("\n  });", "\n  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));")
     source = replace_once(source, marker, case + "\n" + marker)
     source = replace_once(source, "child: MaterialApp(", """child: MaterialApp(
         debugShowCheckedModeBanner: false,
         builder: previewBoundary,""")
-    source = source.replace("locale: const Locale('en'),", "locale: const Locale('zh'),")
+    source = source.replace("locale: const Locale('en'),", "locale: null,")
     if "theme: AppTheme.darkTheme," in source:
         source = replace_once(source, "theme: AppTheme.darkTheme,", "theme: previewTheme(),")
     else:
@@ -90,6 +91,9 @@ harness("settings_usage_visibility_test.dart", "zh_theme_preview_test.dart",
     await tester.pumpWidget(await _buildScreen(bridge: bridge, settingsCubit: settings, machineManagerCubit: manager));
     await tester.pump();
     final context = tester.element(find.byType(SettingsScreen));
+    expect(Localizations.localeOf(context).languageCode, 'zh');
+    expect(find.text('语言'), after ? findsNothing : findsOneWidget);
+    await savePreview(tester, 'settings', unmount: false);
     unawaited(showThemeBottomSheet(context: context, current: ThemeMode.system, onChanged: (_) {}));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
@@ -151,7 +155,7 @@ void main() {
         child: MaterialApp(
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
-          locale: const Locale('zh'), theme: previewTheme(), builder: previewBoundary,
+          theme: previewTheme(), builder: previewBoundary,
           debugShowCheckedModeBanner: false, home: const GalleryScreen(),
         ),
       ),
@@ -162,6 +166,6 @@ void main() {
     await savePreview(tester, 'gallery');
     await gallery.close();
     bridge.dispose();
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 }
 """)

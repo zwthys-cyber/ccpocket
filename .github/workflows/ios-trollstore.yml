@@ -5,7 +5,7 @@ on:
     inputs:
       verification:
         type: choice
-        options: [screenshots, bridge, icons, ipa, menubar, polish, zh-previews]
+        options: [screenshots, bridge, icons, ipa, menubar, polish, zh-previews, ios-system-language]
         default: screenshots
       source_ref:
         description: App commit to build or generate from
@@ -671,4 +671,71 @@ jobs:
         with:
           name: zh-previews-${{ matrix.variant }}
           path: ${{ runner.temp }}/zh-previews
+          if-no-files-found: error
+  ios-system-language:
+    if: inputs.verification == 'ios-system-language'
+    name: iPhone Simulator system language, settings and theme
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: diagnostics
+          sparse-checkout: scripts/zh-preview
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_ref }}
+          path: app
+      - name: Read Flutter version and pick an available iPhone
+        id: sdk
+        run: |
+          echo "version=$(sed -n 's/^flutter = "\(.*\)"/\1/p' app/.mise.toml)" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          devices = json.loads(subprocess.check_output(['xcrun','simctl','list','devices','available','-j']))['devices']
+          iphones = [(tuple(map(int, re.findall(r'\d+', runtime.rsplit('iOS-', 1)[1]))), dev)
+                     for runtime, entries in devices.items() if 'iOS-' in runtime
+                     for dev in entries if dev.get('isAvailable') and dev['name'].startswith('iPhone')]
+          version, phone = max(iphones, key=lambda pair: (pair[0], pair[1]['name'].endswith(' Pro'), pair[1]['name']))
+          print('Using', phone['name'], version, phone['udid'])
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              print('PREVIEW_DEVICE=' + phone['udid'], file=env)
+          PY
+          xcrun simctl bootstatus "$(sed -n 's/^PREVIEW_DEVICE=//p' "$GITHUB_ENV" | tail -1)" -b
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: ${{ steps.sdk.outputs.version }}
+          cache: true
+      - name: Drive SettingsScreen twice with native language preferences
+        working-directory: app/apps/mobile
+        env:
+          PREVIEW_OUTPUT: ${{ runner.temp }}/ios-language
+        run: |
+          mkdir -p "$PREVIEW_OUTPUT"
+          git rev-parse HEAD > "$PREVIEW_OUTPUT/source.txt"
+          python3 "$GITHUB_WORKSPACE/diagnostics/scripts/zh-preview/device.py"
+          flutter pub get
+          flutter gen-l10n
+          for language in zh en; do
+            if [ "$language" = zh ]; then
+              language_tag=zh-Hans
+              region=zh_CN
+            else
+              language_tag=en
+              region=en_US
+            fi
+            xcrun simctl spawn "$PREVIEW_DEVICE" defaults write NSGlobalDomain AppleLanguages -array "$language_tag"
+            xcrun simctl spawn "$PREVIEW_DEVICE" defaults write NSGlobalDomain AppleLocale -string "$region"
+            xcrun simctl shutdown "$PREVIEW_DEVICE"
+            xcrun simctl bootstatus "$PREVIEW_DEVICE" -b
+            xcrun simctl spawn "$PREVIEW_DEVICE" defaults read NSGlobalDomain AppleLanguages
+            xcrun simctl ui "$PREVIEW_DEVICE" appearance light
+            flutter drive --no-pub -d "$PREVIEW_DEVICE" --driver=test_driver/zh_system_locale_driver.dart --target=integration_test/zh_system_locale_test.dart --dart-define=PREVIEW_EXPECTED_LANGUAGE="$language"
+            test -s "$PREVIEW_OUTPUT/ios-$language-settings.png"
+            test -s "$PREVIEW_OUTPUT/ios-$language-theme.png"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ios-simulator-system-language
+          path: ${{ runner.temp }}/ios-language
           if-no-files-found: error

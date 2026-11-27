@@ -12,6 +12,11 @@ final previewKey = GlobalKey();
 bool get after => Platform.environment['PREVIEW_VARIANT'] == 'after';
 
 Future<void> preparePreview(WidgetTester tester) async {
+  const locale = Locale.fromSubtags(languageCode: 'zh', scriptCode: 'Hans', countryCode: 'CN');
+  tester.platformDispatcher.localeTestValue = locale;
+  tester.platformDispatcher.localesTestValue = [locale];
+  addTearDown(tester.platformDispatcher.clearLocaleTestValue);
+  addTearDown(tester.platformDispatcher.clearLocalesTestValue);
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = const Size(402, 874);
   addTearDown(tester.view.resetDevicePixelRatio);
@@ -53,7 +58,7 @@ ThemeData previewTheme() {
 Widget previewBoundary(BuildContext context, Widget? child) =>
     RepaintBoundary(key: previewKey, child: child);
 
-Future<void> savePreview(WidgetTester tester, String name) async {
+Future<void> savePreview(WidgetTester tester, String name, {bool unmount = true}) async {
   await tester.pump(const Duration(milliseconds: 500));
   expect(tester.takeException(), isNull);
   await tester.runAsync(() async {
@@ -64,5 +69,5 @@ Future<void> savePreview(WidgetTester tester, String name) async {
     file.writeAsBytesSync(png.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes));
     image.dispose();
   });
-  await tester.pumpWidget(const SizedBox.shrink());
+  if (unmount) await tester.pumpWidget(const SizedBox.shrink());
 }
