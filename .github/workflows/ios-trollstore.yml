@@ -57,6 +57,33 @@ jobs:
             "$RUNNER_TEMP/Payload" \
             "$RUNNER_TEMP/CC-Pocket-TrollStore-unsigned.ipa"
 
+      - name: Verify the IPA identity, Simplified Chinese permissions and bundled icons
+        run: |
+          python3 - <<'VERIFY'
+          import json, os, pathlib, plistlib, re, subprocess, zipfile
+          root = pathlib.Path("apps/mobile")
+          version, build = re.search(r"^version: (.+)\+(\d+)$", (root / "pubspec.yaml").read_text(), re.M).groups()
+          archive = pathlib.Path(os.environ["RUNNER_TEMP"]) / "CC-Pocket-TrollStore-unsigned.ipa"
+          with zipfile.ZipFile(archive) as ipa:
+              assert ipa.testzip() is None
+              bundle = "Payload/Runner.app/"
+              info = plistlib.loads(ipa.read(bundle + "Info.plist"))
+              assert info["CFBundleIdentifier"] == "com.zwthys.ccpocket"
+              assert (info["CFBundleShortVersionString"], info["CFBundleVersion"]) == (version, build)
+              copy = ipa.read(bundle + "zh-Hans.lproj/InfoPlist.strings")
+              localized = plistlib.loads(subprocess.check_output(["plutil", "-convert", "xml1", "-o", "-", "--", "-"], input=copy))
+              for key in info:
+                  if key.endswith("UsageDescription") and key in plistlib.loads((root / "ios/Runner/Info.plist").read_bytes()):
+                      assert re.search(r"[\u3400-\u9fff]", localized[key]), key
+              assets = bundle + "Frameworks/App.framework/flutter_assets/"
+              font = "assets/fonts/icons/CCPocketIcons.otf"
+              manifest = json.loads(ipa.read(assets + "FontManifest.json"))
+              icons = [entry["fonts"] for entry in manifest if entry["family"] == "MaterialIcons"]
+              assert len(icons) == 1 and [item["asset"] for item in icons[0]] == [font]
+              assert ipa.read(assets + font) == (root / font).read_bytes()
+              print(f"Verified CC Pocket {version}+{build}, Simplified Chinese permissions and icon font")
+          VERIFY
+
       - name: Upload IPA
         uses: actions/upload-artifact@v7
         with:

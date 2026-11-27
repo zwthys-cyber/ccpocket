@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 
+import '../../../l10n/app_localizations.dart';
 import '../../../models/messages.dart';
 import '../../../theme/app_theme.dart';
 
@@ -57,22 +58,23 @@ class StatusIndicator extends HookWidget {
       return timer.cancel;
     }, [isActive, startTime.value]);
 
+    final l = AppLocalizations.of(context);
     final (color, label) = switch (status) {
-      ProcessStatus.starting => (appColors.statusStarting, 'Starting'),
+      ProcessStatus.starting => (appColors.statusStarting, l.liteModeStarting),
       ProcessStatus.idle =>
         inPlanMode
-            ? (appColors.statusPlan, 'Plan')
-            : (appColors.statusIdle, 'Idle'),
+            ? (appColors.statusPlan, l.permissionPlanMode)
+            : (appColors.statusIdle, l.liteModeIdle),
       ProcessStatus.running =>
         inPlanMode
-            ? (appColors.statusPlan, 'Plan')
-            : (appColors.statusOnline, 'Running'),
-      ProcessStatus.waitingApproval => (appColors.statusApproval, 'Approval'),
-      ProcessStatus.compacting => (appColors.statusCompacting, 'Compacting'),
+            ? (appColors.statusPlan, l.permissionPlanMode)
+            : (appColors.statusOnline, l.liteModeRunning),
+      ProcessStatus.waitingApproval => (appColors.statusApproval, l.approval),
+      ProcessStatus.compacting => (appColors.statusCompacting, l.liteModeCompacting),
     };
 
     // Format elapsed time
-    final elapsedStr = _formatDuration(elapsed.value);
+    final elapsedStr = _formatDuration(elapsed.value, l);
 
     return GestureDetector(
       onLongPress: onLongPress,
@@ -101,7 +103,10 @@ class StatusIndicator extends HookWidget {
                   ),
                 ),
               // Animated status dot
-              _AnimatedStatusDot(color: color, isAnimating: isActive),
+              _AnimatedStatusDot(
+                color: color,
+                isAnimating: isActive && !MediaQuery.disableAnimationsOf(context),
+              ),
             ],
           ),
         ),
@@ -109,11 +114,11 @@ class StatusIndicator extends HookWidget {
     );
   }
 
-  String _formatDuration(Duration d) {
+  String _formatDuration(Duration d, AppLocalizations l) {
     if (d.inMinutes >= 1) {
       return '${d.inMinutes}:${(d.inSeconds % 60).toString().padLeft(2, '0')}';
     }
-    return '${d.inSeconds}s';
+    return l.liteModeDurationSeconds(d.inSeconds);
   }
 }
 

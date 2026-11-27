@@ -22,6 +22,7 @@ class StatusLine extends StatefulWidget implements PreferredSizeWidget {
 
 class _StatusLineState extends State<StatusLine>
     with SingleTickerProviderStateMixin {
+  bool _reduceMotion = false;
   late AnimationController _controller;
   late Animation<double> _glowAnimation;
 
@@ -36,17 +37,26 @@ class _StatusLineState extends State<StatusLine>
       begin: 0.3,
       end: 1.0,
     ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
-    if (_isActive) {
-      _controller.repeat(reverse: true);
-    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reduceMotion = MediaQuery.disableAnimationsOf(context);
+    _syncGlow();
   }
 
   @override
   void didUpdateWidget(StatusLine oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_isActive && !_controller.isAnimating) {
+    _syncGlow();
+  }
+
+  void _syncGlow() {
+    final animate = _isActive && !_reduceMotion;
+    if (animate && !_controller.isAnimating) {
       _controller.repeat(reverse: true);
-    } else if (!_isActive && _controller.isAnimating) {
+    } else if (!animate && _controller.isAnimating) {
       _controller.stop();
       _controller.reset();
     }
@@ -78,8 +88,8 @@ class _StatusLineState extends State<StatusLine>
     return AnimatedBuilder(
       animation: _glowAnimation,
       builder: (context, child) {
-        final glowOpacity = _isActive ? _glowAnimation.value : 0.4;
-        final blurRadius = _isActive ? 6.0 * _glowAnimation.value : 0.0;
+        final glowOpacity = _isActive && !_reduceMotion ? _glowAnimation.value : 0.4;
+        final blurRadius = _isActive && !_reduceMotion ? 6.0 * _glowAnimation.value : 0.0;
 
         return Container(
           height: 2,
