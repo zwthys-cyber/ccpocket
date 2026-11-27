@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { readFile, writeFile, mkdir, copyFile, stat, unlink, rename } from "node:fs/promises";
+import { readFile, writeFile, mkdir, copyFile, stat, unlink, rename, readdir, open } from "node:fs/promises";
 import { join, extname, basename, isAbsolute, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { pipeline } from "node:stream/promises";
+import { GalleryThumbnails } from "./gallery-thumbnails.js";
 
 export interface GalleryImageMeta {
   id: string;
@@ -18,6 +20,7 @@ export interface GalleryImageMeta {
 export interface GalleryImageInfo {
   id: string;
   url: string;
+  thumbnailUrl?: string;
   mimeType: string;
   projectPath: string;
   projectName: string;
@@ -28,6 +31,7 @@ export interface GalleryImageInfo {
 
 const GALLERY_DIR = join(homedir(), ".ccpocket", "gallery");
 const IMAGES_DIR = join(GALLERY_DIR, "images");
+const PENDING_DELETE_DIR = join(GALLERY_DIR, "pending-delete");
 const INDEX_FILE = join(GALLERY_DIR, "index.json");
 
 const MIME_TYPES: Record<string, string> = {
@@ -43,10 +47,19 @@ function projectNameFromPath(projectPath: string): string {
   return parts.length > 0 ? parts[parts.length - 1] : projectPath;
 }
 
+async function removeIfPresent(path: string): Promise<void> {
+  try {
+    await unlink(path);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+}
+
 export class GalleryStore {
   private index: GalleryImageMeta[] = [];
-  /** Serializes index writes so concurrent saves never interleave. */
-  private saveChain: Promise<void> = Promise.resolve();
+  private initialized = false;
+  private mutationChain: Promise<void> = Promise.resolve();
+  private thumbnails = new GalleryThumbnails();
 
   private async resolveReadablePath(filePath: string, projectPath: string): Promise<string | null> {
     const candidates: string[] = [];
@@ -71,34 +84,52 @@ export class GalleryStore {
 
   async init(): Promise<void> {
     await mkdir(IMAGES_DIR, { recursive: true });
+    await mkdir(PENDING_DELETE_DIR, { recursive: true });
     try {
       const data = await readFile(INDEX_FILE, "utf-8");
-      this.index = JSON.parse(data) as GalleryImageMeta[];
-    } catch {
-      // File doesn't exist or is corrupt — start fresh
-      this.index = [];
+      const entries = JSON.parse(data);
+      if (!Array.isArray(entries)) throw new Error("Invalid gallery index");
+      this.index = entries as GalleryImageMeta[];
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     }
+    // A crash before the index rename leaves the original recoverable. A
+    // crash after the rename leaves only an unreferenced file to purge.
+    for (const id of await readdir(PENDING_DELETE_DIR)) {
+      const staged = join(PENDING_DELETE_DIR, id);
+      const meta = this.index.find((entry) => entry.id === id);
+      if (meta) await rename(staged, join(IMAGES_DIR, meta.filename));
+      else await removeIfPresent(staged);
+    }
+    this.initialized = true;
   }
 
-  private saveIndex(): Promise<void> {
-    const next = this.saveChain
-      .catch(() => {})
-      .then(async () => {
-        // Snapshot at write time so the last queued save persists the latest
-        // index. Write a temp file and rename it so a crash or overlapping
-        // write can never leave a truncated index.json behind.
-        const data = JSON.stringify(this.index, null, 2);
-        const tmp = `${INDEX_FILE}.${randomUUID()}.tmp`;
-        try {
-          await writeFile(tmp, data, "utf-8");
-          await rename(tmp, INDEX_FILE);
-        } catch (err) {
-          await unlink(tmp).catch(() => {});
-          throw err;
-        }
-      });
-    this.saveChain = next;
+  private mutate<T>(operation: () => Promise<T>): Promise<T> {
+    if (!this.initialized) return Promise.reject(new Error("Gallery index is unavailable"));
+    const next = this.mutationChain.then(operation);
+    this.mutationChain = next.then(() => {}, () => {});
     return next;
+  }
+
+  private async replaceIndex(entries: GalleryImageMeta[]): Promise<void> {
+    const temp = `${INDEX_FILE}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temp, JSON.stringify(entries, null, 2), "utf-8");
+      await rename(temp, INDEX_FILE);
+    } catch (err) {
+      await removeIfPresent(temp);
+      throw err;
+    }
+    this.index = entries;
+  }
+
+  private async recordImage(meta: GalleryImageMeta): Promise<void> {
+    try {
+      await this.mutate(() => this.replaceIndex([...this.index, meta]));
+    } catch (err) {
+      await removeIfPresent(join(IMAGES_DIR, meta.filename));
+      throw err;
+    }
   }
 
   async addImage(
@@ -132,8 +163,7 @@ export class GalleryStore {
         sizeBytes: st.size,
       };
 
-      this.index.push(meta);
-      await this.saveIndex();
+      await this.recordImage(meta);
 
       console.log(`[gallery] Added image ${id} from ${basename(resolvedPath)}`);
       return meta;
@@ -180,8 +210,7 @@ export class GalleryStore {
         sizeBytes: buffer.length,
       };
 
-      this.index.push(meta);
-      await this.saveIndex();
+      await this.recordImage(meta);
 
       console.log(`[gallery] Added image ${id} from base64 (${Math.round(buffer.length / 1024)}KB)`);
       return meta;
@@ -202,16 +231,7 @@ export class GalleryStore {
     // Return newest first
     return [...items]
       .sort((a, b) => new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime())
-      .map((m) => ({
-        id: m.id,
-        url: `/api/gallery/${m.id}`,
-        mimeType: m.mimeType,
-        projectPath: m.projectPath,
-        projectName: projectNameFromPath(m.projectPath),
-        sessionId: m.sessionId,
-        addedAt: m.addedAt,
-        sizeBytes: m.sizeBytes,
-      }));
+      .map((meta) => this.metaToInfo(meta));
   }
 
   getImagePath(id: string): string | null {
@@ -248,23 +268,36 @@ export class GalleryStore {
     return meta?.mimeType ?? null;
   }
 
-  async delete(id: string): Promise<boolean> {
-    const idx = this.index.findIndex((m) => m.id === id);
-    if (idx === -1) return false;
-
-    const meta = this.index[idx];
-    const filePath = join(IMAGES_DIR, meta.filename);
-
-    try {
-      await unlink(filePath);
-    } catch {
-      // File may already be deleted
-    }
-
-    this.index.splice(idx, 1);
-    await this.saveIndex();
-    console.log(`[gallery] Deleted image ${id}`);
-    return true;
+  delete(id: string): Promise<boolean> {
+    return this.mutate(async () => {
+      const meta = this.index.find((entry) => entry.id === id);
+      if (!meta) {
+        // An earlier request may have committed but failed to purge its staged file.
+        if (/^[a-zA-Z0-9_-]+$/.test(id)) await removeIfPresent(join(PENDING_DELETE_DIR, id));
+        return false;
+      }
+      const original = join(IMAGES_DIR, meta.filename);
+      const staged = join(PENDING_DELETE_DIR, id);
+      try {
+        await rename(original, staged);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      }
+      try {
+        await this.replaceIndex(this.index.filter((entry) => entry.id !== id));
+      } catch (err) {
+        // Keep a failed delete retryable, including after a process restart.
+        try {
+          await rename(staged, original);
+        } catch (restoreError) {
+          if ((restoreError as NodeJS.ErrnoException).code !== "ENOENT") throw restoreError;
+        }
+        throw err;
+      }
+      this.thumbnails.forget(id);
+      await removeIfPresent(staged);
+      return true;
+    });
   }
 
   /**
@@ -275,16 +308,17 @@ export class GalleryStore {
     const url = req.url ?? "";
 
     // Match /api/gallery/:id (alphanumeric, hyphens, underscores)
-    const imageMatch = url.match(/^\/api\/gallery\/([a-zA-Z0-9_-]+)$/);
+    const imageMatch = url.match(/^\/api\/gallery\/([a-zA-Z0-9_-]+)(\?variant=thumbnail)?$/);
 
     // GET /api/gallery/:id — serve image file
     if (imageMatch && req.method === "GET") {
       const id = imageMatch[1];
-      return this.serveImage(id, res);
+      void this.serveImage(id, Boolean(imageMatch[2]), res);
+      return true;
     }
 
     // DELETE /api/gallery/:id
-    if (imageMatch && req.method === "DELETE") {
+    if (imageMatch && !imageMatch[2] && req.method === "DELETE") {
       const id = imageMatch[1];
       this.delete(id).then((ok) => {
         if (ok) {
@@ -314,30 +348,50 @@ export class GalleryStore {
     return false;
   }
 
-  private serveImage(id: string, res: ServerResponse): boolean {
+  private async serveImage(id: string, thumbnail: boolean, res: ServerResponse): Promise<void> {
     const meta = this.index.find((m) => m.id === id);
     if (!meta) {
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("Not Found");
-      return true;
+      return;
     }
 
-    const filePath = join(IMAGES_DIR, meta.filename);
-    readFile(filePath)
-      .then((buffer) => {
-        res.writeHead(200, {
-          "Content-Type": meta.mimeType,
-          "Content-Length": buffer.length,
-          "Cache-Control": "public, max-age=3600",
-        });
-        res.end(buffer);
-      })
-      .catch(() => {
+    const path = join(IMAGES_DIR, meta.filename);
+    const headers = { "Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff" };
+    try {
+      if (thumbnail && this.thumbnails.supports(meta)) {
+        const buffer = await this.thumbnails.get(meta.id, path);
+        if (res.destroyed) return;
+        if (buffer) {
+          res.writeHead(200, { ...headers, "Content-Type": "image/webp", "Content-Length": buffer.length });
+          res.end(buffer);
+          return;
+        }
+      }
+
+      const file = await open(path, "r");
+      try {
+        const info = await file.stat();
+        if (!info.isFile() || res.destroyed) {
+          if (!res.destroyed) {
+            res.writeHead(404);
+            res.end("Not Found");
+          }
+          return;
+        }
+        res.writeHead(200, { ...headers, "Content-Type": meta.mimeType, "Content-Length": info.size });
+        await pipeline(file.createReadStream(), res);
+      } finally {
+        await file.close();
+      }
+    } catch {
+      if (res.destroyed) return;
+      if (res.headersSent) res.destroy();
+      else {
         res.writeHead(404, { "Content-Type": "text/plain" });
         res.end("Not Found");
-      });
-
-    return true;
+      }
+    }
   }
 
   /**
@@ -419,6 +473,7 @@ export class GalleryStore {
     return {
       id: meta.id,
       url: `/api/gallery/${meta.id}`,
+      ...(this.thumbnails.supports(meta) && { thumbnailUrl: `/api/gallery/${meta.id}?variant=thumbnail` }),
       mimeType: meta.mimeType,
       projectPath: meta.projectPath,
       projectName: projectNameFromPath(meta.projectPath),

@@ -193,7 +193,7 @@ export async function startServer() {
   );
 
   // Initialize stores (async)
-  galleryStore.init().then(() => {
+  await galleryStore.init().then(() => {
     console.log("[bridge] Gallery store initialized");
   }).catch((err) => {
     console.error("[bridge] Failed to initialize gallery store:", err);
