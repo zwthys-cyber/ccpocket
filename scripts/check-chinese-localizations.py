@@ -23,8 +23,11 @@ def main():
     strings = mobile / "lib/l10n"
     template = read_catalog(strings / "app_ja.arb")
     chinese = read_catalog(strings / "app_zh.arb")
-    for key in template:
-        if not key.startswith("@") and not chinese.get(key, "").strip():
+    for key, source in template.items():
+        if key.startswith("@"):
+            continue
+        # An optional second line can be empty when the button label fits on one line.
+        if key not in chinese or (source.strip() and not chinese[key].strip()):
             raise ValueError(f"Missing Simplified Chinese translation: {key}")
 
     ios = mobile / "ios/Runner"

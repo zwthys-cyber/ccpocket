@@ -842,6 +842,10 @@
   "startSessionToBegin": "启动一个会话后，即可开始接收审批请求。",
 
   "settingsTitle": "设置",
+  "settingsBridgeMachine": "Bridge 主机",
+  "settingsNotConnected": "未连接",
+  "sectionAgents": "智能体",
+  "settingsBothAgents": "全部",
   "sectionGeneral": "通用",
   "sectionConnectionAccounts": "连接与账户",
   "sectionNotifications": "通知",

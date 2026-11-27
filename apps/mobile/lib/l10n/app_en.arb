@@ -805,6 +805,10 @@
   "startSessionToBegin": "Start a session to begin receiving approval requests.",
 
   "settingsTitle": "Settings",
+  "settingsBridgeMachine": "Bridge machine",
+  "settingsNotConnected": "Not connected",
+  "sectionAgents": "AGENTS",
+  "settingsBothAgents": "Both",
   "sectionGeneral": "GENERAL",
   "sectionConnectionAccounts": "Connection & Accounts",
   "sectionNotifications": "Notifications",

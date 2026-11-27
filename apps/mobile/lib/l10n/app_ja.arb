@@ -837,6 +837,10 @@
   "startSessionToBegin": "セッションを開始して承認リクエストの受信を始めましょう。",
 
   "settingsTitle": "設定",
+  "settingsBridgeMachine": "Bridge ホスト",
+  "settingsNotConnected": "未接続",
+  "sectionAgents": "エージェント",
+  "settingsBothAgents": "両方",
   "sectionGeneral": "一般",
   "sectionConnectionAccounts": "接続とアカウント",
   "sectionNotifications": "通知",

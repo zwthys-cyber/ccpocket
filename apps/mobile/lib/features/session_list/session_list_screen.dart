@@ -1712,7 +1712,7 @@ class _SessionListScreenState extends State<SessionListScreen>
     final url = context.read<BridgeService>().lastUrl;
     final machine = _machineForBridgeUrl(machines, url);
     if (machine != null) return machine.displayName;
-    return _bridgeLabelFromUrl(url);
+    return bridgeEndpointLabel(url);
   }
 
   Machine? _machineForBridgeUrl(List<MachineWithStatus> machines, String? url) {
@@ -1727,13 +1727,6 @@ class _SessionListScreenState extends State<SessionListScreen>
       }
     }
     return null;
-  }
-
-  String? _bridgeLabelFromUrl(String? url) {
-    final uri = _bridgeUri(url);
-    if (uri == null || uri.host.isEmpty) return null;
-    final port = uri.hasPort ? uri.port : 8765;
-    return formatHostPort(uri.host, port);
   }
 
   Uri? _bridgeUri(String? url) {

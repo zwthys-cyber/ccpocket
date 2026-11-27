@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../constants/app_constants.dart';
 import '../../constants/feature_flags.dart';
 import '../../l10n/app_localizations.dart';
+import '../../utils/network_endpoint.dart';
 import '../../models/app_icon.dart';
 import '../../models/git_diff_interaction_mode.dart';
 import '../../models/image_paste_shortcut.dart';
@@ -333,10 +334,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               Icons.computer_outlined,
                               color: cs.primary,
                             ),
-                            title: const Text('Bridge machine'),
+                            title: Text(l.settingsBridgeMachine),
                             subtitle: Text(
                               machine?.displayName ??
-                                  (bridge.lastUrl ?? 'Not connected'),
+                                  bridgeEndpointLabel(bridge.lastUrl) ??
+                                  l.settingsNotConnected,
                             ),
                           ),
                           Divider(
@@ -603,7 +605,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: 8),
 
-              _SectionHeader(title: 'AGENTS'),
+              _SectionHeader(title: l.sectionAgents),
               Card(
                 margin: const EdgeInsets.symmetric(horizontal: 16),
                 child: Column(
@@ -617,16 +619,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           Expanded(
                             child: SegmentedButton<EnabledAgentsMode>(
                               key: const ValueKey('enabled_agents_selector'),
-                              segments: const [
+                              segments: [
                                 ButtonSegment(
                                   value: EnabledAgentsMode.both,
-                                  label: Text('Both'),
+                                  label: Text(l.settingsBothAgents),
                                 ),
-                                ButtonSegment(
+                                const ButtonSegment(
                                   value: EnabledAgentsMode.codex,
                                   label: Text('Codex'),
                                 ),
-                                ButtonSegment(
+                                const ButtonSegment(
                                   value: EnabledAgentsMode.claude,
                                   label: Text('Claude'),
                                 ),
