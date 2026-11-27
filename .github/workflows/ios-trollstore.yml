@@ -23,11 +23,9 @@ jobs:
       matrix:
         include:
           - variant: before
-            ref: 5d0f0bf53703dd8ce927e0e7d8559034531dee37
-          - variant: lavender
-            ref: fea07efb0bf554797f559b7d445df956e6d19396
+            ref: 4eceb20eb22d4df78c3495447717fe23db749b6d
           - variant: after
-            ref: c25d1a95ea983983cd5e06788980ebcb0a54357f
+            ref: 0666230d0549ef7392736356f2a9a1615e0c6048
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -65,7 +63,7 @@ jobs:
           )
           new_session_action = (
               'isConnected: true, onNewSession: () {},'
-              if environ['CCPOCKET_UI_VARIANT'] != 'before' else ''
+              if environ['CCPOCKET_UI_VARIANT'] == 'before' else 'isConnected: true,'
           )
           source = source.replace(
               '      theme: AppTheme.darkTheme,\n      home: Scaffold(',
@@ -172,10 +170,218 @@ jobs:
           source = "import 'dart:ui' show ImageByteFormat;\n" + source
           Path('test/ui_refresh_evidence_test.dart').write_text(source)
           PY
+          cat > test/ui_surface_capture.dart <<'DART'
+          import 'dart:io';
+          import 'dart:typed_data';
+          import 'dart:ui' show ImageByteFormat;
+          import 'package:flutter/material.dart';
+          import 'package:flutter/rendering.dart' show RenderRepaintBoundary;
+          import 'package:flutter/services.dart' show FontLoader;
+          import 'package:flutter_test/flutter_test.dart';
+
+          Future<void> prepareCapture(WidgetTester tester) async {
+            tester.view.devicePixelRatio = 1;
+            tester.view.physicalSize = const Size(402, 874);
+            addTearDown(tester.view.resetDevicePixelRatio);
+            addTearDown(tester.view.resetPhysicalSize);
+            await tester.runAsync(() async {
+              for (final (name, path) in [
+                ('EvidenceSans', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'),
+                ('MaterialIcons', Platform.environment['CCPOCKET_MATERIAL_ICONS']!),
+              ]) {
+                final loader = FontLoader(name);
+                loader.addFont(File(path).readAsBytes().then(ByteData.sublistView));
+                await loader.load();
+              }
+            });
+          }
+
+          ThemeData captureTheme(ThemeData theme) {
+            return theme.copyWith(
+              platform: TargetPlatform.iOS,
+              textTheme: theme.textTheme.apply(fontFamily: 'EvidenceSans'),
+              inputDecorationTheme: theme.inputDecorationTheme.copyWith(
+                hintStyle: theme.inputDecorationTheme.hintStyle?.copyWith(
+                  fontFamily: 'EvidenceSans',
+                ),
+              ),
+            );
+          }
+
+          Future<void> writeCapture(WidgetTester tester, GlobalKey key, String name) async {
+            await tester.pump(const Duration(milliseconds: 500));
+            expect(tester.takeException(), isNull);
+            await tester.runAsync(() async {
+              final frame = key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+              final image = await frame.toImage(pixelRatio: 2);
+              final bytes = (await image.toByteData(format: ImageByteFormat.png))!;
+              final output = Directory(Platform.environment['CCPOCKET_UI_OUTPUT']!);
+              output.createSync(recursive: true);
+              File('${output.path}/$name.png').writeAsBytesSync(
+                bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
+              );
+              image.dispose();
+            });
+            await tester.pumpWidget(const SizedBox.shrink());
+          }
+          DART
+
+          cat > test/ui_surface_evidence_test.dart <<'DART'
+          import 'package:ccpocket/features/gallery/widgets/gallery_empty_state.dart';
+          import 'package:ccpocket/features/session_list/widgets/connect_form.dart';
+          import 'package:ccpocket/l10n/app_localizations.dart';
+          import 'package:ccpocket/models/messages.dart';
+          import 'package:ccpocket/theme/app_theme.dart';
+          import 'package:flutter/material.dart';
+          import 'package:flutter_test/flutter_test.dart';
+          import 'chat_screen/helpers/chat_test_helpers.dart';
+          import 'ui_surface_capture.dart';
+
+          void main() {
+            testWidgets('capture refresh evidence: session and connection', (tester) async {
+              await prepareCapture(tester);
+              for (final (name, theme) in [
+                ('light', captureTheme(AppTheme.lightTheme)),
+                ('dark', captureTheme(AppTheme.darkTheme)),
+              ]) {
+                final bridge = MockBridgeService();
+                final source = await buildTestCodexSessionScreen(
+                  bridge: bridge,
+                  projectPath: '/tmp/checkout',
+                ) as MaterialApp;
+                final key = GlobalKey();
+                await tester.pumpWidget(MaterialApp(
+                  localizationsDelegates: source.localizationsDelegates,
+                  supportedLocales: source.supportedLocales,
+                  locale: source.locale,
+                  debugShowCheckedModeBanner: false,
+                  theme: theme,
+                  builder: (context, child) => RepaintBoundary(key: key, child: child),
+                  home: source.home,
+                ));
+                await pumpN(tester);
+                await emitAndPump(tester, bridge, [
+                  SessionContextMessage(
+                    sessionId: testSessionId,
+                    context: SessionInfo(
+                      id: testSessionId,
+                      name: 'Checkout review',
+                      projectPath: '/tmp/checkout',
+                      provider: 'codex',
+                      status: 'running',
+                      createdAt: DateTime.now().toIso8601String(),
+                      lastActivityAt: DateTime.now().toIso8601String(),
+                      gitBranch: 'feat/checkout',
+                    ),
+                  ),
+                  makeAssistantMessage(
+                    'answer-1',
+                    'The checkout now keeps the cart when payment fails.',
+                    toolUses: [
+                      const ToolUseContent(
+                        id: 'tool-1', name: 'Bash',
+                        input: {'command': 'flutter test test/checkout_test.dart'},
+                      ),
+                    ],
+                  ),
+                  const ToolResultMessage(toolUseId: 'tool-1', content: 'All tests passed.'),
+                  makeAssistantMessage(
+                    'answer-2',
+                    'I am checking that a successful retry clears the error banner.',
+                  ),
+                  const StatusMessage(status: ProcessStatus.running),
+                ]);
+                expect(find.textContaining('The checkout now', findRichText: true), findsWidgets);
+                await writeCapture(tester, key, 'session-$name');
+                bridge.dispose();
+                for (final (pageName, content) in [
+                  ('connect', ConnectForm(
+                    discoveredServers: const [],
+                    onScanQrCode: () {},
+                    onConnectToDiscovered: (_) {},
+                    onViewSetupGuide: () {},
+                  )),
+                  ('gallery', const GalleryEmptyState(isSessionMode: false)),
+                ]) {
+                  final pageKey = GlobalKey();
+                  await tester.pumpWidget(MaterialApp(
+                    localizationsDelegates: AppLocalizations.localizationsDelegates,
+                    supportedLocales: AppLocalizations.supportedLocales,
+                    locale: const Locale('en'),
+                    debugShowCheckedModeBanner: false,
+                    theme: theme,
+                    builder: (context, child) => RepaintBoundary(key: pageKey, child: child),
+                    home: Scaffold(
+                      appBar: AppBar(title: Text(pageName == 'connect' ? 'CC Pocket' : 'Gallery')),
+                      body: content,
+                    ),
+                  ));
+                  await writeCapture(tester, pageKey, '$pageName-$name');
+                }
+              }
+            });
+          }
+          DART
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path('test/settings_usage_visibility_test.dart').read_text()
+          source = """import 'package:ccpocket/theme/app_theme.dart';
+          import 'ui_surface_capture.dart';
+          """ + source
+          target = "  bool focusConnection = false,"
+          assert source.count(target) == 1
+          source = source.replace(target, "  GlobalKey? captureKey,\n  ThemeData? theme,\n" + target)
+          target = "      child: MaterialApp("
+          assert source.count(target) == 1
+          source = source.replace(target, target + """
+                  debugShowCheckedModeBanner: false,
+                  theme: theme,
+                  builder: (context, child) => RepaintBoundary(key: captureKey, child: child),
+          """)
+          marker = "  group('Settings usage visibility', () {"
+          assert source.count(marker) == 1
+          source = source.replace(marker, """  testWidgets('capture refresh evidence: settings', (tester) async {
+              await prepareCapture(tester);
+              SharedPreferences.setMockInitialValues({});
+              final prefs = await SharedPreferences.getInstance();
+              final settings = _SeededSettingsCubit(prefs, activeMachineId: 'demo');
+              final machines = _StaticMachineManagerService([
+                MachineWithStatus(
+                  machine: Machine(id: 'demo', name: 'Workstation', host: '127.0.0.1'),
+                  status: MachineStatus.online,
+                ),
+              ]);
+              final manager = _createMachineManagerCubit(machines);
+              final bridge = _FakeBridgeService(
+                connected: true, fakeLastUrl: 'ws://localhost:8765',
+              );
+              for (final (name, theme) in [
+                ('light', AppTheme.lightTheme),
+                ('dark', AppTheme.darkTheme),
+              ]) {
+                final key = GlobalKey();
+                await tester.pumpWidget(await _buildScreen(
+                  bridge: bridge, settingsCubit: settings,
+                  machineManagerCubit: manager, captureKey: key,
+                  theme: captureTheme(theme),
+                ));
+                await writeCapture(tester, key, 'settings-$name');
+              }
+              await settings.close();
+              await manager.close();
+              machines.dispose();
+              bridge.dispose();
+            });
+          """ + marker)
+          Path('test/ui_settings_evidence_test.dart').write_text(source)
+          PY
           export CCPOCKET_UI_OUTPUT="$RUNNER_TEMP/ccpocket-ui"
           flutter_sdk="$(dirname "$(dirname "$(readlink -f "$(command -v flutter)")")")"
           export CCPOCKET_MATERIAL_ICONS="$flutter_sdk/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf"
-          flutter test --no-pub test/ui_refresh_evidence_test.dart --plain-name 'capture refresh evidence'
+          flutter test --no-pub --concurrency=1 --plain-name 'capture refresh evidence' \
+            test/ui_refresh_evidence_test.dart test/ui_surface_evidence_test.dart test/ui_settings_evidence_test.dart
           printf '%s\n' "$(git rev-parse HEAD)" > "$CCPOCKET_UI_OUTPUT/commit.txt"
       - uses: actions/upload-artifact@v7
         with:
