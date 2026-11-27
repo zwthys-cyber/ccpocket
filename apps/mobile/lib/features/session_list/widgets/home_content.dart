@@ -1125,7 +1125,7 @@ class _LoadMoreRecentSessionsButton extends StatelessWidget {
               key: const ValueKey('load_more_button'),
               onPressed: onLoadMore,
               icon: const Icon(Icons.expand_more, size: 18),
-              label: const Text('Load More'),
+              label: Text(AppLocalizations.of(context).showMore),
             ),
     );
   }

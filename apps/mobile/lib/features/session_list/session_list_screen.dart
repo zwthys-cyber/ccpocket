@@ -1842,8 +1842,9 @@ class _SessionListScreenState extends State<SessionListScreen>
         showConnectedUI ||
         _isAutoConnecting ||
         connectionState == BridgeConnectionState.connecting;
+    final theme = Theme.of(context);
     final chrome = resolveWorkspacePaneChrome(
-      platform: Theme.of(context).platform,
+      platform: theme.platform,
       isAdaptiveWorkspace: false,
       isLeftPaneVisible: true,
       slot: WorkspacePaneSlot.center,
@@ -1868,7 +1869,7 @@ class _SessionListScreenState extends State<SessionListScreen>
           ? PreferredSize(
               preferredSize: Size.fromHeight(
                 resolveWorkspacePaneChrome(
-                  platform: Theme.of(context).platform,
+                  platform: theme.platform,
                   isAdaptiveWorkspace: true,
                   isLeftPaneVisible: true,
                   slot: WorkspacePaneSlot.left,
@@ -1916,7 +1917,20 @@ class _SessionListScreenState extends State<SessionListScreen>
                 ],
               ),
             ),
-      body: body,
+      // The floating home toolbar can scroll away. Keep the display cutout
+      // and status bar outside the viewport even while the toolbar is hidden.
+      body: showConnectedUI && !widget.embedded
+          ? AnnotatedRegion<SystemUiOverlayStyle>(
+              value: SystemUiOverlayStyle(
+                statusBarColor: Colors.transparent,
+                statusBarBrightness: theme.brightness,
+                statusBarIconBrightness: theme.brightness == Brightness.dark
+                    ? Brightness.light
+                    : Brightness.dark,
+              ),
+              child: SafeArea(bottom: false, child: body),
+            )
+          : body,
     );
   }
 

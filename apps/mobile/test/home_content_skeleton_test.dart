@@ -104,6 +104,7 @@ SessionInfo _runningSession({
 }
 
 Widget _buildHomeContent({
+  Locale locale = const Locale('en'),
   List<SessionInfo> sessions = const [],
   List<OfflinePendingAction> offlinePendingActions = const [],
   List<RecentSession> recentSessions = const [],
@@ -138,7 +139,7 @@ Widget _buildHomeContent({
     child: MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
-      locale: const Locale('en'),
+      locale: locale,
       theme: AppTheme.darkTheme,
       home: Scaffold(
         body: MultiBlocProvider(
@@ -879,6 +880,7 @@ void main() {
       (tester) async {
         await tester.pumpWidget(
           _buildHomeContent(
+            locale: const Locale('zh'),
             recentSessions: [_session(id: 's1')],
             currentProjectFilter: '/home/user/project-a',
             hasMoreSessions: true,
@@ -895,7 +897,13 @@ void main() {
           find.byKey(const ValueKey('project_show_more_/home/user/project-a')),
           findsNothing,
         );
-        expect(find.byKey(const ValueKey('load_more_button')), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('load_more_button')),
+            matching: find.text('显示更多'),
+          ),
+          findsOneWidget,
+        );
       },
     );
 
