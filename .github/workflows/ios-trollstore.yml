@@ -164,8 +164,8 @@ jobs:
                   );
                   image.dispose();
                 });
+                await tester.pumpWidget(const SizedBox.shrink());
               }
-              await tester.pumpWidget(const SizedBox.shrink());
             });
 
           """ + marker)
