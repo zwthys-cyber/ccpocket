@@ -106,7 +106,7 @@ private struct ProviderUsageCard: View {
                         UsageGaugeView(
                             label: "5-hour",
                             utilization: fiveHour.utilization,
-                            resetsIn: fiveHour.resetsInText
+                            resetDescription: fiveHour.resetDescription
                         )
                     }
 
@@ -114,7 +114,7 @@ private struct ProviderUsageCard: View {
                         UsageGaugeView(
                             label: "7-day",
                             utilization: sevenDay.utilization,
-                            resetsIn: sevenDay.resetsInText
+                            resetDescription: sevenDay.resetDescription
                         )
                     }
                 }

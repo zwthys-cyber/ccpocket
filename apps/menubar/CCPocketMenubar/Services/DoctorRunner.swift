@@ -68,7 +68,7 @@ enum DoctorError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .parseFailed(let output):
-            return "Failed to parse doctor output: \(output.prefix(200))"
+            return String(localized: "Failed to parse diagnostic output: \(String(output.prefix(200)))")
         }
     }
 }
