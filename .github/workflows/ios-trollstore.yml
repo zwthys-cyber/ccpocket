@@ -25,7 +25,7 @@ jobs:
           - variant: before
             ref: 4eceb20eb22d4df78c3495447717fe23db749b6d
           - variant: after
-            ref: 0666230d0549ef7392736356f2a9a1615e0c6048
+            ref: 42965b837d594d98a5e54d17f30687bf4da692ae
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -169,6 +169,16 @@ jobs:
           """ + marker)
           source = "import 'dart:ui' show ImageByteFormat;\n" + source
           Path('test/ui_refresh_evidence_test.dart').write_text(source)
+
+          # The headless engine lacks the desktop drag-and-drop plugin.
+          composer = Path('lib/features/chat_session/widgets/chat_input_with_overlays.dart')
+          text = composer.read_text()
+          assert text.count('enabled: isDesktopPlatform,') == 1
+          composer.write_text(text.replace('enabled: isDesktopPlatform,', 'enabled: false,'))
+          connection = Path('lib/features/session_list/widgets/connect_form.dart')
+          text = connection.read_text()
+          assert text.count('!kIsWeb && !isDesktopPlatform') == 1
+          connection.write_text(text.replace('!kIsWeb && !isDesktopPlatform', '!kIsWeb'))
           PY
           cat > test/ui_surface_capture.dart <<'DART'
           import 'dart:io';
