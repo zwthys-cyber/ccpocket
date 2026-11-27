@@ -775,7 +775,7 @@ jobs:
           curl -fsSL --retry 3 -o "$PREVIEW_FONT" https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf
           flutter pub get
           python3 "$GITHUB_WORKSPACE/diagnostics/scripts/zh-preview/prepare-safe-area.py"
-          flutter test --no-pub --concurrency=1 --reporter expanded --plain-name 'capture compact home status inset during scroll' test/status_inset_capture_test.dart | tee "$RUNNER_TEMP/layout.log"
+          timeout --kill-after=10s --signal=INT 90s flutter test --no-pub --concurrency=1 --reporter expanded --plain-name 'capture compact home status inset during scroll' test/status_inset_capture_test.dart | tee "$RUNNER_TEMP/layout.log"
           grep '^SAFE_AREA ' "$RUNNER_TEMP/layout.log" > "$PREVIEW_OUTPUT/geometry.txt"
       - uses: actions/upload-artifact@v7
         if: always()

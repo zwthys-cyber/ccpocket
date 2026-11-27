@@ -34,6 +34,7 @@ Widget simulatedStatusBar(BuildContext context, Widget? child) {
 void registerSafeAreaCapture() {
   testWidgets('capture compact home status inset during scroll', (tester) async {
     const topInset = 59.0;
+    print('CAPTURE_STEP font and viewport');
     await preparePreview(tester);
     tester.view.padding = const FakeViewPadding(top: topInset, bottom: 34);
     tester.view.viewPadding = const FakeViewPadding(top: topInset, bottom: 34);
@@ -41,8 +42,11 @@ void registerSafeAreaCapture() {
     addTearDown(tester.view.resetViewPadding);
     await tester.binding.setSurfaceSize(const Size(402, 874));
     addTearDown(() => tester.binding.setSurfaceSize(null));
+    print('CAPTURE_STEP services');
     final bridge = _MockBridgeService();
+    print('CAPTURE_STEP settings');
     final settings = await _createSettingsCubit(bridge);
+    print('CAPTURE_STEP mount home');
     await tester.pumpWidget(_buildWorkspaceApp(
       platform: TargetPlatform.iOS,
       locale: const Locale('zh'),
@@ -60,12 +64,14 @@ void registerSafeAreaCapture() {
       adaptiveHome: true,
     ));
     await _pumpUi(tester);
+    print('CAPTURE_STEP seed');
     bridge.emitSessions([SessionInfo(
       name: '整理项目文档', id: 'synthetic-active', provider: 'codex', projectPath: '/demo/notes',
       createdAt: '2026-11-27T08:00:00Z', lastActivityAt: '2026-11-27T09:00:00Z',
       status: 'idle', lastMessage: '正在核对目录与示例。',
     )]);
     await _pumpUi(tester);
+    print('CAPTURE_STEP measure expanded');
     final search = find.byKey(const ValueKey('search_field'));
     final action = find.byKey(const ValueKey('new_session_button'));
     final nested = tester.state<NestedScrollViewState>(find.byType(NestedScrollView).first);
@@ -73,8 +79,10 @@ void registerSafeAreaCapture() {
     expect(action, findsOneWidget);
     final initial = tester.getTopLeft(search).dy;
     expect(initial, greaterThan(topInset));
+    print('CAPTURE_STEP capture expanded');
     await savePreview(tester, 'expanded', unmount: false);
 
+    print('CAPTURE_STEP collapse');
     final maximum = nested.outerController.position.maxScrollExtent;
     expect(maximum, greaterThan(0));
     nested.outerController.jumpTo(maximum);
@@ -82,6 +90,7 @@ void registerSafeAreaCapture() {
     final collapsed = tester.getTopLeft(search).dy;
     final collapsedAction = tester.getTopLeft(action).dy;
     print('SAFE_AREA top=$topInset initial=$initial collapsedSearch=$collapsed collapsedAction=$collapsedAction scroll=$maximum');
+    print('CAPTURE_STEP capture collapsed');
     await savePreview(tester, 'collapsed', unmount: false);
     if (after) {
       expect(collapsed, greaterThanOrEqualTo(topInset));
@@ -94,6 +103,8 @@ void registerSafeAreaCapture() {
     await _pumpUi(tester);
     expect(tester.getTopLeft(search).dy, closeTo(initial, 0.1));
     await tester.pumpWidget(const SizedBox.shrink());
+    print('CAPTURE_STEP teardown');
     await settings.close();
+    print('CAPTURE_STEP complete');
   }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 }
