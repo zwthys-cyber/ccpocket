@@ -7,7 +7,7 @@
 
 [CC Pocket 둘러보기](https://zwthys-cyber.github.io/ccpocket/install/?lang=ko) · 무료 사용 · 오픈 소스
 
-[English README](README.md) | [日本語 README](README.ja.md) | [简体中文 README](README.zh-CN.md)
+[English README](README.en.md) | [日本語 README](README.ja.md) | [简体中文 README](README.zh-CN.md)
 
 <p align="center">
   <img src="docs/images/screenshots-ko.png" alt="CC Pocket 스크린샷" width="800">
@@ -15,25 +15,11 @@
 
 ## 설치
 
-1. 세션을 실행할 머신에 에이전트 CLI를 하나 이상 설치합니다:
-   [Codex](https://github.com/openai/codex) 또는 [Claude](https://docs.anthropic.com/en/docs/claude-code).
-2. 같은 머신에 [Node.js](https://nodejs.org/) 20.18.1 이상을 설치합니다.
-3. CC Pocket Bridge Server를 시작합니다.
+**CC Pocket 1.140.9 (272)** · TrollStore를 지원하는 iPhone 또는 iPad에서 [IPA를 다운로드](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.9%2B272/CC-Pocket-TrollStore-unsigned.ipa)한 뒤 TrollStore로 설치하세요. [변경 사항 및 SHA-256](https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.9%2B272)
 
-```bash
-npx @ccpocket/bridge@latest
-```
+Linux x64 서버에는 [Bridge 1.122.0 전체 패키지](https://github.com/zwthys-cyber/ccpocket/releases/download/bridge-maintained/v1.122.0-fa20a82/deepseek-server-runtime.zip)를 다운로드할 수 있습니다. Node.js 22.19.0 이상을 준비하고 [중국어 설치 안내](docs/server-setup.zh-CN.md)에 따라 서비스를 설정한 뒤 휴대폰을 연결하세요. [Bridge 릴리스 및 업데이트 패키지](https://github.com/zwthys-cyber/ccpocket/releases/tag/bridge-maintained/v1.122.0-fa20a82)
 
-4. CC Pocket을 설치하고 Bridge Server가 출력한 QR 코드를 스캔합니다.
-5. 프로젝트를 선택하고 Codex 또는 Claude를 고른 뒤 앱에서 세션을 시작합니다.
-
-| 플랫폼 | 설치 |
-|--------|------|
-| **iOS / iPadOS** | <a href="https://github.com/zwthys-cyber/ccpocket/releases?q=trollstore"><img height="40" alt="App Store에서 다운로드" src="docs/images/app-store-badge.svg" /></a> |
-| **Android** | <a href="https://play.google.com/store/apps/details?id=com.zwthys.ccpocket"><img height="40" alt="Google Play에서 받기" src="docs/images/google-play-badge-en.svg" /></a> |
-| **macOS** | 최신 `.dmg`는 [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=macos)에서 다운로드할 수 있습니다. `macos/v*` 태그가 붙은 릴리스를 찾으세요. Homebrew Cask를 사용해 `brew install --cask cc-pocket` 명령으로 설치할 수도 있습니다. |
-| **Linux(실험적)** | 최신 `.tar.gz`는 [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=linux)에서 다운로드할 수 있습니다. `linux/v*` 태그가 붙은 릴리스를 찾으세요. 커뮤니티에서 관리하는 [AUR 패키지](https://aur.archlinux.org/packages/cc-pocket-bin)를 `yay -S cc-pocket-bin`으로 설치할 수도 있습니다. |
-| **Windows(실험적)** | 최신 `.zip`은 [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=windows)에서 다운로드할 수 있습니다. `windows/v*` 태그가 붙은 릴리스를 찾으세요. |
+다른 플랫폼용 클라이언트를 빌드하려면 [개발 안내](#개발)를 참고하세요.
 
 ## 무료로 사용할 수 있습니다
 

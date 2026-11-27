@@ -5,12 +5,13 @@
 用手机聊天的方式操作 Codex 和 Claude：发出指令、批准下一步、查看结果。
 换到平板或 Mac，也能继续同一项工作。
 
-[了解 CC Pocket](https://zwthys-cyber.github.io/ccpocket/install/?lang=zh) · 免费使用 · 开源
+**[下载 iPhone / iPad 安装包（1.140.9，构建 272）](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.9%2B272/CC-Pocket-TrollStore-unsigned.ipa)** · [版本说明与 SHA-256](https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.9%2B272) · [安装指南](https://zwthys-cyber.github.io/ccpocket/install/?lang=zh)
 
 [English README](README.en.md) | [日本語 README](README.ja.md) | [한국어 README](README.ko.md)
 
 <p align="center">
-  <img src="docs/images/screenshots-zh-CN.png" alt="CC Pocket 截图" width="800">
+  <img src="docs/images/ccpocket-272-zh-home.png" alt="1.140.9 中文会话首页，展示正在进行和最近的会话" width="280">
+  <img src="docs/images/ccpocket-272-zh-settings.png" alt="1.140.9 中文设置页，展示主题、性能模式与语音输入" width="280">
 </p>
 
 ## 安装
@@ -19,14 +20,13 @@
 无需 Apple Developer 账号的 TrollStore 未签名 IPA；目前没有 App Store、Google Play
 或官方推送服务。
 
-### 当前服务器版：Bridge 1.119.0
+### 当前服务器版 Bridge 1.122.0
 
-截至 **2026-11-22**，已部署并验证的服务器版本为 **1.119.0**，支持 DeepSeek Flash 和 **`deepseek-v4-pro`**。
-服务器源码位于 [`upgrade/deepseek-bridge-1.119.0`](https://github.com/zwthys-cyber/ccpocket/tree/upgrade/deepseek-bridge-1.119.0)；部署时请选择该分支的 GitHub 构建产物，默认分支的文档入口不代表服务器代码已合并到 `main`。
+2026-11-27 已部署维护补丁 [`fa20a82`](https://github.com/zwthys-cyber/ccpocket/tree/fa20a82c9f9203305e1220fd9fec39f1c7827de4)。配合手机端 1.140.9（272），修复 Codex 重连后重复显示气泡、插话时间错误和图库并发删除失败。手机界面自动跟随系统语言，DeepSeek Flash 与 `deepseek-v4-pro` 继续可用。
 
-- [当前部署版本、构建证据和更新方式](docs/bridge-server-status.zh-CN.md)
-- [DeepSeek 配置、Pro 模型选择和后台服务](docs/deepseek.zh-CN.md)
-- 服务器运行时要求 Node.js **22.19.0+**；本次验证使用 **24.22.1**。测试、审计、编译和打包均在 GitHub 上完成。
+- 新装 Linux x64 服务器可[下载完整运行包](https://github.com/zwthys-cyber/ccpocket/releases/download/bridge-maintained/v1.122.0-fa20a82/deepseek-server-runtime.zip)。包内包含生产依赖。已有服务器的升级条件见 [Bridge 发布说明](https://github.com/zwthys-cyber/ccpocket/releases/tag/bridge-maintained/v1.122.0-fa20a82)。
+- [线上版本、构建记录与校验方法](docs/bridge-server-status.zh-CN.md)
+- [DeepSeek 配置与模型选择](docs/deepseek.zh-CN.md)
 
 ### 新服务器安装：先看这份中文教程
 
@@ -34,16 +34,13 @@
 教程面向 Ubuntu 24.04 x86_64 云服务器，从 SSH 登录开始，一步步完成：
 
 1. 安装 Node.js 和 Codex，并完成账号登录。
-2. 在 GitHub Actions 上修复依赖、测试、编译和打包。
+2. 在 GitHub 获取已验证的 Linux x64 完整运行包。
 3. 服务器只下载已验证的运行包，生成手机连接密钥。
 4. 配置后台运行和开机自启，处理网络连接。
 5. 手机添加服务器、选择项目并发送第一条任务。
 6. 后续更新、回退和常见问题排查。
 
-**小服务器不需要克隆本项目源码，也不要在服务器运行依赖审计、编译或测试套件。**
-构建包已包含生产依赖。GitHub Artifact 当前保留 14 天；过期后在
-[Bridge Security Build](https://github.com/zwthys-cyber/ccpocket/actions/workflows/bridge-security-build.yml)
-选择 `upgrade/deepseek-bridge-1.119.0`，将 `upstream_version` 留空后重新生成。完整命令、GitHub 登录方法和下载步骤都在上面的教程里。
+运行包在 GitHub 构建和测试。服务器安装 Node.js **22.19.0 或更高版本**后，按教程校验并解压[已发布的运行包](https://github.com/zwthys-cyber/ccpocket/releases/tag/bridge-maintained/v1.122.0-fa20a82)即可。
 
 服务器 IP 要填写你新机器的地址；API Key 是教程自动生成的 Bridge 连接密钥，
 与 GitHub Token、OpenAI API Key、DeepSeek API Key 不同。
@@ -52,7 +49,7 @@
 
 | 平台 | 安装 |
 |------|------|
-| **iOS / iPadOS（TrollStore）** | 从 [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=trollstore) 下载最新未签名 IPA。 |
+| **iOS / iPadOS（TrollStore）** | 在支持 TrollStore 的设备上打开[1.140.9（272）未签名 IPA](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.9%2B272/CC-Pocket-TrollStore-unsigned.ipa)，用 TrollStore 安装。可下载 [SHA-256 校验文件](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.9%2B272/CC-Pocket-TrollStore-unsigned.ipa.sha256)。 |
 | **Android / macOS / Linux / Windows** | 此分支暂未提供经过验证的公开安装包，可按开发说明自行构建。 |
 
 ## 免费使用

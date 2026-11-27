@@ -18,35 +18,11 @@ step, and review the result. Pick up the same work on your tablet or Mac.
 
 ## Install
 
-For a new Ubuntu 24.04 x86_64 server, follow the **[step-by-step Chinese server guide](docs/server-setup.zh-CN.md)**. It uses GitHub Actions to build and test the Bridge, then downloads the complete runtime to the server. No server-side npm dependency installation, audit, compilation, or test suite is needed. The guide also covers login, phone connection, background service setup, updates, and rollback.
+**CC Pocket 1.140.9 (272)** · Install the [TrollStore IPA for iPhone and iPad](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.9%2B272/CC-Pocket-TrollStore-unsigned.ipa) on a device that supports TrollStore. [Release notes and SHA-256](https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.9%2B272)
 
-The source-build commands below are for development or hosts where local builds are intended. For the prebuilt server route, use the guide's service configuration; the built-in Linux `setup` command starts the npm-published package.
+For a new Linux x64 server, download the [complete Bridge 1.122.0 runtime](https://github.com/zwthys-cyber/ccpocket/releases/download/bridge-maintained/v1.122.0-fa20a82/deepseek-server-runtime.zip). The [Chinese installation guide](docs/server-setup.zh-CN.md) covers Node.js 22.19.0 or later, configuring the service and connecting your phone. [Bridge release and update packages](https://github.com/zwthys-cyber/ccpocket/releases/tag/bridge-maintained/v1.122.0-fa20a82)
 
-1. Install at least one agent CLI on the machine that will run your sessions:
-   [Codex](https://github.com/openai/codex) or [Claude](https://docs.anthropic.com/en/docs/claude-code).
-2. Install [Node.js](https://nodejs.org/) 20.18.1 or newer on that same machine.
-3. Clone this fork and build its Bridge Server:
-
-```bash
-git clone https://github.com/zwthys-cyber/ccpocket.git
-cd ccpocket
-npm ci
-npm run bridge:build
-node packages/bridge/dist/cli.js setup \
-  --host 0.0.0.0 --port 8765 \
-  --api-key "$(openssl rand -hex 24)"
-```
-
-4. Install CC Pocket and scan the QR code printed by the Bridge Server.
-5. Pick a project, choose Codex or Claude, and start coding from the app.
-
-| Platform | Install |
-|----------|---------|
-| **iOS / iPadOS** | <a href="https://github.com/zwthys-cyber/ccpocket/releases?q=trollstore"><img height="40" alt="Download on the App Store" src="docs/images/app-store-badge.svg" /></a> |
-| **Android** | <a href="https://play.google.com/store/apps/details?id=com.zwthys.ccpocket"><img height="40" alt="Get it on Google Play" src="docs/images/google-play-badge-en.svg" /></a> |
-| **macOS** | Download the latest `.dmg` from [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=macos). Look for releases tagged `macos/v*`. You can also install using Homebrew Cask with `brew install --cask cc-pocket`. |
-| **Linux (experimental)** | Download the latest `.tar.gz` from [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=linux). Look for releases tagged `linux/v*`. Alternatively, install the community-maintained [AUR package](https://aur.archlinux.org/packages/cc-pocket-bin) with `yay -S cc-pocket-bin`. |
-| **Windows (experimental)** | Download the latest `.zip` from [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=windows). Look for releases tagged `windows/v*`. |
+Developers building another client platform can follow the [development instructions](#development).
 
 ## Free to Use
 

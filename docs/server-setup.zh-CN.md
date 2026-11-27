@@ -4,11 +4,10 @@
 
 **安装路线：GitHub 负责编译和测试，服务器只下载现成的运行包。** 不需要在服务器克隆 CC Pocket 源码，也不用运行 `npm ci`、`npm run bridge:build` 或测试套件。
 
-## 当前版本与构建分支（2026-11-22）
+## 当前版本与构建分支（2026-11-27）
 
-本教程当前服务器目标为 **Bridge 1.119.0**，源码分支为
-[`upgrade/deepseek-bridge-1.119.0`](https://github.com/zwthys-cyber/ccpocket/tree/upgrade/deepseek-bridge-1.119.0)。
-该版本已通过 GitHub 上的 2674 项测试、类型检查、编译、依赖审计和运行包启动检查；见[部署与构建记录](bridge-server-status.zh-CN.md)。
+本教程安装 **Bridge 1.122.0**，维护分支为 `feat/bridge-gallery-reliability`，线上补丁提交为 [`fa20a82`](https://github.com/zwthys-cyber/ccpocket/tree/fa20a82c9f9203305e1220fd9fec39f1c7827de4)。GitHub 已通过 2,733 项 Bridge 测试、类型检查、编译和运行包启动检查，并验证了从前一个 1.122.0 补丁升级后的图库和聊天历史。[部署与构建记录](bridge-server-status.zh-CN.md)
+
 Node.js 最低要求为 **22.19.0**，以下安装步骤使用已验证的 **24.22.1**。
 
 使用 DeepSeek 时，无需在服务器下载模型或配置显卡；安装 Bridge 和 Claude Code 运行条件后，按[DeepSeek 指南](deepseek.zh-CN.md)配置自己的 API Key。手机在 **Claude** 入口选择 `deepseek-v4-pro` 或 Flash。
@@ -29,7 +28,7 @@ Node.js 最低要求为 **22.19.0**，以下安装步骤使用已验证的 **24.
 
 - **Ubuntu 24.04、x86_64 / amd64、systemd**。当前运行包不适用于 ARM、Alpine 或没有 systemd 的容器。
 - 可以通过 SSH 登录的 `root` 账号。其他管理员账号可以先执行 `sudo -i`，再按下面操作。
-- 一个 GitHub 账号，用来下载 Actions 构建包；一个可使用 Codex 的账号。
+- 一个可使用 Codex 的账号。公开发布的完整运行包可直接下载；重新构建或从 Actions 下载时需要 GitHub 账号。
 - 手机已经具备安装 CC Pocket 的条件；iPhone 的 TrollStore 包需要设备本身支持 TrollStore。
 
 先在你自己的电脑终端执行，把“服务器公网IP”换成云厂商控制台显示的地址：
@@ -66,7 +65,7 @@ Node.js 是 Bridge 的运行环境，不是编译工具。本教程固定使用�
 先安装基础工具：
 
 ```bash
-apt-get update && apt-get install -y git curl ca-certificates xz-utils gh openssl python3 nano
+apt-get update && apt-get install -y git curl ca-certificates xz-utils unzip gh openssl python3 nano
 ```
 
 再复制下面**整个代码块**。它会下载 Node.js 官方二进制，核对校验值后安装；任意一步失败都会停止这个代码块：
@@ -115,27 +114,22 @@ codex login status
 
 **这里登录的是 Codex，不是 GitHub。** 不要把验证码、`auth.json` 或 API Key 粘贴到 Issue、聊天记录或仓库。
 
-## 3. 在 GitHub 生成运行包
+## 3. 在 GitHub 获取已验证的运行包
 
-在**浏览器**打开 [Bridge Security Build 工作流](https://github.com/zwthys-cyber/ccpocket/actions/workflows/bridge-security-build.yml)：
+打开 [DeepSeek Server Build 的成功记录](https://github.com/zwthys-cyber/ccpocket/actions/runs/45976797469)。任务 ID 为 `45976797469`，目标提交为 `fa20a82`。
 
-1. 登录有本仓库写入权限的 GitHub 账号。
-2. 点击 **Run workflow（运行工作流）**。
-3. 分支选 **`upgrade/deepseek-bridge-1.119.0`**，`upstream_version` **留空**，再点击运行。这会构建已完成兼容适配的 1.119.0 源码。
-4. 等这次任务变成绿色，且 `repair-verify-package` 作业成功。
-5. 打开任务详情，底部应出现 `bridge-linux-x64-数字` 这个 Artifact（构建包）。
+- **新服务器和常规升级**使用 [`deepseek-server-runtime` 完整包](https://github.com/zwthys-cyber/ccpocket/releases/download/bridge-maintained/v1.122.0-fa20a82/deepseek-server-runtime.zip)。内含 Linux x64 生产依赖、`bridge-deepseek-linux-x64.tar.gz`、对应的 SHA-256 和 `BUILD_COMMIT`。
+- **已部署相同依赖的服务器**可使用 [`deepseek-server-update` 增量包](https://github.com/zwthys-cyber/ccpocket/releases/download/bridge-maintained/v1.122.0-fa20a82/deepseek-server-update.zip)。它仅包含程序和清单，须验证现有运行目录的 `package.json`、`package-lock.json` 和 `packages/bridge/package.json` 与增量包逐字节一致；任一不同就选完整包。下面的命令统一使用完整包。
 
-**没有绿色成功结果，或没有构建包，就不要继续部署。**
+上述链接指向 GitHub Releases。Actions 也提供同一组已验证的 ZIP，保留 14 天。需要重新构建时，有写权限的维护者可以在已登录的电脑上运行以下命令。GitHub runner 会重新构建、验证和上传；提交应与准备部署的版本一致。[构建工作流源码](https://github.com/zwthys-cyber/ccpocket/blob/fa20a82c9f9203305e1220fd9fec39f1c7827de4/.github/workflows/deepseek-server-build.yml)
 
-当前工作流会尝试在声明的版本范围内更新依赖，然后执行漏洞审计、Bridge 测试、类型检查、编译和运行包启动检查。填写 `upstream_version` 时，还会核对上游发布的 Git 提交，三方合并对应版本的 Bridge 代码和相关设计文档，并更新实际版本号；有冲突会停止，不会强行覆盖本分支定制。检查通过后，源码或锁文件的变化会提交回所选分支；它不是一个只读的打包按钮。因此只对你打算部署的维护分支运行，不要随便选择旧备份标签。当前部署请选择 `upgrade/deepseek-bridge-1.119.0`。填写比当前版本更高的 `upstream_version` 只是发起新一轮升级，仍须处理冲突并通过检查后才能部署。
+```bash
+gh workflow run 426834290 --repo zwthys-cyber/ccpocket --ref feat/bridge-gallery-reliability
+```
 
-运行包内已经包含 Bridge 程序和生产依赖。它是 **Linux 服务器端**，不是手机安装包，也不是源码 ZIP。
+## 4. 下载并校验运行包
 
-当前 Artifact 保存 **14 天**。以后装新服务器时如果旧包过期，重新运行此工作流即可；不要长期记住某一次任务的编号。仅下载的人需要仓库读取权限；没有运行权限时，请维护者代为生成构建包。
-
-## 4. 登录 GitHub，下载运行包
-
-公开仓库的源码可以匿名克隆，但 **下载 Actions 构建包仍需要 GitHub 登录**。在服务器执行：
+**默认使用公开 Release，无需 GitHub 登录。** 可直接跳到下面下载并校验的代码块。只有下载 Actions 重新生成的产物时，才需要先在服务器执行：
 
 ```bash
 gh auth login --hostname github.com --git-protocol https --web
@@ -155,38 +149,39 @@ gh auth setup-git
 gh auth status
 ```
 
-然后列出当前服务器分支最近成功的运行：
+执行下面的代码块，直接回车可下载公开 Release。要从 Actions 获取本次构建，可输入 `45976797469`；如果维护者重新构建同一提交，则输入新任务的 ID。
 
-```bash
-gh run list --repo zwthys-cyber/ccpocket \
-  --workflow bridge-security-build.yml --branch upgrade/deepseek-bridge-1.119.0 \
-  --status success --limit 5
-```
-
-记下你在第 3 步生成的那次任务的 **ID 数字**。不要误选名为 `Test` 或 `Bridge Release` 的其他工作流。当前已部署版本来自一次 **Bridge Upgrade Build** 运行，其产物前缀是 `bridge-upgrade-linux-x64-`；本教程通过 **Bridge Security Build** 重新生成同一源码，以下命令使用它的 `bridge-linux-x64-` 前缀，二者不要混用。
-
-下面整个代码块会让你输入 ID，下载构建包、核对文件校验值，然后以较低 CPU 优先级解压。**这里没有编译或安装 npm 依赖。**
+公开 Release 路径会核对 ZIP 的 SHA-256，Actions 路径会核对工作流和提交。两种路径都会校验内部 tar 包和解压后的 `BUILD_COMMIT`，然后记录待安装的目录。
 
 ```bash
 (
   set -e
-  read -rp "请输入成功的 Bridge Security Build 任务 ID: " CCPOCKET_RUN_ID
-  [[ "$CCPOCKET_RUN_ID" =~ ^[0-9]+$ ]]
-  test "$(gh run view "$CCPOCKET_RUN_ID" --repo zwthys-cyber/ccpocket \
-    --json status,conclusion,headBranch \
-    --jq '.status + ":" + .conclusion + ":" + .headBranch')" = "completed:success:upgrade/deepseek-bridge-1.119.0"
+  read -rp "直接回车下载公开 Release，或输入 DeepSeek Server Build 任务 ID: " CCPOCKET_RUN_ID
+  CCPOCKET_EXPECTED=fa20a82c9f9203305e1220fd9fec39f1c7827de4
   mkdir -p /root/ccpocket-artifacts /root/ccpocket-releases /root/.config/ccpocket
-  CCPOCKET_DOWNLOAD=$(mktemp -d "/root/ccpocket-artifacts/$CCPOCKET_RUN_ID.XXXXXX")
-  gh run download "$CCPOCKET_RUN_ID" --repo zwthys-cyber/ccpocket \
-    --name "bridge-linux-x64-$CCPOCKET_RUN_ID" --dir "$CCPOCKET_DOWNLOAD"
+  CCPOCKET_DOWNLOAD=$(mktemp -d /root/ccpocket-artifacts/runtime.XXXXXX)
+  if [ -z "$CCPOCKET_RUN_ID" ]; then
+    curl -fL 'https://github.com/zwthys-cyber/ccpocket/releases/download/bridge-maintained/v1.122.0-fa20a82/deepseek-server-runtime.zip' \
+      -o "$CCPOCKET_DOWNLOAD/runtime.zip"
+    (cd "$CCPOCKET_DOWNLOAD" && printf '%s  runtime.zip\n' \
+      '0e2b41d3a45a45b0fe882cddde44a213540890548445c4c168976d1894c4398d' | sha256sum -c -)
+    unzip -q "$CCPOCKET_DOWNLOAD/runtime.zip" -d "$CCPOCKET_DOWNLOAD"
+  else
+    [[ "$CCPOCKET_RUN_ID" =~ ^[0-9]+$ ]]
+    test "$(gh api "repos/zwthys-cyber/ccpocket/actions/runs/$CCPOCKET_RUN_ID" \
+      --jq '[.workflow_id, .status, .conclusion, .head_sha] | @tsv')" = \
+      "$(printf '426834290\tcompleted\tsuccess\t%s' "$CCPOCKET_EXPECTED")"
+    gh run download "$CCPOCKET_RUN_ID" --repo zwthys-cyber/ccpocket \
+      --name deepseek-server-runtime --dir "$CCPOCKET_DOWNLOAD"
+  fi
   cd "$CCPOCKET_DOWNLOAD"
-  nice -n 19 sha256sum -c bridge-linux-x64.tar.gz.sha256
+  nice -n 19 sha256sum -c bridge-deepseek-linux-x64.tar.gz.sha256
   CCPOCKET_COMMIT=$(tr -d '\r\n' < BUILD_COMMIT)
-  [[ "$CCPOCKET_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+  test "$CCPOCKET_COMMIT" = "$CCPOCKET_EXPECTED"
   CCPOCKET_RELEASE="/root/ccpocket-releases/$CCPOCKET_COMMIT"
   if [ ! -d "$CCPOCKET_RELEASE" ]; then
     CCPOCKET_STAGE=$(mktemp -d /root/ccpocket-releases/staging.XXXXXX)
-    nice -n 19 tar -xzf bridge-linux-x64.tar.gz -C "$CCPOCKET_STAGE"
+    nice -n 19 tar -xzf bridge-deepseek-linux-x64.tar.gz -C "$CCPOCKET_STAGE"
     test "$(cat "$CCPOCKET_STAGE/BUILD_COMMIT")" = "$CCPOCKET_COMMIT"
     test -f "$CCPOCKET_STAGE/packages/bridge/dist/cli.js"
     mv "$CCPOCKET_STAGE" "$CCPOCKET_RELEASE"
@@ -198,7 +193,7 @@ gh run list --repo zwthys-cyber/ccpocket \
 )
 ```
 
-应看到 `bridge-linux-x64.tar.gz: OK` 和“下载完成”。如果报错，先解决错误，不要直接跳到下一步。
+应看到 `bridge-deepseek-linux-x64.tar.gz: OK` 和“下载完成”。如果报错，先解决错误，不要直接跳到下一步。
 
 ## 5. 生成手机连接密钥
 
@@ -338,7 +333,7 @@ journalctl --user -u ccpocket-bridge -n 80 --no-pager
 
 ### 安装 App 并填写信息
 
-1. 从 [本仓库 Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=trollstore) 下载适合设备的包。iOS 的文件为 `CC-Pocket-TrollStore-unsigned.ipa`，需要支持 TrollStore 的设备；它不是 App Store 安装方式。
+1. 下载 [CC Pocket 1.140.9（272）iOS 安装包](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.9%2B272/CC-Pocket-TrollStore-unsigned.ipa)，在支持的设备上用 TrollStore 打开。[发布说明与校验文件](https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.9%2B272)
 2. 打开 CC Pocket，添加服务器，选择手动填写连接信息。
 3. 服务器地址填第 5 步输出的地址，例如 `ws://你的新服务器IP:8765`；API Key / 连接密钥填同一步生成的密钥。
 4. 连接后选择 `/root/projects` 下的一个项目目录，再选择 **Codex**。
@@ -377,7 +372,7 @@ git -C /root/projects/hello-ccpocket init
 
 ## 以后怎么更新和回退
 
-**更新：** 先在手机结束正在执行的任务，避免重启打断任务。重新完成第 3、4 步，得到一个在 GitHub 完成验证的新包。重新打包当前 1.119.0 时，选择维护分支 `upgrade/deepseek-bridge-1.119.0` 并将 `upstream_version` 留空。要升级到更高的上游版本，需要同步真实源码与依赖、保留本分支定制并重新通过 GitHub 验证；不能只修改版本号。不要重新生成 `bridge.env` 或 `deepseek.env`，否则手机连接或模型凭据可能失效。
+先结束正在执行的任务，再按第 3、4 步准备经过验证的新运行目录。保留现有的 `bridge.env`、`deepseek.env` 和旧运行目录。当前两个 1.122.0 补丁具有相同的版本号，按 `BUILD_COMMIT` 区分；本次目标为 `fa20a82`。将来更新到其他提交时，使用新发布记录中的下载地址、完整 ZIP 的 SHA-256 和目标提交。
 
 然后执行：
 
@@ -424,8 +419,8 @@ systemctl --user show ccpocket-bridge -p ExecStart -p WorkingDirectory -p DropIn
 | `git/node/gh: command not found` | 第 1 步是否成功；不要跳过失败的下载或安装 |
 | `Exec format error` / `GLIBC_… not found` | 是否是 Ubuntu 24.04 x86_64；ARM、Alpine 不能直接使用这个包 |
 | GitHub 提示输入 Username、无法读取私有项目 | `gh auth login` 和 `gh auth setup-git`；本项目目前公开，私有项目仍需自己的访问权限 |
-| 任务列表为空 | 第 3 步是否在 `upgrade/deepseek-bridge-1.119.0` 成功生成了包；确认所选工作流和产物前缀相符 |
-| `artifact not found` / 包已过期 | Artifact 只保留 14 天，重新在 GitHub 生成；确认 ID 对应正确工作流 |
+| 任务列表为空 | 在第 3 步检查成功的 DeepSeek Server Build 任务 ID，以及 `deepseek-server-runtime` 完整包 |
+| `artifact not found` / 包已过期 | Actions 产物保留 14 天，可改用第 4 步的公开 Release；重建时确认任务 ID 对应正确工作流 |
 | Actions 报付款或额度问题 | 标准运行器在公开仓库免费，但账号付款异常仍可能限制任务；查看 GitHub Billing 和任务错误，不能保证改公开就一定恢复 |
 | `Failed to connect to bus` | 确认是 SSH 登录的完整 systemd 主机；执行 `loginctl enable-linger root`，并检查 `/run/user/0`；必要时重新 SSH 登录。不要去容器里启动 systemd |
 | 本机 health 正常、手机连接超时 | 云安全组、系统防火墙、地址和端口；手机不能填写 `127.0.0.1` |
@@ -443,7 +438,7 @@ systemctl --user show ccpocket-bridge -p ExecStart -p WorkingDirectory -p DropIn
 ## 参考
 
 - [中文首页](../README.zh-CN.md)
-- [实际构建工作流](../.github/workflows/bridge-security-build.yml)
+- [实际构建工作流](https://github.com/zwthys-cyber/ccpocket/blob/fa20a82c9f9203305e1220fd9fec39f1c7827de4/.github/workflows/deepseek-server-build.yml)
 - [Bridge 配置项](../packages/bridge/README.md#configuration)
 - [当前服务器版本与构建记录](bridge-server-status.zh-CN.md)
 - [DeepSeek 与 Pro 模型配置](deepseek.zh-CN.md)

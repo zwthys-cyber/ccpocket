@@ -672,20 +672,11 @@ h3 {
 .store-card:hover {
   border-color: var(--accent);
 }
-.qr {
-  background: #fff;
-  padding: 5px;
-  border-radius: 5px;
-}
 .store-platform {
   font-size: 10px;
   display: block;
-  margin: 0 0 8px 6px;
+  margin: 0 0 8px;
   color: var(--muted);
-}
-.store-badge {
-  object-fit: contain;
-  object-position: left;
 }
 .store-arrow {
   align-self: flex-start;
@@ -698,15 +689,6 @@ h3 {
   gap: 30px;
   font-size: 11px;
   margin-top: 26px;
-}
-.desktop-other {
-  display: flex;
-  gap: 17px;
-  color: var(--muted);
-  align-items: center;
-}
-.desktop-other > span {
-  font-size: 8px;
 }
 .faq-section {
   padding-block: 80px;
@@ -1053,13 +1035,6 @@ html[lang="ko"] h1 {
     gap: 10px;
     padding: 12px;
   }
-  .qr {
-    width: 66px;
-    height: 66px;
-  }
-  .store-badge {
-    max-width: 125px;
-  }
   .store-arrow {
     display: none;
   }
@@ -1327,13 +1302,6 @@ html[lang="ko"] h1 {
     padding: 14px;
     gap: 17px;
   }
-  .qr {
-    width: 76px;
-    height: 76px;
-  }
-  .store-badge {
-    max-width: 140px;
-  }
   .store-arrow {
     display: block;
     margin-left: auto;
@@ -1342,9 +1310,6 @@ html[lang="ko"] h1 {
     gap: 17px;
     flex-wrap: wrap;
     font-size: 10px;
-  }
-  .desktop-other {
-    gap: 12px;
   }
   .faq-section {
     display: block;
@@ -1425,10 +1390,6 @@ html[lang="ko"] h1 {
   }
   .store-card {
     gap: 12px;
-  }
-  .qr {
-    width: 62px;
-    height: 62px;
   }
   .command code {
     font-size: 10px;

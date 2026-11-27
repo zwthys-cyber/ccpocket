@@ -7,7 +7,7 @@ CodexとClaudeを、スマホのチャット感覚で。指示を出し、次の
 
 [CC Pocketを見る](https://zwthys-cyber.github.io/ccpocket/install/?lang=ja) · 無料で利用 · オープンソース
 
-[English README](README.md) | [简体中文版 README](README.zh-CN.md) | [한국어 README](README.ko.md)
+[English README](README.en.md) | [简体中文版 README](README.zh-CN.md) | [한국어 README](README.ko.md)
 
 <p align="center">
   <img src="docs/images/screenshots-ja.png" alt="CC Pocket screenshots" width="800">
@@ -15,25 +15,11 @@ CodexとClaudeを、スマホのチャット感覚で。指示を出し、次の
 
 ## インストール
 
-1. セッションを実行するマシンに、少なくとも1つのエージェント CLI を入れます:
-   [Codex](https://github.com/openai/codex) または [Claude](https://docs.anthropic.com/en/docs/claude-code)。
-2. 同じマシンに [Node.js](https://nodejs.org/) 20.18.1 以上を入れます。
-3. CC Pocket Bridge Server を起動します。
+**CC Pocket 1.140.9 (272)** · TrollStore 対応の iPhone・iPad に [IPA をダウンロード](https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.9%2B272/CC-Pocket-TrollStore-unsigned.ipa)して、TrollStore でインストールしてください。 [変更点と SHA-256](https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.9%2B272)
 
-```bash
-npx @ccpocket/bridge@latest
-```
+Linux x64 サーバーには [Bridge 1.122.0 の完全版](https://github.com/zwthys-cyber/ccpocket/releases/download/bridge-maintained/v1.122.0-fa20a82/deepseek-server-runtime.zip)をダウンロードできます。Node.js 22.19.0 以降を用意し、[中国語のセットアップ手順](docs/server-setup.zh-CN.md)に従ってサービスを設定してから、スマートフォンを接続してください。 [Bridge のリリースと更新パッケージ](https://github.com/zwthys-cyber/ccpocket/releases/tag/bridge-maintained/v1.122.0-fa20a82)
 
-4. CC Pocket をインストールし、Bridge Server が表示する QR コードをスキャンします。
-5. プロジェクトを選び、Codex / Claude を選択して、アプリからセッションを開始します。
-
-| プラットフォーム | インストール |
-|------------------|--------------|
-| **iOS / iPadOS** | <a href="https://github.com/zwthys-cyber/ccpocket/releases?q=trollstore"><img height="40" alt="App Storeからダウンロード" src="docs/images/app-store-badge.svg" /></a> |
-| **Android** | <a href="https://play.google.com/store/apps/details?id=com.zwthys.ccpocket"><img height="40" alt="Google Play で手に入れよう" src="docs/images/google-play-badge-ja.svg" /></a> |
-| **macOS** | 最新の `.dmg` は [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=macos) からダウンロードできます。`macos/v*` タグのリリースを探してください。Homebrew Cask を用いて `brew install --cask cc-pocket` でインストールすることもできます。 |
-| **Linux（実験的）** | 最新の `.tar.gz` は [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=linux) からダウンロードできます。`linux/v*` タグのリリースを探してください。コミュニティ管理の [AUR パッケージ](https://aur.archlinux.org/packages/cc-pocket-bin)を `yay -S cc-pocket-bin` でインストールすることもできます。 |
-| **Windows（実験的）** | 最新の `.zip` は [GitHub Releases](https://github.com/zwthys-cyber/ccpocket/releases?q=windows) からダウンロードできます。`windows/v*` タグのリリースを探してください。 |
+他のプラットフォーム向けのクライアントをビルドする手順は、[開発](#開発)を参照してください。
 
 ## 無料で利用できます
 

@@ -275,8 +275,8 @@
             </p>
             <a
               class="text-link"
-              href="https://github.com/zwthys-cyber/ccpocket/releases?q=macos"
-              ><span data-i18n="macDownload">Download for macOS</span>
+              href="https://github.com/zwthys-cyber/ccpocket/tree/689098965340e15cfe41a4dffa5284a93b947ebf/apps/mobile"
+              ><span data-i18n="appSource">View the app source</span>
               <span aria-hidden="true">↗</span></a
             >
           </div>
@@ -412,10 +412,10 @@
             04 — UP AND RUNNING
           </p>
           <h2 id="setup-title" data-i18n="setupTitle">
-            One command. Then you’re mobile.
+            Connect your phone to your server.
           </h2>
           <p data-i18n="setupDesc">
-            You’ll need Node.js 20.18.1+ and Codex or Claude on your computer.
+            Install the Linux x64 Bridge on a computer running Node.js 22.19.0+ and Codex or Claude.
           </p>
         </div>
         <div class="setup-grid">
@@ -423,11 +423,11 @@
             <span class="step-number mono">01</span>
             <h3 data-i18n="step1">Start the Bridge.</h3>
             <p data-i18n="step1Desc">
-              Run this on the computer where your agents live.
+              After following the server guide to install the service and set your connection key, start the Bridge.
             </p>
             <div class="command">
               <span aria-hidden="true">$</span
-              ><code id="bridge-command">npx @ccpocket/bridge@latest</code
+              ><code id="bridge-command">sudo systemctl start ccpocket-bridge</code
               ><button
                 id="copy-command"
                 data-i18n-label="copy"
@@ -451,9 +451,9 @@
           </div>
           <div class="setup-step">
             <span class="step-number mono">02</span>
-            <h3 data-i18n="step2">Scan. Connect.</h3>
+            <h3 data-i18n="step2">Connect the app.</h3>
             <p data-i18n="step2Desc">
-              Install CC Pocket and scan the QR code in your terminal.
+              Install the IPA with TrollStore, then enter your Bridge address and connection key.
             </p>
             <a class="text-link" href="#download"
               ><span data-i18n="getApp">Get CC Pocket</span
@@ -466,8 +466,8 @@
             <p data-i18n="step3Desc">
               Pick a project and an agent. Start a conversation.
             </p>
-            <a class="text-link" href="../how-to-run-codex-from-iphone-android/"
-              ><span data-i18n="setupGuide">Read the setup guide</span
+            <a class="text-link" href="https://github.com/zwthys-cyber/ccpocket/blob/main/docs/server-setup.zh-CN.md"
+              ><span data-i18n="setupGuide">Server setup guide (Chinese)</span
               ><span aria-hidden="true">↗</span></a
             >
           </div>
@@ -495,70 +495,42 @@
           />
           <p class="eyebrow mono">CC POCKET</p>
           <h2 id="download-title">
-            <span data-i18n="download1">Go live your life.</span><br /><span
-              class="accent"
-              data-i18n="download2"
-              >Bring your agents.</span
-            >
+            <span data-i18n="downloadTitle">Download CC Pocket</span>
           </h2>
-          <p data-i18n="downloadDesc">Free to use. Built in the open.</p>
+          <p data-i18n="downloadDesc">Install the IPA with TrollStore on a compatible iPhone or iPad. For a new Linux server, choose the full Bridge package.</p>
         </div>
         <div class="download-options">
           <a
             class="store-card"
-            href="https://github.com/zwthys-cyber/ccpocket/releases?q=trollstore"
-            ><img
-              class="qr"
-              src="../images/install-qr-app-store.png"
-              width="88"
-              height="88"
-              alt="App Store QR code"
-              loading="lazy"
-            />
-            <div>
-              <span class="store-platform">iPhone & iPad</span
-              ><img
-                class="store-badge"
-                src="../images/app-store-badge.svg"
-                width="135"
-                height="45"
-                alt="Download on the App Store"
-              />
-            </div>
-            <span class="store-arrow" aria-hidden="true">↗</span></a
-          ><a
-            class="store-card"
-            href="https://play.google.com/store/apps/details?id=com.zwthys.ccpocket"
-            ><img
-              class="qr"
-              src="../images/install-qr-google-play.png"
-              width="88"
-              height="88"
-              alt="Google Play QR code"
-              loading="lazy"
-            />
-            <div>
-              <span class="store-platform">Android</span
-              ><img
-                class="store-badge"
-                src="../images/google-play-badge-en.svg"
-                width="150"
-                height="45"
-                alt="Get it on Google Play"
-              />
-            </div>
-            <span class="store-arrow" aria-hidden="true">↗</span></a
+            href="https://github.com/zwthys-cyber/ccpocket/releases/download/trollstore/v1.140.9%2B272/CC-Pocket-TrollStore-unsigned.ipa"
           >
+            <div>
+              <span class="store-platform">iOS / iPadOS · 1.140.9 (272)</span>
+              <strong data-i18n="downloadIpa">Download TrollStore IPA</strong>
+            </div>
+            <span class="store-arrow" aria-hidden="true">↓</span>
+          </a>
+          <a
+            class="store-card"
+            href="https://github.com/zwthys-cyber/ccpocket/releases/download/bridge-maintained/v1.122.0-fa20a82/deepseek-server-runtime.zip"
+          >
+            <div>
+              <span class="store-platform">Linux x64 · 1.122.0 (fa20a82)</span>
+              <strong data-i18n="downloadBridge">Download Bridge ZIP</strong>
+            </div>
+            <span class="store-arrow" aria-hidden="true">↓</span>
+          </a>
         </div>
         <div class="desktop-downloads">
-          <a href="https://github.com/zwthys-cyber/ccpocket/releases?q=macos"
-            >macOS ↗</a
-          ><span class="desktop-other"
-            ><a href="https://github.com/zwthys-cyber/ccpocket/releases?q=linux"
-              >Linux ↗</a
-            ><a href="https://github.com/zwthys-cyber/ccpocket/releases?q=windows"
-              >Windows ↗</a
-            ><span data-i18n="experimental">experimental</span></span
+          <a
+            href="https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.9%2B272"
+            data-i18n="mobileRelease"
+            >Phone release notes and checksum</a
+          >
+          <a
+            href="https://github.com/zwthys-cyber/ccpocket/releases/tag/bridge-maintained/v1.122.0-fa20a82"
+            data-i18n="bridgeRelease"
+            >Bridge release and update package</a
           >
         </div>
       </section>

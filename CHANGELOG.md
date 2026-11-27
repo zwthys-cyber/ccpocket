@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.140.9+272 · TrollStore](https://github.com/zwthys-cyber/ccpocket/releases/tag/trollstore/v1.140.9%2B272) - 2026-11-27
+
+- Updated the mobile palette and icons, expanded Simplified Chinese coverage and made the phone interface follow the system language.
+- Fixed duplicate Codex user messages and incorrect steering timestamps after reconnecting or viewing a conversation on two devices. Deliberately repeated messages remain separate.
+- Fixed authenticated gallery deletion and recovery after concurrent deletes. The gallery uses thumbnails when the Bridge supplies them.
+- The accompanying [Bridge 1.122.0 maintenance build](https://github.com/zwthys-cyber/ccpocket/releases/tag/bridge-maintained/v1.122.0-fa20a82) is deployed at commit `fa20a82`. The [upgrade verification](https://github.com/zwthys-cyber/ccpocket/actions/runs/45976993918) covers gallery state after restart and restored Codex history.
+
 ## [1.140.2] - 2026-10-09
 
 ### Added
