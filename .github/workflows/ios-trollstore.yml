@@ -2,12 +2,19 @@ name: Capture CC Pocket UI refresh evidence
 
 on:
   workflow_dispatch:
+    inputs:
+      verification:
+        type: choice
+        options: [screenshots, bridge]
+        default: screenshots
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   screenshots:
+    if: inputs.verification != 'bridge'
     name: Flutter UI (${{ matrix.variant }})
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -176,3 +183,73 @@ jobs:
           path: ${{ runner.temp }}/ccpocket-ui
           if-no-files-found: error
           retention-days: 30
+  bridge:
+    if: inputs.verification == 'bridge'
+    name: Verify packaged Bridge 1.122.0 and authenticated gallery deletion
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.22.1'
+      - name: Download and verify the upgrade archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 45939314858 --repo "$GITHUB_REPOSITORY" \
+            --name bridge-linux-x64-45939314858 --dir "$RUNNER_TEMP/bridge-upgrade"
+          cd "$RUNNER_TEMP/bridge-upgrade"
+          sha256sum --check bridge-linux-x64.tar.gz.sha256
+          tar -xzf bridge-linux-x64.tar.gz
+          test "$(cat BUILD_COMMIT)" = fe64d775a1b23b71938f06d827e98e2ded5cf0a3
+          node packages/bridge/dist/cli.js --version | grep -Fx 'ccpocket-bridge 1.122.0'
+      - name: Upload and delete a disposable image via the packaged runtime
+        env:
+          BRIDGE_HOST: 127.0.0.1
+          BRIDGE_PORT: '18765'
+          BRIDGE_API_KEY: ci-gallery-demo-key
+          BRIDGE_DISABLE_MDNS: '1'
+          BRIDGE_DEMO_MODE: '1'
+        run: |
+          cd "$RUNNER_TEMP/bridge-upgrade"
+          node packages/bridge/dist/cli.js > "$RUNNER_TEMP/bridge-gallery.log" 2>&1 &
+          bridge_pid=$!
+          trap 'kill "$bridge_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent 'http://127.0.0.1:18765/health' >/dev/null; then break; fi
+            sleep 1
+          done
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { randomUUID } from 'node:crypto';
+
+          const host = 'http://127.0.0.1:18765';
+          const headers = { Authorization: `Bearer ${process.env.BRIDGE_API_KEY}` };
+          const health = await fetch(`${host}/health`).then(response => response.json());
+          assert.equal(health.status, 'ok');
+          assert.equal(health.auth, 'required');
+
+          const upload = await fetch(`${host}/api/gallery/upload`, {
+            method: 'POST',
+            headers: { ...headers, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jX1sAAAAASUVORK5CYII=',
+              mimeType: 'image/png',
+              projectPath: `/tmp/ci-gallery-${randomUUID()}`,
+            }),
+          });
+          const uploaded = await upload.json();
+          assert.equal(upload.status, 201, JSON.stringify(uploaded));
+          const url = `${host}/api/gallery/${uploaded.image.id}`;
+          const missingKey = await fetch(url, { method: 'DELETE' });
+          assert.equal(missingKey.status, 401);
+          const stored = await fetch(url, { headers });
+          assert.equal(stored.status, 200);
+          assert.equal(stored.headers.get('content-type'), 'image/png');
+          const deletion = await fetch(url, { method: 'DELETE', headers });
+          assert.equal(deletion.status, 200);
+          assert.deepEqual(await deletion.json(), { deleted: true });
+          const removed = await fetch(url, { headers });
+          assert.equal(removed.status, 404);
+          console.log('Uploaded, authenticated, deleted, and confirmed removal of the disposable gallery image.');
+          JS
