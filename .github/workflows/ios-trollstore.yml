@@ -5,8 +5,12 @@ on:
     inputs:
       verification:
         type: choice
-        options: [screenshots, bridge, icons]
+        options: [screenshots, bridge, icons, ipa]
         default: screenshots
+      ipa_run:
+        description: Successful TrollStore build run ID
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -23,9 +27,9 @@ jobs:
       matrix:
         include:
           - variant: before
-            ref: 4eceb20eb22d4df78c3495447717fe23db749b6d
+            ref: c60c212b54ed35592e595e1162bc2ba3dee15a34
           - variant: after
-            ref: 42965b837d594d98a5e54d17f30687bf4da692ae
+            ref: 31ada26bac19ee7ec9e11c80222caa551ec8319d
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -45,7 +49,6 @@ jobs:
           flutter pub get
           python3 - <<'PY'
           from pathlib import Path
-          from os import environ
 
           source = Path('test/home_content_skeleton_test.dart').read_text()
           imports = """import 'dart:io';
@@ -61,10 +64,6 @@ jobs:
               'Widget _buildHomeContent({',
               "Widget _buildHomeContent({\n  GlobalKey? screenshotKey,\n  ThemeData? screenshotTheme,",
               1,
-          )
-          new_session_action = (
-              'isConnected: true, onNewSession: () {},'
-              if environ['CCPOCKET_UI_VARIANT'] == 'before' else 'isConnected: true,'
           )
           source = source.replace(
               '      theme: AppTheme.darkTheme,\n      home: Scaffold(',
@@ -87,7 +86,7 @@ jobs:
                                 onDisconnect: () {},
                                 onOpenSettings: () {},
                                 onOpenGallery: () {},
-                                NEW_SESSION_ACTION
+                                isConnected: true,
                               ),
                             ],
                           ),
@@ -95,7 +94,6 @@ jobs:
                       : null,""",
               1,
           )
-          source = source.replace('NEW_SESSION_ACTION', new_session_action, 1)
           marker = "  group('HomeContent skeleton', () {"
           assert source.count(marker) == 1
           source = source.replace(marker, """  testWidgets('capture refresh evidence', (tester) async {
@@ -412,8 +410,14 @@ jobs:
           export CCPOCKET_UI_OUTPUT="$RUNNER_TEMP/ccpocket-ui"
           flutter_sdk="$(dirname "$(dirname "$(readlink -f "$(command -v flutter)")")")"
           export CCPOCKET_MATERIAL_ICONS="$flutter_sdk/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf"
+          if [ -f assets/fonts/icons/CCPocketIcons.otf ]; then
+            export CCPOCKET_MATERIAL_ICONS="$PWD/assets/fonts/icons/CCPocketIcons.otf"
+          fi
           flutter test --no-pub --concurrency=1 --plain-name 'capture refresh evidence' \
             test/ui_refresh_evidence_test.dart test/ui_surface_evidence_test.dart test/ui_settings_evidence_test.dart
+          cp assets/icon.png "$CCPOCKET_UI_OUTPUT/launcher.png"
+          cp assets/icon_light_outline.png "$CCPOCKET_UI_OUTPUT/launcher-light.png"
+          cp assets/icon_pro_copper_emerald.png "$CCPOCKET_UI_OUTPUT/launcher-supporter.png"
           printf '%s\n' "$(git rev-parse HEAD)" > "$CCPOCKET_UI_OUTPUT/commit.txt"
       - uses: actions/upload-artifact@v7
         with:
@@ -451,6 +455,46 @@ jobs:
           name: CC-Pocket-icon-assets
           path: ${{ runner.temp }}/ccpocket-icon-assets.tar.gz
           if-no-files-found: error
+  ipa:
+    if: inputs.verification == 'ipa'
+    name: Verify the installed asset manifest in the TrollStore IPA
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 31ada26bac19ee7ec9e11c80222caa551ec8319d
+      - name: Check version, bundle identity and font inclusion
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IPA_RUN: ${{ inputs.ipa_run }}
+        run: |
+          [[ "$IPA_RUN" =~ ^[0-9]+$ ]]
+          gh run download "$IPA_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name CC-Pocket-TrollStore-unsigned-31ada26bac19ee7ec9e11c80222caa551ec8319d \
+            --dir "$RUNNER_TEMP/ios-artifact"
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          import json, os, plistlib
+
+          ipa = Path(os.environ['RUNNER_TEMP']) / 'ios-artifact/CC-Pocket-TrollStore-unsigned.ipa'
+          asset_root = 'Payload/Runner.app/Frameworks/App.framework/flutter_assets/'
+          font = 'assets/fonts/icons/CCPocketIcons.otf'
+          with ZipFile(ipa) as archive:
+              assert archive.testzip() is None
+              info = plistlib.loads(archive.read('Payload/Runner.app/Info.plist'))
+              assert info['CFBundleIdentifier'] == 'com.zwthys.ccpocket'
+              assert info['CFBundleShortVersionString'] == '1.140.8'
+              assert info['CFBundleVersion'] == '271'
+              assert 'Payload/Runner.app/Assets.car' in archive.namelist()
+              manifest = json.loads(archive.read(asset_root + 'FontManifest.json'))
+              icons = [entry for entry in manifest if entry['family'] == 'MaterialIcons']
+              assert len(icons) == 1, icons
+              assert [item['asset'] for item in icons[0]['fonts']] == [font], icons
+              assert archive.read(asset_root + font) == (Path('apps/mobile') / font).read_bytes()
+              print('TrollStore 1.140.8+271, app bundle ID, native images and custom Flutter icon font verified.')
+          PY
   bridge:
     if: inputs.verification == 'bridge'
     name: Verify packaged Bridge 1.122.0 and authenticated gallery deletion
