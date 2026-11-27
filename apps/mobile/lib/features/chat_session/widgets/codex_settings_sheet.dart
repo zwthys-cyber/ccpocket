@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../l10n/app_localizations.dart';
+import '../../../l10n/session_labels.dart';
 import '../../../models/messages.dart';
 import '../../../widgets/codex_effort_slider.dart';
 
@@ -115,13 +116,15 @@ class _CodexSettingsSheetState extends State<CodexSettingsSheet> {
               _SettingsRow(
                 key: const ValueKey('codex_effort_advanced'),
                 label: l.effort,
-                value: _effort.label,
+                value: l.reasoningLevel(_effort),
                 onTap: () => _showEffortPicker(context),
               ),
               _SettingsRow(
                 key: const ValueKey('codex_speed_advanced'),
-                label: 'Speed',
-                value: _speed.label,
+                label: l.speedLabel,
+                value: _speed == CodexSpeed.fast
+                    ? l.speedFastLabel
+                    : l.sandboxStandard,
                 onTap: () => _showSpeedPicker(context),
               ),
             ],
@@ -143,28 +146,30 @@ class _CodexSettingsSheetState extends State<CodexSettingsSheet> {
   }
 
   void _showEffortPicker(BuildContext context) {
+    final l = AppLocalizations.of(context);
     _showPicker<ReasoningEffort>(
       context: context,
       title: AppLocalizations.of(context).effort,
       values: _efforts,
       selected: _effort,
-      label: (effort) => effort.label,
-      subtitle: (effort) => effort == ReasoningEffort.ultra
-          ? 'Uses more usage and automatic task delegation'
-          : null,
+      label: l.reasoningLevel,
+      subtitle: (effort) =>
+          effort == ReasoningEffort.ultra ? l.ultraEffortDetail : null,
       onSelected: _selectEffort,
     );
   }
 
   void _showSpeedPicker(BuildContext context) {
+    final l = AppLocalizations.of(context);
     _showPicker<CodexSpeed>(
       context: context,
-      title: 'Speed',
+      title: l.speedLabel,
       values: [CodexSpeed.standard, if (_supportsFast) CodexSpeed.fast],
       selected: _speed,
-      label: (speed) => speed.label,
+      label: (speed) =>
+          speed == CodexSpeed.fast ? l.speedFastLabel : l.sandboxStandard,
       subtitle: (speed) =>
-          speed == CodexSpeed.fast ? '1.5× speed, more usage' : 'Default speed',
+          speed == CodexSpeed.fast ? l.speedFastDetail : l.speedStandardDetail,
       onSelected: _selectSpeed,
     );
   }

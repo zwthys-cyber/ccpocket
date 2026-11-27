@@ -2100,6 +2100,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsTitle => 'Settings';
 
   @override
+  String get settingsBridgeMachine => 'Bridge machine';
+
+  @override
+  String get settingsNotConnected => 'Not connected';
+
+  @override
+  String get sectionAgents => 'AGENTS';
+
+  @override
+  String get settingsBothAgents => 'Both';
+
+  @override
   String get sectionGeneral => 'GENERAL';
 
   @override
@@ -3461,4 +3473,355 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get usageResetFailed =>
       'Reset could not be confirmed. Refresh usage before retrying.';
+
+  @override
+  String get groupRecent => 'Grouped';
+
+  @override
+  String get listRecent => 'List';
+
+  @override
+  String get toggleRecentGrouping => 'Toggle recent session grouping';
+
+  @override
+  String secondsAgo(int seconds) {
+    return '${seconds}s ago';
+  }
+
+  @override
+  String todayAt(String time) {
+    return 'Today $time';
+  }
+
+  @override
+  String yesterdayAt(String time) {
+    return 'Yesterday $time';
+  }
+
+  @override
+  String get scrollToBottom => 'Scroll to bottom';
+
+  @override
+  String get invalidPairingQr => 'Not a valid CC Pocket connection QR code';
+
+  @override
+  String get qrScanUnavailable =>
+      'QR camera scan is not available on this platform. Enter the Bridge URL manually.';
+
+  @override
+  String get qrScanHint =>
+      'Point camera at the QR code\nshown by bridge server';
+
+  @override
+  String get sessionCompleteTitle => 'Session Complete';
+
+  @override
+  String get sessionDone => 'Session done';
+
+  @override
+  String get codexSessionDone => 'Codex session done';
+
+  @override
+  String startWithProvider(String provider) {
+    return 'Start with $provider';
+  }
+
+  @override
+  String get permissionAutoMode => 'Auto';
+
+  @override
+  String get permissionAcceptEditsMode => 'Accept Edits';
+
+  @override
+  String get permissionPlanMode => 'Plan';
+
+  @override
+  String get permissionBypassMode => 'Bypass All';
+
+  @override
+  String get permissionChipAcceptEdits => 'Edits';
+
+  @override
+  String get permissionChipBypass => 'Bypass';
+
+  @override
+  String get permissionsLabel => 'Permissions';
+
+  @override
+  String get defaultPermissionsLabel => 'Default permissions';
+
+  @override
+  String get autoReviewModeLabel => 'Auto-review';
+
+  @override
+  String get fullAccessLabel => 'Full access';
+
+  @override
+  String get fullAccessShort => 'Full';
+
+  @override
+  String get customPermissionsLabel => 'Custom (config.toml)';
+
+  @override
+  String get customPermissionsShort => 'Custom';
+
+  @override
+  String get permissionsFromConfig => 'Codex uses permissions from config.toml';
+
+  @override
+  String get permissionsFromProfile =>
+      'Codex uses permissions from the selected profile';
+
+  @override
+  String get approvalNeverAsk => 'Never Ask';
+
+  @override
+  String get approvalOnRequest => 'On Request';
+
+  @override
+  String get approvalUntrusted => 'Untrusted';
+
+  @override
+  String get sandboxSafeMode => 'Sandbox (Safe Mode)';
+
+  @override
+  String get sandboxStandard => 'Standard';
+
+  @override
+  String get sandboxOnLabel => 'Sandbox On';
+
+  @override
+  String get sandboxOffLabel => 'Sandbox Off';
+
+  @override
+  String get sandboxChipOff => 'No SB';
+
+  @override
+  String get planOnLabel => 'Plan On';
+
+  @override
+  String get planOffLabel => 'Plan Off';
+
+  @override
+  String get speedLabel => 'Speed';
+
+  @override
+  String get fastOn => 'Fast mode on';
+
+  @override
+  String get fastOff => 'Fast mode off';
+
+  @override
+  String get fastSpeedDescription => 'Fast — 1.5× speed, more usage';
+
+  @override
+  String get effortNoneLabel => 'None';
+
+  @override
+  String get effortMinimalLabel => 'Minimal';
+
+  @override
+  String get effortLightLabel => 'Light';
+
+  @override
+  String get effortLowLabel => 'Low';
+
+  @override
+  String get effortMediumLabel => 'Medium';
+
+  @override
+  String get effortHighLabel => 'High';
+
+  @override
+  String get effortXHighLabel => 'Extra High';
+
+  @override
+  String get effortClaudeXHighLabel => 'X High';
+
+  @override
+  String get effortMaxLabel => 'Max';
+
+  @override
+  String get effortUltraLabel => 'Ultra';
+
+  @override
+  String get webSearchDisabled => 'Disabled';
+
+  @override
+  String get webSearchCached => 'Cached';
+
+  @override
+  String get webSearchLive => 'Live';
+
+  @override
+  String get galleryLoading => 'Loading gallery…';
+
+  @override
+  String get galleryLoadFailed => 'Could not load the gallery.';
+
+  @override
+  String get galleryDeleteUnauthorized =>
+      'Check your Bridge connection key, then try again.';
+
+  @override
+  String get galleryOffline =>
+      'Cannot reach the Bridge. Check your connection and try again.';
+
+  @override
+  String get galleryTimedOut =>
+      'The Bridge did not respond in time. Please try again.';
+
+  @override
+  String get galleryImageMissing => 'This image is already gone.';
+
+  @override
+  String get galleryDeleteServerError =>
+      'The Bridge could not delete the image. Please try again.';
+
+  @override
+  String get galleryDeleted => 'Image deleted';
+
+  @override
+  String get thinkingStreamingLabel => 'Thinking...';
+
+  @override
+  String get thinkingLabel => 'Thinking';
+
+  @override
+  String get gitRevert => 'Revert';
+
+  @override
+  String get gitCommitLabel => 'Commit';
+
+  @override
+  String get gitCommitPush => 'Commit & Push';
+
+  @override
+  String gitCommittedHash(String hash) {
+    return 'Committed: $hash';
+  }
+
+  @override
+  String get gitCommitSuccess => 'Success';
+
+  @override
+  String get gitUnknownError => 'Unknown error';
+
+  @override
+  String get gitTryAgain => 'Try Again';
+
+  @override
+  String get gitAutoGenerateAI => 'Auto-generate with AI';
+
+  @override
+  String get gitCommitMessage => 'Commit message';
+
+  @override
+  String get gitAutoGenerateMessage => 'Auto-generate message';
+
+  @override
+  String get gitCommitting => 'Committing...';
+
+  @override
+  String get gitPushing => 'Pushing...';
+
+  @override
+  String get gitViewFile => 'View File';
+
+  @override
+  String get gitViewFileDescription => 'Open the full current file';
+
+  @override
+  String get gitStage => 'Stage';
+
+  @override
+  String get gitUnstage => 'Unstage';
+
+  @override
+  String get gitRequestChange => 'Request Change';
+
+  @override
+  String get gitFileFeedback => 'Send this file back to AI with feedback';
+
+  @override
+  String get gitHunkFeedback => 'Send this hunk back to AI with feedback';
+
+  @override
+  String get gitRevertAll => 'Revert All';
+
+  @override
+  String get gitStageAll => 'Stage All';
+
+  @override
+  String get gitUnstageAll => 'Unstage All';
+
+  @override
+  String get gitFilesLabel => 'Files';
+
+  @override
+  String get gitFocusDiff => 'Focus diff';
+
+  @override
+  String get gitExitFocus => 'Exit focus mode';
+
+  @override
+  String get gitBranchList => 'Branches';
+
+  @override
+  String get gitNewBranch => 'New Branch';
+
+  @override
+  String get gitSearchBranches => 'Search branches...';
+
+  @override
+  String get gitBranchInUse => 'In use by another worktree';
+
+  @override
+  String get gitBranchNameHint => 'Branch name (e.g. feat/login)';
+
+  @override
+  String get gitCreateCheckout => 'Create & Checkout';
+
+  @override
+  String get gitNoUpstream => 'No upstream';
+
+  @override
+  String get gitStaged => 'Staged';
+
+  @override
+  String get gitUnstaged => 'Unstaged';
+
+  @override
+  String get sessionPlanningLabel => 'Planning';
+
+  @override
+  String get environmentSection => 'Environment';
+
+  @override
+  String get profileLabel => 'Profile';
+
+  @override
+  String get worktreeTooltip =>
+      'Creates an isolated git working tree for this session.';
+
+  @override
+  String get sessionStartedLabel => 'Session started';
+
+  @override
+  String systemSubtypeLabel(String subtype) {
+    return 'System: $subtype';
+  }
+
+  @override
+  String get speedFastLabel => 'Fast';
+
+  @override
+  String get speedFastDetail => '1.5× speed, more usage';
+
+  @override
+  String get speedStandardDetail => 'Default speed';
+
+  @override
+  String get ultraEffortDetail =>
+      'Uses more usage and automatic task delegation';
 }

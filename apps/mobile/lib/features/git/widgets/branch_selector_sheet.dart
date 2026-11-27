@@ -47,7 +47,7 @@ class _BranchSelectorContentState extends State<_BranchSelectorContent> {
         final cubit = context.read<BranchCubit>();
         final cs = Theme.of(context).colorScheme;
         final filtered = cubit.filteredBranches;
-        final l = Localizations.of<AppLocalizations>(context, AppLocalizations);
+        final l = AppLocalizations.of(context);
 
         return AnimatedPadding(
           duration: const Duration(milliseconds: 180),
@@ -72,7 +72,7 @@ class _BranchSelectorContentState extends State<_BranchSelectorContent> {
                       child: Row(
                         children: [
                           Text(
-                            'Branches',
+                            l.gitBranchList,
                             style: TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.w600,
@@ -85,14 +85,14 @@ class _BranchSelectorContentState extends State<_BranchSelectorContent> {
                               'branch_selector_dismiss_keyboard_button',
                             ),
                             icon: const Icon(Icons.keyboard_hide),
-                            tooltip: l?.dismissKeyboard ?? 'Dismiss keyboard',
+                            tooltip: l.dismissKeyboard,
                             onPressed: () =>
                                 FocusManager.instance.primaryFocus?.unfocus(),
                           ),
                           IconButton(
                             key: const ValueKey('create_branch_button'),
                             icon: const Icon(Icons.add),
-                            tooltip: 'New Branch',
+                            tooltip: l.gitNewBranch,
                             onPressed: () =>
                                 _showCreateBranchDialog(context, cubit),
                           ),
@@ -107,10 +107,10 @@ class _BranchSelectorContentState extends State<_BranchSelectorContent> {
                         key: const ValueKey('branch_search_field'),
                         controller: _searchController,
                         onChanged: cubit.search,
-                        decoration: const InputDecoration(
-                          hintText: 'Search branches...',
-                          prefixIcon: Icon(Icons.search, size: 20),
-                          border: OutlineInputBorder(),
+                        decoration: InputDecoration(
+                          hintText: l.gitSearchBranches,
+                          prefixIcon: const Icon(Icons.search, size: 20),
+                          border: const OutlineInputBorder(),
                           isDense: true,
                         ),
                       ),
@@ -177,7 +177,7 @@ class _BranchSelectorContentState extends State<_BranchSelectorContent> {
                               ),
                               subtitle: isCheckedOut
                                   ? Text(
-                                      'In use by another worktree',
+                                      l.gitBranchInUse,
                                       style: TextStyle(
                                         fontSize: 11,
                                         color: cs.outlineVariant,
@@ -209,25 +209,26 @@ class _BranchSelectorContentState extends State<_BranchSelectorContent> {
   }
 
   void _showCreateBranchDialog(BuildContext context, BranchCubit cubit) {
+    final l = AppLocalizations.of(context);
     final nameController = TextEditingController();
     showDialog<void>(
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('New Branch'),
+          title: Text(l.gitNewBranch),
           content: TextField(
             key: const ValueKey('new_branch_name_field'),
             controller: nameController,
-            decoration: const InputDecoration(
-              hintText: 'Branch name (e.g. feat/login)',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              hintText: l.gitBranchNameHint,
+              border: const OutlineInputBorder(),
             ),
             autofocus: true,
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
+              child: Text(l.cancel),
             ),
             FilledButton(
               key: const ValueKey('create_branch_confirm'),
@@ -238,7 +239,7 @@ class _BranchSelectorContentState extends State<_BranchSelectorContent> {
                   Navigator.of(dialogContext).pop();
                 }
               },
-              child: const Text('Create & Checkout'),
+              child: Text(l.gitCreateCheckout),
             ),
           ],
         );
@@ -258,7 +259,7 @@ class _BranchRemoteStatusIndicator extends StatelessWidget {
     final status = this.status;
     if (status == null || !status.hasUpstream) {
       return Text(
-        'No upstream',
+        AppLocalizations.of(context).gitNoUpstream,
         style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant),
       );
     }

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../l10n/session_labels.dart';
+import '../l10n/app_localizations.dart';
 import '../models/messages.dart';
 import '../theme/app_theme.dart';
 
@@ -38,8 +40,10 @@ class CodexEnvironmentSummary extends StatelessWidget {
       color: appColors.subtleText,
       height: 1.2,
     );
+    final l = AppLocalizations.of(context);
     final executionLabel = showApprovalMode
         ? _executionLabel(
+            l,
             approvalPolicy: approvalPolicy,
             approvalsReviewer: approvalsReviewer,
           )
@@ -49,16 +53,17 @@ class CodexEnvironmentSummary extends StatelessWidget {
       if (leadingLabel != null) Text(leadingLabel!, style: textStyle),
       if (codexSpeedFromRaw(serviceTier) == CodexSpeed.fast)
         Tooltip(
-          message: 'Fast mode on',
+          message: l.fastOn,
           child: Icon(
             Icons.bolt,
             key: const ValueKey('codex_fast_mode_indicator'),
             size: compact ? 14 : 16,
             color: theme.colorScheme.primary,
-            semanticLabel: 'Fast mode on',
+            semanticLabel: l.fastOn,
           ),
         ),
       if (_displayModelSummary(
+            l,
             model,
             reasoningEffort,
             showDefaultWhenUnset: showDefaultReasoning,
@@ -76,7 +81,7 @@ class CodexEnvironmentSummary extends StatelessWidget {
         ),
       _EnvironmentMeta(
         icon: _sandboxIcon(sandboxMode),
-        label: _sandboxLabel(sandboxMode),
+        label: _sandboxLabel(l, sandboxMode),
         compact: compact,
       ),
     ];
@@ -129,13 +134,14 @@ class _EnvironmentMeta extends StatelessWidget {
 }
 
 String? _displayModelSummary(
+  AppLocalizations l,
   String? model,
   String? raw, {
   required bool showDefaultWhenUnset,
 }) {
   if (model == null || model.isEmpty) return null;
   if (raw == null || raw.isEmpty) {
-    return showDefaultWhenUnset ? '$model Default' : model;
+    return showDefaultWhenUnset ? '$model ${l.defaultLabel}' : model;
   }
   ReasoningEffort? effort;
   for (final value in ReasoningEffort.values) {
@@ -144,7 +150,7 @@ String? _displayModelSummary(
       break;
     }
   }
-  final effortLabel = effort == null ? raw : effort.label;
+  final effortLabel = effort == null ? raw : l.reasoningLevel(effort);
   return '$model $effortLabel';
 }
 
@@ -162,16 +168,20 @@ IconData _executionIcon({String? approvalPolicy, String? approvalsReviewer}) {
   };
 }
 
-String? _executionLabel({String? approvalPolicy, String? approvalsReviewer}) {
+String? _executionLabel(
+  AppLocalizations l, {
+  String? approvalPolicy,
+  String? approvalsReviewer,
+}) {
   if (approvalPolicy == 'on-request' &&
       isCodexAutoReviewApprovalsReviewer(approvalsReviewer)) {
-    return 'Auto Review';
+    return l.codexAutoReview;
   }
   return switch (approvalPolicy) {
-    'untrusted' => 'Untrusted',
-    'on-request' => 'On Request',
-    'on-failure' => 'On Request',
-    'never' => 'Never Ask',
+    'untrusted' => l.approvalUntrusted,
+    'on-request' => l.approvalOnRequest,
+    'on-failure' => l.approvalOnRequest,
+    'never' => l.approvalNeverAsk,
     null || '' => null,
     final other => other,
   };
@@ -184,10 +194,10 @@ IconData _sandboxIcon(String? sandboxMode) {
   };
 }
 
-String _sandboxLabel(String? sandboxMode) {
+String _sandboxLabel(AppLocalizations l, String? sandboxMode) {
   return switch (sandboxMode) {
-    'off' || 'danger-full-access' => 'Sandbox Off',
-    'on' || 'workspace-write' || 'read-only' || null || '' => 'Sandbox',
+    'off' || 'danger-full-access' => l.sandboxOffLabel,
+    'on' || 'workspace-write' || 'read-only' || null || '' => l.sandbox,
     final other => other,
   };
 }

@@ -140,7 +140,7 @@ class _RunningSessionCardState extends State<RunningSessionCard> {
     }
     final projectName = widget.projectNameOverride ?? session.projectName;
     final provider = providerFromRaw(session.provider);
-    final elapsed = _formatElapsed(session.lastActivityAt);
+    final elapsed = _formatElapsed(l, session.lastActivityAt);
     final agentLabel = _formatAgentLabel(
       session.agentNickname,
       session.agentRole,
@@ -189,7 +189,8 @@ class _RunningSessionCardState extends State<RunningSessionCard> {
                           children: [
                             _StatusDot(
                               color: statusColor,
-                              animate: visualStatus.animate &&
+                              animate:
+                                  visualStatus.animate &&
                                   !MediaQuery.disableAnimationsOf(context),
                               glow: isReadyUnseen,
                               inPlanMode:
@@ -355,15 +356,15 @@ class _RunningSessionCardState extends State<RunningSessionCard> {
     return AdaptiveContextMenuRegion(onOpen: onShowActions, child: card);
   }
 
-  String _formatElapsed(String isoDate) {
+  String _formatElapsed(AppLocalizations l, String isoDate) {
     if (isoDate.isEmpty) return '';
     try {
       final dt = DateTime.parse(isoDate).toLocal();
       final diff = DateTime.now().difference(dt);
-      if (diff.inSeconds < 60) return '${diff.inSeconds}s ago';
-      if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-      if (diff.inHours < 24) return '${diff.inHours}h ago';
-      return '${diff.inDays}d ago';
+      if (diff.inSeconds < 60) return l.secondsAgo(diff.inSeconds);
+      if (diff.inMinutes < 60) return l.minutesAgo(diff.inMinutes);
+      if (diff.inHours < 24) return l.hoursAgo(diff.inHours);
+      return l.daysAgo(diff.inDays);
     } catch (_) {
       return '';
     }
@@ -391,6 +392,7 @@ class _LiveSessionSummary extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final l = AppLocalizations.of(context);
     final metadataStyle = theme.textTheme.bodySmall?.copyWith(
       color: colors.onSurfaceVariant,
     );
@@ -474,9 +476,10 @@ class _LiveSessionSummary extends StatelessWidget {
           if (provider == Provider.codex)
             CodexEnvironmentSummary(
               leadingLabel:
-                  (session.status == 'running' || session.status == 'starting') &&
+                  (session.status == 'running' ||
+                          session.status == 'starting') &&
                       session.resolvedPlanMode
-                  ? 'Planning'
+                  ? l.sessionPlanningLabel
                   : null,
               model: session.codexModel,
               reasoningEffort: session.codexModelReasoningEffort,
@@ -490,6 +493,7 @@ class _LiveSessionSummary extends StatelessWidget {
           else
             Text(
               _buildClaudeSettingsSummary(
+                l,
                 model: session.model,
                 permissionMode: session.effectivePermissionMode,
                 executionMode: session.resolvedExecutionMode.value,
@@ -2335,7 +2339,7 @@ class _StatusDotState extends State<_StatusDot> with TickerProviderStateMixin {
       duration: const Duration(milliseconds: 2000),
     );
     if (widget.animate) _pulseController.repeat(reverse: true);
-    if (widget.inPlanMode) _orbitController.repeat();
+    if (widget.animate && widget.inPlanMode) _orbitController.repeat();
   }
 
   @override
@@ -2347,9 +2351,10 @@ class _StatusDotState extends State<_StatusDot> with TickerProviderStateMixin {
       _pulseController.stop();
       _pulseController.value = 1.0;
     }
-    if (widget.inPlanMode && !_orbitController.isAnimating) {
+    final animateOrbit = widget.animate && widget.inPlanMode;
+    if (animateOrbit && !_orbitController.isAnimating) {
       _orbitController.repeat();
-    } else if (!widget.inPlanMode && _orbitController.isAnimating) {
+    } else if (!animateOrbit && _orbitController.isAnimating) {
       _orbitController.stop();
       _orbitController.reset();
     }
@@ -2575,11 +2580,12 @@ class RecentSessionCard extends StatelessWidget {
       session.agentNickname,
       session.agentRole,
     );
+    final l = AppLocalizations.of(context);
     final dateStr = _formatDate(
+      l,
       session.modified.isNotEmpty ? session.modified : session.created,
     );
 
-    final l = AppLocalizations.of(context);
     final name = session.name?.trim() ?? '';
     final description = _displayTextForMode(session, displayMode);
     final draft = draftText?.trim() ?? '';
@@ -2758,20 +2764,20 @@ class RecentSessionCard extends StatelessWidget {
     return formatCommandText(raw);
   }
 
-  String _formatDate(String isoDate) {
+  String _formatDate(AppLocalizations l, String isoDate) {
     if (isoDate.isEmpty) return '';
     try {
       final dt = DateTime.parse(isoDate).toLocal();
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
-      final yesterday = today.subtract(const Duration(days: 1));
+      final yesterday = DateTime(now.year, now.month, now.day - 1);
       final dtDate = DateTime(dt.year, dt.month, dt.day);
 
       final time =
           '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
 
-      if (dtDate == today) return 'Today $time';
-      if (dtDate == yesterday) return 'Yesterday $time';
+      if (dtDate == today) return l.todayAt(time);
+      if (dtDate == yesterday) return l.yesterdayAt(time);
       return '${dt.month}/${dt.day} $time';
     } catch (_) {
       return '';
@@ -2780,7 +2786,8 @@ class RecentSessionCard extends StatelessWidget {
 }
 
 /// Build a compact settings summary for Claude session cards.
-String _buildClaudeSettingsSummary({
+String _buildClaudeSettingsSummary(
+  AppLocalizations l, {
   String? model,
   String? permissionMode,
   String? executionMode,
@@ -2788,14 +2795,14 @@ String _buildClaudeSettingsSummary({
 }) {
   final parts = <String>[
     if (permissionMode == PermissionMode.auto.value)
-      'auto'
+      l.permissionAutoMode
     else if (executionMode == 'fullAccess')
-      'full-access'
+      l.fullAccessLabel
     else if (executionMode == 'acceptEdits')
-      'accept-edits'
+      l.permissionAcceptEditsMode
     else
-      'default',
-    if (planMode) 'plan-on',
+      l.defaultLabel,
+    if (planMode) l.planOnLabel,
   ];
   if (model != null && model.isNotEmpty) {
     return '$model  ${parts.join("  ")}';

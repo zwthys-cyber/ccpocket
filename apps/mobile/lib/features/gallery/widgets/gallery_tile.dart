@@ -25,7 +25,7 @@ class GalleryTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final imageUrl = '$httpBaseUrl${image.url}';
+    final imageUrl = '$httpBaseUrl${image.thumbnailUrl ?? image.url}';
 
     return Card(
       margin: EdgeInsets.zero,
@@ -89,7 +89,8 @@ class GalleryTile extends StatelessWidget {
                   if (onLongPress != null)
                     IconButton(
                       icon: const Icon(Icons.delete_outline_rounded, size: 18),
-                      tooltip: MaterialLocalizations.of(context).deleteButtonTooltip,
+                      tooltip: MaterialLocalizations.of(context)
+                          .deleteButtonTooltip,
                       color: colors.onSurfaceVariant,
                       onPressed: onLongPress,
                     ),

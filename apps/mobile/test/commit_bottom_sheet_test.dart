@@ -1,3 +1,5 @@
+import 'package:ccpocket/l10n/app_localizations.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -33,8 +35,11 @@ class MockCommitBridgeService extends BridgeService {
   }
 }
 
-Widget _buildTestApp(CommitCubit cubit) {
+Widget _buildTestApp(CommitCubit cubit, {Locale locale = const Locale('en')}) {
   return MaterialApp(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    locale: locale,
     home: BlocProvider.value(
       value: cubit,
       child: Builder(
@@ -71,6 +76,30 @@ void main() {
 
       expect(
         find.byKey(const ValueKey('commit_message_field')),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('Chinese commit sheet labels the action and push separately', (
+      tester,
+    ) async {
+      await tester.pumpWidget(_buildTestApp(cubit, locale: const Locale('zh')));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('自动生成提交说明'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('commit_button_action')),
+          matching: find.text('提交'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('commit_push_button')),
+          matching: find.text('提交并推送'),
+        ),
         findsOneWidget,
       );
     });

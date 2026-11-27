@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../google_search_text_selection.dart';
 
 /// Displays Claude's thinking content with a collapsible UI.
@@ -26,6 +27,7 @@ class ThinkingBubble extends StatefulWidget {
 class _ThinkingBubbleState extends State<ThinkingBubble>
     with SingleTickerProviderStateMixin {
   late bool _expanded;
+  bool _reduceMotion = false;
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
 
@@ -40,19 +42,26 @@ class _ThinkingBubbleState extends State<ThinkingBubble>
     _pulseAnimation = Tween<double>(begin: 0.6, end: 1.0).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
-    if (widget.isStreaming) {
-      _pulseController.repeat(reverse: true);
-    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reduceMotion = MediaQuery.disableAnimationsOf(context);
+    _syncPulse();
   }
 
   @override
   void didUpdateWidget(ThinkingBubble oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.isStreaming && !_pulseController.isAnimating) {
-      _pulseController.repeat(reverse: true);
-    } else if (!widget.isStreaming && _pulseController.isAnimating) {
+    _syncPulse();
+  }
+
+  void _syncPulse() {
+    if (widget.isStreaming && !_reduceMotion) {
+      if (!_pulseController.isAnimating) _pulseController.repeat(reverse: true);
+    } else if (_pulseController.isAnimating) {
       _pulseController.stop();
-      _pulseController.reset();
     }
   }
 
@@ -64,6 +73,7 @@ class _ThinkingBubbleState extends State<ThinkingBubble>
 
   @override
   Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
     final cs = Theme.of(context).colorScheme;
     final thinkingColor = cs.tertiary;
     final preview = widget.thinking.length > 80
@@ -94,7 +104,7 @@ class _ThinkingBubbleState extends State<ThinkingBubble>
                 Row(
                   children: [
                     // Animated icon when streaming
-                    if (widget.isStreaming)
+                    if (widget.isStreaming && !_reduceMotion)
                       AnimatedBuilder(
                         animation: _pulseAnimation,
                         builder: (context, child) {
@@ -112,7 +122,9 @@ class _ThinkingBubbleState extends State<ThinkingBubble>
                       Icon(Icons.psychology, size: 16, color: thinkingColor),
                     const SizedBox(width: 6),
                     Text(
-                      widget.isStreaming ? 'Thinking...' : 'Thinking',
+                      widget.isStreaming
+                          ? l.thinkingStreamingLabel
+                          : l.thinkingLabel,
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
@@ -130,7 +142,7 @@ class _ThinkingBubbleState extends State<ThinkingBubble>
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
-                        '$lineCount lines',
+                        l.lineCountSummary(lineCount),
                         style: TextStyle(fontSize: 10, color: thinkingColor),
                       ),
                     ),

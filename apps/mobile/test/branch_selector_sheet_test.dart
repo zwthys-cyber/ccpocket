@@ -1,3 +1,5 @@
+import 'package:ccpocket/l10n/app_localizations.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -43,6 +45,9 @@ class MockBranchBridgeService extends BridgeService {
 
 Widget _buildTestApp(MockBranchBridgeService mockBridge) {
   return MaterialApp(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    locale: const Locale('en'),
     home: RepositoryProvider<BridgeService>.value(
       value: mockBridge,
       child: Builder(

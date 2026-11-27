@@ -1,9 +1,9 @@
 import SwiftUI
 
 struct UsageGaugeView: View {
-    let label: String
+    let label: LocalizedStringKey
     let utilization: Double
-    let resetsIn: String
+    let resetDescription: String
 
     private var color: Color {
         if utilization >= 90 { return .red }
@@ -29,7 +29,7 @@ struct UsageGaugeView: View {
             Text(label)
                 .font(.subheadline.weight(.medium))
 
-            Text("resets in \(resetsIn)")
+            Text(resetDescription)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }

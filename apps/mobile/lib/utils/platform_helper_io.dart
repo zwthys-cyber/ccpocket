@@ -18,12 +18,3 @@ bool get isIOSPlatform => Platform.isIOS;
 
 /// Whether the current platform is Android.
 bool get isAndroidPlatform => Platform.isAndroid;
-
-/// Best-effort system locale name.
-String? getSystemLocaleName() {
-  try {
-    return Platform.localeName;
-  } catch (_) {
-    return null;
-  }
-}

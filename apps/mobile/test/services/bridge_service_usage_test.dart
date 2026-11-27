@@ -4491,50 +4491,94 @@ void main() {
       },
     );
 
-    test('gallery deletion authenticates with the connected Bridge key', () async {
-      const token = 'test+token/encoded';
-      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      final bridge = BridgeService();
-      addTearDown(() async {
-        bridge.dispose();
-        await server.close(force: true);
-      });
-      server.transform(WebSocketTransformer()).listen((socket) {
-        socket.listen((_) {});
-      });
-      final connected = bridge.connectionStatus.firstWhere(
-        (status) => status == BridgeConnectionState.connected,
-      );
-      bridge.connect(
-        Uri(
-          scheme: 'ws',
-          host: InternetAddress.loopbackIPv4.address,
-          port: server.port,
-          queryParameters: {'token': token},
-        ).toString(),
-      );
-      await connected.timeout(const Duration(seconds: 5));
+    test(
+      'gallery deletion authenticates with the connected Bridge key',
+      () async {
+        const token = 'test+token/encoded';
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        final bridge = BridgeService();
+        addTearDown(() async {
+          bridge.dispose();
+          await server.close(force: true);
+        });
+        server.transform(WebSocketTransformer()).listen((socket) {
+          socket.listen((_) {});
+        });
+        final connected = bridge.connectionStatus.firstWhere(
+          (status) => status == BridgeConnectionState.connected,
+        );
+        bridge.connect(
+          Uri(
+            scheme: 'ws',
+            host: InternetAddress.loopbackIPv4.address,
+            port: server.port,
+            queryParameters: {'token': token},
+          ).toString(),
+        );
+        await connected.timeout(const Duration(seconds: 5));
 
-      final requests = <http.Request>[];
-      final deleted = await http.runWithClient(
-        () => bridge.deleteGalleryImage('gallery-image'),
-        () => MockClient((request) async {
-          requests.add(request);
-          final statusCode =
-              request.headers[HttpHeaders.authorizationHeader] == 'Bearer $token'
-              ? HttpStatus.ok
-              : HttpStatus.unauthorized;
-          return http.Response('', statusCode);
-        }),
-      );
+        final requests = <http.Request>[];
+        final deleted = await http.runWithClient(
+          () => bridge.deleteGalleryImage('gallery-image'),
+          () => MockClient((request) async {
+            requests.add(request);
+            final statusCode =
+                request.headers[HttpHeaders.authorizationHeader] ==
+                    'Bearer $token'
+                ? HttpStatus.ok
+                : HttpStatus.unauthorized;
+            return http.Response('', statusCode);
+          }),
+        );
 
-      expect(deleted, isTrue);
-      final request = requests.single;
-      expect(request.method, 'DELETE');
-      expect(request.url.path, '/api/gallery/gallery-image');
-      expect(request.url.query, isEmpty);
-      expect(request.headers[HttpHeaders.authorizationHeader], 'Bearer $token');
-    });
+        expect(deleted, isTrue);
+        final request = requests.single;
+        expect(request.method, 'DELETE');
+        expect(request.url.path, '/api/gallery/gallery-image');
+        expect(request.url.query, isEmpty);
+        expect(
+          request.headers[HttpHeaders.authorizationHeader],
+          'Bearer $token',
+        );
+
+        final response = Completer<http.Response>();
+        var attempts = 0;
+        final duplicateDeletes = http.runWithClient(
+          () => Future.wait([
+            bridge.deleteGalleryImageWithResult('same-id'),
+            bridge.deleteGalleryImageWithResult('same-id'),
+          ]),
+          () => MockClient((_) async {
+            attempts++;
+            return response.future;
+          }),
+        );
+        response.complete(http.Response('', 404));
+        expect(await duplicateDeletes, [
+          GalleryDeleteResult.alreadyMissing,
+          GalleryDeleteResult.alreadyMissing,
+        ]);
+        expect(attempts, 1);
+        for (final (code, outcome) in [
+          (403, GalleryDeleteResult.unauthorized),
+          (500, GalleryDeleteResult.failed),
+          (204, GalleryDeleteResult.deleted),
+        ]) {
+          final actual = await http.runWithClient(
+            () => bridge.deleteGalleryImageWithResult('same-id'),
+            () => MockClient((_) async => http.Response('', code)),
+          );
+          expect(actual, outcome);
+        }
+        final unreachable = await http.runWithClient(
+          () => bridge.deleteGalleryImageWithResult('same-id'),
+          () => MockClient(
+            (_) async => throw http.ClientException('network unavailable'),
+          ),
+        );
+        expect(unreachable, GalleryDeleteResult.offline);
+      },
+    );
 
     test('gallery timeout preserves cache, retries, and disconnect cancels timeout', () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -4575,8 +4619,9 @@ void main() {
       );
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      bridge.requestGallery(sessionId: 'session-a');
-      await Future<void>.delayed(const Duration(milliseconds: 40));
+      final timedOut = bridge.requestGallery(sessionId: 'session-a');
+      expect(await timedOut, GalleryLoadResult.timedOut);
+      await Future<void>.delayed(Duration.zero);
       expect(
         errors.where((error) => error.errorCode == 'gallery_failed'),
         hasLength(1),

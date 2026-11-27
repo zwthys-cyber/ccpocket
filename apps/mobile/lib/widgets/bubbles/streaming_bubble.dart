@@ -46,13 +46,18 @@ class _StreamingBubbleState extends State<StreamingBubble>
     _cursorController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 600),
-    )..repeat(reverse: true);
+    );
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _markdownStyle = buildMarkdownStyle(context);
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _cursorController.value = 1;
+    } else if (!_cursorController.isAnimating) {
+      _cursorController.repeat(reverse: true);
+    }
   }
 
   @override

@@ -18,6 +18,8 @@ import 'package:ccpocket/services/machine_manager_service.dart';
 import 'package:ccpocket/services/revenuecat_service.dart';
 import 'package:ccpocket/services/ssh_startup_service.dart';
 import 'package:ccpocket/services/support_banner_service.dart';
+import 'package:ccpocket/theme/app_theme.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -301,6 +303,7 @@ class _StaticMachineManagerService implements MachineManagerService {
 }
 
 Future<Widget> _buildScreen({
+  ThemeData? theme,
   required BridgeService bridge,
   required SettingsCubit settingsCubit,
   required MachineManagerCubit machineManagerCubit,
@@ -330,6 +333,7 @@ Future<Widget> _buildScreen({
         BlocProvider<MachineManagerCubit>.value(value: machineManagerCubit),
       ],
       child: MaterialApp(
+        theme: theme,
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         locale: const Locale('en'),
@@ -385,6 +389,49 @@ void main() {
   });
 
   group('Settings usage visibility', () {
+    testWidgets(
+      'display language picker is available on desktop only',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({'settings_app_locale': 'ko'});
+        final prefs = await SharedPreferences.getInstance();
+        final settings = SettingsCubit(prefs);
+        final machines = _StaticMachineManagerService([]);
+        final manager = _createMachineManagerCubit(machines);
+        final bridge = _FakeBridgeService(connected: false);
+        await tester.pumpWidget(
+          await _buildScreen(
+            bridge: bridge,
+            settingsCubit: settings,
+            machineManagerCubit: manager,
+            theme: AppTheme.lightTheme,
+          ),
+        );
+        await tester.pumpAndSettle();
+        final tile = find.byKey(
+          const ValueKey('settings_display_language'),
+          skipOffstage: false,
+        );
+        final desktop = defaultTargetPlatform == TargetPlatform.macOS;
+        expect(tile, desktop ? findsOneWidget : findsNothing);
+        if (desktop) {
+          await tester.ensureVisible(tile);
+          await tester.tap(tile);
+          await tester.pumpAndSettle();
+          expect(find.text('简体中文'), findsOneWidget);
+        }
+        await tester.pumpWidget(const SizedBox.shrink());
+        await settings.close();
+        await manager.close();
+        machines.dispose();
+        bridge.dispose();
+      },
+      variant: TargetPlatformVariant({
+        TargetPlatform.iOS,
+        TargetPlatform.android,
+        TargetPlatform.macOS,
+      }),
+    );
+
     testWidgets(
       'shows bridge update button only when connected machine is old',
       (tester) async {
@@ -889,7 +936,6 @@ void main() {
           .getTopLeft(find.byKey(const ValueKey('app_icon_tile')))
           .dy;
       final themeTop = tester.getTopLeft(find.text(l.theme)).dy;
-      final languageTop = tester.getTopLeft(find.text(l.language)).dy;
       final voiceInputTop = tester.getTopLeft(find.text(l.voiceInput)).dy;
       final hideVoiceInputTop = tester
           .getTopLeft(find.text(l.hideVoiceInput))
@@ -900,8 +946,7 @@ void main() {
       final textDensityTop = tester.getTopLeft(find.text(l.textDensity)).dy;
 
       expect(appIconTop, lessThan(themeTop));
-      expect(themeTop, lessThan(languageTop));
-      expect(languageTop, lessThan(voiceInputTop));
+      expect(themeTop, lessThan(voiceInputTop));
       expect(voiceInputTop, lessThan(hideVoiceInputTop));
       expect(hideVoiceInputTop, lessThan(openGalleryDirectlyTop));
       expect(openGalleryDirectlyTop, lessThan(textDensityTop));

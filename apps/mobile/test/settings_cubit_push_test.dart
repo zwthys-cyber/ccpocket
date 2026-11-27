@@ -6,6 +6,8 @@ import 'package:ccpocket/models/messages.dart';
 import 'package:ccpocket/services/bridge_service.dart';
 import 'package:ccpocket/services/fcm_service.dart';
 import 'package:ccpocket/services/machine_manager_service.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -186,6 +188,7 @@ class FakeSecureStorage extends Fake implements FlutterSecureStorage {
 }
 
 void main() {
+  final binding = TestWidgetsFlutterBinding.ensureInitialized();
   group('SettingsCubit push sync', () {
     test('resolves active machine for WSS on the default HTTPS port', () async {
       SharedPreferences.setMockInitialValues({
@@ -456,35 +459,55 @@ void main() {
       bridge.dispose();
     });
 
-    test('registers Korean locale when app locale is ko', () async {
-      SharedPreferences.setMockInitialValues({
-        'settings_app_locale': 'ko',
-        'settings_fcm_machines': '["$_testMachineId"]',
-        'machines_v2':
-            '[{"id":"$_testMachineId","host":"$_testHost","port":$_testPort}]',
+    for (final platform in [
+      TargetPlatform.iOS,
+      TargetPlatform.android,
+      TargetPlatform.macOS,
+    ]) {
+      test('push language respects display language policy on ${platform.name}', () async {
+        debugDefaultTargetPlatformOverride = platform;
+        addTearDown(() => debugDefaultTargetPlatformOverride = null);
+        final dispatcher = binding.platformDispatcher;
+        dispatcher.localesTestValue = const [Locale('fr'), Locale('zh', 'CN')];
+        addTearDown(dispatcher.clearLocalesTestValue);
+        SharedPreferences.setMockInitialValues({
+          'settings_app_locale': 'ko',
+          'settings_fcm_machines': '["$_testMachineId"]',
+          'machines_v2':
+              '[{"id":"$_testMachineId","host":"$_testHost","port":$_testPort}]',
+        });
+        final prefs = await SharedPreferences.getInstance();
+        final manager = await _createMachineManager(prefs);
+        await manager.init();
+        final bridge = FakeBridgeService()
+          ..emitConnection(BridgeConnectionState.connected, url: _testUrl);
+        final fcm = FakeFcmService(available: true, token: 'token-1');
+        final cubit = SettingsCubit(
+          prefs,
+          bridgeService: bridge,
+          machineManager: manager,
+          fcmService: fcm,
+        );
+
+        await _flushAsync();
+
+        expect(bridge.registerCalls, hasLength(1));
+        final desktop = platform == TargetPlatform.macOS;
+        expect(bridge.registerCalls.first.locale, desktop ? 'ko' : 'zh');
+        if (!desktop) {
+          cubit.setAppLocaleId('en');
+          expect(cubit.state.appLocaleId, isEmpty);
+          expect(prefs.getString('settings_app_locale'), 'ko');
+          dispatcher.localesTestValue = const [Locale('ja')];
+          await cubit.syncPushLocale();
+          expect(bridge.registerCalls.last.locale, 'ja');
+        }
+
+        await cubit.close();
+        await fcm.disposeFake();
+        bridge.dispose();
       });
-      final prefs = await SharedPreferences.getInstance();
-      final manager = await _createMachineManager(prefs);
-      await manager.init();
-      final bridge = FakeBridgeService()
-        ..emitConnection(BridgeConnectionState.connected, url: _testUrl);
-      final fcm = FakeFcmService(available: true, token: 'token-1');
-      final cubit = SettingsCubit(
-        prefs,
-        bridgeService: bridge,
-        machineManager: manager,
-        fcmService: fcm,
-      );
-
-      await _flushAsync();
-
-      expect(bridge.registerCalls, hasLength(1));
-      expect(bridge.registerCalls.first.locale, 'ko');
-
-      await cubit.close();
-      await fcm.disposeFake();
-      bridge.dispose();
-    });
+    }
 
     test('toggle off unregisters active token', () async {
       SharedPreferences.setMockInitialValues({

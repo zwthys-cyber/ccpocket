@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_hooks/flutter_hooks.dart';
 
 import '../../../l10n/app_localizations.dart';
+import '../../../services/bridge_service.dart';
 import '../../../theme/app_theme.dart';
 import '../../../models/messages.dart';
 import '../../../widgets/workspace_pane_chrome.dart';
@@ -19,7 +20,7 @@ class GalleryImageViewer extends HookWidget {
   final List<GalleryImage> images;
   final int initialIndex;
   final String httpBaseUrl;
-  final Future<bool> Function(String id)? onDelete;
+  final Future<GalleryDeleteResult> Function(String id)? onDelete;
 
   const GalleryImageViewer({
     super.key,
@@ -72,32 +73,34 @@ class GalleryImageViewer extends HookWidget {
     Future<void> handleDelete() async {
       if (onDelete == null || isDeleting.value) return;
 
-      final confirmed = await showDeleteConfirmDialog(context);
-      if (!confirmed || !context.mounted) return;
-
       isDeleting.value = true;
-      final success = await onDelete!(currentImage.id);
-      if (!context.mounted) return;
-      isDeleting.value = false;
-
-      if (success) {
-        final newList = List<GalleryImage>.from(imageList.value)
-          ..removeAt(safeIndex);
-        if (newList.isEmpty) {
-          Navigator.pop(context);
-          return;
+      try {
+        final confirmed = await showDeleteConfirmDialog(context);
+        if (!confirmed || !context.mounted) return;
+        final result = await onDelete!(currentImage.id);
+        if (!context.mounted) return;
+        if (result != GalleryDeleteResult.deleted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                galleryDeleteMessage(AppLocalizations.of(context), result),
+              ),
+            ),
+          );
         }
-        imageList.value = newList;
-        // Adjust page index
-        if (safeIndex >= newList.length) {
-          currentPage.value = newList.length - 1;
+        if (result.removed) {
+          final newList = imageList.value
+              .where((image) => image.id != currentImage.id)
+              .toList();
+          if (newList.isEmpty) {
+            Navigator.pop(context);
+            return;
+          }
+          imageList.value = newList;
+          currentPage.value = currentPage.value.clamp(0, newList.length - 1);
         }
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(AppLocalizations.of(context).failedToDeleteImage),
-          ),
-        );
+      } finally {
+        if (context.mounted) isDeleting.value = false;
       }
     }
 
@@ -338,3 +341,13 @@ Future<bool> showDeleteConfirmDialog(BuildContext context) async {
   );
   return confirmed == true;
 }
+
+String galleryDeleteMessage(AppLocalizations l, GalleryDeleteResult result) =>
+    switch (result) {
+      GalleryDeleteResult.deleted => l.galleryDeleted,
+      GalleryDeleteResult.alreadyMissing => l.galleryImageMissing,
+      GalleryDeleteResult.unauthorized => l.galleryDeleteUnauthorized,
+      GalleryDeleteResult.offline => l.galleryOffline,
+      GalleryDeleteResult.timedOut => l.galleryTimedOut,
+      GalleryDeleteResult.failed => l.galleryDeleteServerError,
+    };

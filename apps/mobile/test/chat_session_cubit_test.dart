@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:ccpocket/features/chat_session/state/chat_session_cubit.dart';
 import 'package:ccpocket/features/chat_session/state/chat_session_state.dart';
@@ -1092,6 +1093,121 @@ void main() {
         expect(users, hasLength(1));
         expect(users.single.text, 'Steered queued message');
         expect(users.single.messageUuid, 'codex:user-turn:8');
+      },
+    );
+
+    test(
+      'two clients converge on one accepted time after live echo and restore',
+      () async {
+        final sender = createCubit('s1', provider: Provider.codex);
+        final peerBridge = MockBridgeService();
+        final peerStreaming = StreamingStateCubit();
+        final observer = ChatSessionCubit(
+          sessionId: 's1',
+          provider: Provider.codex,
+          bridge: peerBridge,
+          streamingCubit: peerStreaming,
+        );
+        addTearDown(peerBridge.dispose);
+        addTearDown(peerStreaming.close);
+        addTearDown(sender.close);
+        addTearDown(observer.close);
+        mockBridge.emitMessage(
+          const StatusMessage(status: ProcessStatus.idle),
+          sessionId: 's1',
+        );
+        await pumpEventQueue();
+        final bytes = Uint8List.fromList([1, 2, 3]);
+        sender.sendMessage(
+          'Continue',
+          images: [(bytes: bytes, mimeType: 'image/png')],
+        );
+        final payload = jsonDecode(mockBridge.sentMessages.single.toJson());
+        final id = payload['clientMessageId'] as String;
+        final live = UserInputMessage(
+          text: 'Continue',
+          clientMessageId: id,
+          rawItemId: 'provider-item',
+          userMessageUuid: 'codex:user-turn:4',
+          timestamp: '2026-11-27T09:18:00Z',
+          imageCount: 1,
+        );
+        final restored = UserInputMessage(
+          text: 'Continue',
+          rawItemId: 'provider-item',
+          userMessageUuid: 'codex:user-turn:5',
+          timestamp: '2026-11-27T09:32:00Z',
+          imageCount: 1,
+          imageUrls: const ['/images/restored'],
+        );
+        for (final bridge in [mockBridge, peerBridge]) {
+          bridge.emitMessage(live, sessionId: 's1');
+        }
+        await pumpEventQueue();
+        for (var refresh = 0; refresh < 2; refresh++) {
+          mockBridge.emitMessage(
+            HistoryMessage(messages: [restored]),
+            sessionId: 's1',
+          );
+          peerBridge.emitMessage(
+            HistoryMessage(messages: [live, restored]),
+            sessionId: 's1',
+          );
+          await pumpEventQueue();
+          peerBridge.emitMessage(live, sessionId: 's1');
+          await pumpEventQueue();
+          for (final cubit in [sender, observer]) {
+            final user = cubit.state.entries.whereType<UserChatEntry>().single;
+            expect(user.clientMessageId, id);
+            expect(user.messageUuid, 'codex:user-turn:5');
+            expect(user.timestamp.toUtc(), DateTime.utc(2026, 11, 27, 9, 32));
+            expect(user.imageUrls, ['/images/restored']);
+            if (identical(cubit, sender)) {
+              expect(user.imageBytesList.single, bytes);
+            } else {
+              expect(user.imageBytesList, isEmpty);
+            }
+          }
+        }
+      },
+    );
+
+    test(
+      'identical text from distinct sends survives a colliding rewind ordinal',
+      () async {
+        final cubit = createCubit('s1', provider: Provider.codex);
+        addTearDown(cubit.close);
+        const first = UserInputMessage(
+          text: 'Continue',
+          clientMessageId: 'send-1',
+          userMessageUuid: 'codex:user-turn:5',
+        );
+        const second = UserInputMessage(
+          text: 'Continue',
+          clientMessageId: 'send-2',
+          userMessageUuid: 'codex:user-turn:5',
+        );
+        for (final message in [first, second, second]) {
+          mockBridge.emitMessage(message, sessionId: 's1');
+        }
+        await pumpEventQueue();
+        List<String?> sendIds() => cubit.state.entries
+            .whereType<UserChatEntry>()
+            .map((e) => e.clientMessageId)
+            .toList();
+        expect(sendIds(), ['send-1', 'send-2']);
+        mockBridge.emitMessage(
+          const HistoryMessage(messages: [first]),
+          sessionId: 's1',
+        );
+        await pumpEventQueue();
+        expect(sendIds(), ['send-1', 'send-2']);
+        mockBridge.emitMessage(
+          const HistoryMessage(messages: [first, second]),
+          sessionId: 's1',
+        );
+        await pumpEventQueue();
+        expect(sendIds(), ['send-1', 'send-2']);
       },
     );
 

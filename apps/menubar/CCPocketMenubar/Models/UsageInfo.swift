@@ -11,19 +11,15 @@ struct UsageWindow: Codable, Identifiable {
         ISO8601DateFormatter().date(from: resetsAt)
     }
 
-    /// Relative time string for reset (e.g. "2h 15m")
-    var resetsInText: String {
+    var resetDescription: String {
         guard let date = resetsAtDate else { return "—" }
         let remaining = date.timeIntervalSinceNow
-        if remaining <= 0 { return "now" }
-
-        let hours = Int(remaining) / 3600
-        let minutes = (Int(remaining) % 3600) / 60
-
-        if hours > 0 {
-            return "\(hours)h \(minutes)m"
-        }
-        return "\(minutes)m"
+        guard remaining > 0 else { return String(localized: "Reset due now") }
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.hour, .minute]
+        formatter.unitsStyle = .abbreviated
+        guard let duration = formatter.string(from: remaining) else { return "—" }
+        return String(localized: "resets in \(duration)")
     }
 }
 

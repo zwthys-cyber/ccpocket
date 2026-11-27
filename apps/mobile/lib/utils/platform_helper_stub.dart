@@ -17,6 +17,3 @@ bool get isIOSPlatform => false;
 
 /// Whether the current platform is Android.
 bool get isAndroidPlatform => false;
-
-/// Best-effort system locale name. Unavailable on Web.
-String? getSystemLocaleName() => null;

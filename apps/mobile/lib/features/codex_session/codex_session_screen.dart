@@ -1809,7 +1809,8 @@ void _executeSideEffects(
       case ChatSideEffect.notifySessionComplete:
         if (useLocalNotification) {
           NotificationService.instance.showSessionCompleteNotification(
-            body: 'Codex session done',
+            l: l,
+            body: l.codexSessionDone,
             id: 3,
             payload: sessionId,
           );

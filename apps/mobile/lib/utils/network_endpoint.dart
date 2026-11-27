@@ -106,6 +106,14 @@ List<int>? _parseIpv6Parts(String input) {
   return words;
 }
 
+/// A label for connection screens. Credentials, paths and query parameters stay private.
+String? bridgeEndpointLabel(String? url) {
+  if (url == null || url.isEmpty) return null;
+  final uri = Uri.tryParse(url);
+  if (uri == null || uri.host.isEmpty) return null;
+  return formatHostPort(uri.host, uri.hasPort ? uri.port : 8765);
+}
+
 String formatHostPort(String host, int port) =>
     '${bracketIpv6Host(host)}:$port';
 

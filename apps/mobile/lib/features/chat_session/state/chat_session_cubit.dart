@@ -574,6 +574,9 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
           status: targetStatus,
           messageUuid: entry.messageUuid,
           timestamp: entry.timestamp,
+          bridgeTimestamp: entry.bridgeTimestamp,
+          rawItemId: entry.rawItemId,
+          fromHistory: entry.fromHistory,
         );
         entries = [...entries];
         entries[targetIndex] = updatedEntry;
@@ -601,6 +604,9 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
             status: MessageStatus.failed,
             messageUuid: e.messageUuid,
             timestamp: e.timestamp,
+            bridgeTimestamp: e.bridgeTimestamp,
+            rawItemId: e.rawItemId,
+            fromHistory: e.fromHistory,
           );
         }
         return e;
@@ -616,47 +622,56 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
       final (
         :text,
         :uuid,
+        :rawItemId,
         :clientMessageId,
         :imageCount,
         :imageUrls,
         :timestamp,
       ) = update.userUuidUpdate!;
-      var matchedUserEntry = false;
-      for (int i = entries.length - 1; i >= 0; i--) {
-        final e = entries[i];
-        if (e is UserChatEntry &&
-            ((e.messageUuid == uuid) ||
-                (clientMessageId != null &&
-                    e.clientMessageId == clientMessageId) ||
-                (e.messageUuid == null &&
-                    clientMessageId == null &&
-                    e.text == text))) {
-          matchedUserEntry = true;
-          if (e.messageUuid != uuid) {
-            e.messageUuid = uuid;
-            didModifyEntries = true;
-          }
-          break;
-        }
+      final incoming = UserChatEntry(
+        text,
+        sessionId: sessionId,
+        clientMessageId: clientMessageId,
+        imageCount: imageCount,
+        imageUrls: imageUrls,
+        status: MessageStatus.sent,
+        messageUuid: uuid,
+        rawItemId: rawItemId,
+        bridgeTimestamp: timestamp == null
+            ? null
+            : DateTime.tryParse(timestamp)?.toLocal(),
+      );
+      var match = clientMessageId == null
+          ? -1
+          : entries.lastIndexWhere(
+              (e) => e is UserChatEntry && e.clientMessageId == clientMessageId,
+            );
+      if (match == -1 && rawItemId != null) {
+        match = entries.lastIndexWhere(
+          (e) =>
+              e is UserChatEntry &&
+              e.rawItemId == rawItemId &&
+              _sameUserIdentity(e, incoming) == true,
+        );
       }
-      if (!matchedUserEntry) {
-        entries = [
-          ...entries,
-          UserChatEntry(
-            text,
-            sessionId: sessionId,
-            clientMessageId: clientMessageId,
-            imageCount: imageCount,
-            imageUrls: imageUrls,
-            status: MessageStatus.sent,
-            messageUuid: uuid,
-            timestamp: timestamp == null
-                ? null
-                : DateTime.tryParse(timestamp)?.toLocal(),
-          ),
-        ];
-        didModifyEntries = true;
+      if (match == -1) {
+        match = entries.lastIndexWhere(
+          (e) =>
+              e is UserChatEntry &&
+              (_sameUserIdentity(e, incoming) ??
+                  (e.messageUuid == null &&
+                      clientMessageId == null &&
+                      e.text == text &&
+                      e.imageCount == imageCount)),
+        );
       }
+      entries = [...entries];
+      if (match == -1) {
+        entries.add(incoming);
+      } else {
+        entries[match] = _mergeEquivalentEntry(entries[match], incoming);
+      }
+      didModifyEntries = true;
     }
 
     // Add new entries (skip streaming entries — those go to StreamingState)
@@ -670,7 +685,7 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
       final existingNonPast = entries.skip(_pastEntryCount).toList();
       final mergedHistoryEntries = _mergeRicherLiveAssistantEntries(
         existingEntries: existingNonPast,
-        historyEntries: nonStreamingEntries,
+        historyEntries: _dedupeRestoredUsers(nonStreamingEntries),
       );
 
       final reconciledEntries = _reconcileHistoryWithLiveEntries(
@@ -680,49 +695,44 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
 
       entries = [...pastEntries, ...reconciledEntries];
 
-      // Preserve local data (image bytes, timestamps) from existing entries
-      // that the server history does not contain.
-      // Match by messageUuid (preferred) or text content (fallback for
-      // entries whose UUID hasn't been assigned yet).
-      final existingUserData = <String, UserChatEntry>{};
-      for (final e in existingNonPast) {
-        if (e is UserChatEntry) {
-          if (e.messageUuid != null) {
-            existingUserData[e.messageUuid!] = e;
-          } else {
-            existingUserData['text:${e.text}'] = e;
-          }
+      // Carry local attachments and delivery IDs onto their restored messages.
+      final byClient = <String, UserChatEntry>{};
+      final byUuid = <String, UserChatEntry>{};
+      final byRaw = <String, UserChatEntry>{};
+      final legacyByText = <String, UserChatEntry?>{};
+      for (final old in existingNonPast.whereType<UserChatEntry>()) {
+        if (old.clientMessageId case final id? when id.isNotEmpty) {
+          byClient[id] = old;
+        }
+        if (old.rawItemId case final raw? when raw.isNotEmpty) {
+          byRaw[raw] = old;
+        }
+        if (old.messageUuid case final uuid? when uuid.isNotEmpty) {
+          byUuid[uuid] = old;
+        } else {
+          legacyByText.update(old.text, (_) => null, ifAbsent: () => old);
         }
       }
-      if (existingUserData.isNotEmpty) {
-        for (int i = 0; i < entries.length; i++) {
-          final e = entries[i];
-          if (e is! UserChatEntry) continue;
-          final existing =
-              (e.messageUuid != null
-                  ? existingUserData[e.messageUuid!]
-                  : null) ??
-              existingUserData['text:${e.text}'];
-          if (existing == null) continue;
-          final needsImages =
-              e.imageBytesList.isEmpty && existing.imageBytesList.isNotEmpty;
-          final needsTimestamp = existing.timestamp != e.timestamp;
-          if (needsImages || needsTimestamp) {
-            entries[i] = UserChatEntry(
-              e.text,
-              sessionId: e.sessionId,
-              clientMessageId: e.clientMessageId,
-              imageBytesList: needsImages
-                  ? existing.imageBytesList
-                  : e.imageBytesList,
-              imageUrls: e.imageUrls,
-              imageCount: e.imageCount,
-              status: e.status,
-              messageUuid: e.messageUuid,
-              timestamp: existing.timestamp,
-            );
-          }
+      // A legacy text match is safe only when both sides are unambiguous.
+      final textCounts = <String, int>{};
+      for (final e in reconciledEntries.whereType<UserChatEntry>()) {
+        textCounts.update(e.text, (n) => n + 1, ifAbsent: () => 1);
+      }
+      for (var i = pastEntries.length; i < entries.length; i++) {
+        final e = entries[i];
+        if (e is! UserChatEntry) continue;
+        final existing =
+            byClient[e.clientMessageId] ??
+            byRaw[e.rawItemId] ??
+            byUuid[e.messageUuid] ??
+            (textCounts[e.text] == 1 ? legacyByText[e.text] : null);
+        if (existing == null || identical(e, existing)) continue;
+        final sameIdentity = _sameUserIdentity(existing, e);
+        if (sameIdentity == false ||
+            (sameIdentity == null && existing.imageCount != e.imageCount)) {
+          continue;
         }
+        entries[i] = _mergeEquivalentEntry(existing, e);
       }
 
       didModifyEntries = true;
@@ -1027,22 +1037,42 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
 
   bool _entriesEquivalentForTurnBoundary(ChatEntry a, ChatEntry b) {
     if (a is UserChatEntry && b is UserChatEntry) {
-      final aUuid = a.messageUuid;
-      final bUuid = b.messageUuid;
-      if (aUuid?.isNotEmpty == true && bUuid?.isNotEmpty == true) {
-        return aUuid == bUuid;
-      }
-      final aClientId = a.clientMessageId;
-      final bClientId = b.clientMessageId;
-      if (aClientId?.isNotEmpty == true && bClientId?.isNotEmpty == true) {
-        return aClientId == bClientId;
-      }
       return _entriesEquivalent(a, b, allowWeakMatch: true);
     }
     final aKey = _entryStableKey(a);
     final bKey = _entryStableKey(b);
     if (aKey != null && bKey != null) return aKey == bKey;
     return _entriesEquivalent(a, b, allowWeakMatch: true);
+  }
+
+  // Cached replay and a snapshot can contain different representations of
+  // one send. Only immutable IDs can collapse rows within a full snapshot.
+  List<ChatEntry> _dedupeRestoredUsers(List<ChatEntry> entries) {
+    final byClient = <String, int>{};
+    final byRaw = <String, int>{};
+    final result = <ChatEntry>[];
+    for (final entry in entries) {
+      if (entry is! UserChatEntry) {
+        result.add(entry);
+        continue;
+      }
+      final match = byClient[entry.clientMessageId] ?? byRaw[entry.rawItemId];
+      var index = result.length;
+      if (match != null &&
+          _sameUserIdentity(result[match] as UserChatEntry, entry) == true) {
+        result[match] = _mergeEquivalentEntry(result[match], entry);
+        index = match;
+      } else {
+        result.add(entry);
+      }
+      if (entry.clientMessageId case final id? when id.isNotEmpty) {
+        byClient[id] = index;
+      }
+      if (entry.rawItemId case final raw? when raw.isNotEmpty) {
+        byRaw[raw] = index;
+      }
+    }
+    return result;
   }
 
   List<ChatEntry> _mergeRicherLiveAssistantEntries({
@@ -1152,11 +1182,43 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
     return -1;
   }
 
+  // Codex rewind ordinals can change after a reconnect. A send ID belongs
+  // to one submission across devices, including deliberately repeated prompts.
+  bool? _sameUserIdentity(UserChatEntry a, UserChatEntry b) {
+    final aClient = a.clientMessageId;
+    final bClient = b.clientMessageId;
+    if (aClient?.isNotEmpty == true && bClient?.isNotEmpty == true) {
+      return aClient == bClient;
+    }
+    final aRaw = a.rawItemId;
+    final bRaw = b.rawItemId;
+    if (aRaw?.isNotEmpty == true && bRaw?.isNotEmpty == true) {
+      return aRaw == bRaw;
+    }
+    final aUuid = a.messageUuid;
+    final bUuid = b.messageUuid;
+    if (aUuid != null &&
+        aUuid.isNotEmpty &&
+        bUuid != null &&
+        bUuid.isNotEmpty) {
+      if (aUuid != bUuid) return false;
+      if (aUuid.startsWith('codex:user-turn:')) {
+        return a.text == b.text && a.imageCount == b.imageCount;
+      }
+      return true;
+    }
+    return null;
+  }
+
   bool _entriesEquivalent(
     ChatEntry a,
     ChatEntry b, {
     bool allowWeakMatch = false,
   }) {
+    if (a is UserChatEntry && b is UserChatEntry) {
+      final sameIdentity = _sameUserIdentity(a, b);
+      if (sameIdentity != null) return sameIdentity;
+    }
     final aKey = _entryStableKey(a);
     final bKey = _entryStableKey(b);
     if (aKey != null && bKey != null && aKey == bKey) return true;
@@ -1332,6 +1394,10 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
       final imageCount = incoming.imageCount > 0
           ? incoming.imageCount
           : existing.imageCount;
+      final keepRestored =
+          isCodex && existing.fromHistory && !incoming.fromHistory;
+      final preferred = keepRestored ? existing : incoming;
+      final fallback = keepRestored ? incoming : existing;
       return UserChatEntry(
         existing.text.isNotEmpty ? existing.text : incoming.text,
         sessionId: existing.sessionId ?? incoming.sessionId,
@@ -1342,8 +1408,15 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
         status: incoming.status == MessageStatus.sent
             ? MessageStatus.sent
             : existing.status,
-        messageUuid: existing.messageUuid ?? incoming.messageUuid,
-        timestamp: existing.timestamp,
+        messageUuid: preferred.messageUuid ?? fallback.messageUuid,
+        rawItemId: preferred.rawItemId ?? fallback.rawItemId,
+        fromHistory: existing.fromHistory || incoming.fromHistory,
+        timestamp: isCodex
+            ? preferred.bridgeTimestamp ??
+                  fallback.bridgeTimestamp ??
+                  existing.timestamp
+            : existing.timestamp,
+        bridgeTimestamp: preferred.bridgeTimestamp ?? fallback.bridgeTimestamp,
       );
     }
     return existing;
@@ -1356,14 +1429,22 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
     bool beforeTrailingAssistant = false,
   }) {
     if (item == null) return entries;
-    final alreadyVisible = entries.any((entry) {
-      if (entry is! UserChatEntry) return false;
-      if (clientMessageId != null && entry.clientMessageId == clientMessageId) {
-        return true;
-      }
-      return entry.text == item.text && entry.status == MessageStatus.sent;
-    });
-    if (alreadyVisible) return entries;
+    if (clientMessageId != null &&
+        entries.whereType<UserChatEntry>().any(
+          (e) => e.clientMessageId == clientMessageId,
+        )) {
+      return entries;
+    }
+    // Older Bridges may echo a delivered input without its send ID. Only
+    // the trailing input can be the delivery we just acknowledged.
+    final latestUser = entries.whereType<UserChatEntry>().lastOrNull;
+    if (latestUser != null &&
+        (clientMessageId == null || latestUser.clientMessageId == null) &&
+        latestUser.status == MessageStatus.sent &&
+        latestUser.text == item.text &&
+        latestUser.imageCount == item.imageCount) {
+      return entries;
+    }
     final entry = UserChatEntry(
       item.text,
       sessionId: sessionId,
@@ -1472,6 +1553,7 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
         sessionId: sessionId,
         clientMessageId: clientMessageId,
         imageBytesList: images?.map((i) => i.bytes).toList(),
+        imageCount: images?.length ?? 0,
         status: isOffline ? MessageStatus.queued : MessageStatus.sending,
         messageUuid: isCodex ? _nextOptimisticCodexUserTurnUuid() : null,
       );
@@ -2271,6 +2353,9 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
               status: isOffline ? MessageStatus.queued : MessageStatus.sending,
               messageUuid: entry.messageUuid,
               timestamp: entry.timestamp,
+              bridgeTimestamp: entry.bridgeTimestamp,
+              rawItemId: entry.rawItemId,
+              fromHistory: entry.fromHistory,
             );
           }
           return e;

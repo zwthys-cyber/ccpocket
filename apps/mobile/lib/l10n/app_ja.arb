@@ -837,6 +837,10 @@
   "startSessionToBegin": "セッションを開始して承認リクエストの受信を始めましょう。",
 
   "settingsTitle": "設定",
+  "settingsBridgeMachine": "Bridge ホスト",
+  "settingsNotConnected": "未接続",
+  "sectionAgents": "エージェント",
+  "settingsBothAgents": "両方",
   "sectionGeneral": "一般",
   "sectionConnectionAccounts": "接続とアカウント",
   "sectionNotifications": "通知",
@@ -1433,5 +1437,157 @@
   "usageResetNothing": "No limit is currently eligible for a reset.",
   "usageResetNoCredit": "No reset opportunities are available.",
   "usageResetUnsupported": "Update the Bridge and Codex CLI to use resets.",
-  "usageResetFailed": "Reset could not be confirmed. Refresh usage before retrying."
+  "usageResetFailed": "Reset could not be confirmed. Refresh usage before retrying.",
+  "groupRecent": "グループ",
+  "listRecent": "リスト",
+  "toggleRecentGrouping": "最近のセッションのグループ表示を切り替え",
+  "secondsAgo": "{seconds}秒前",
+  "@secondsAgo": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "todayAt": "今日 {time}",
+  "@todayAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "yesterdayAt": "昨日 {time}",
+  "@yesterdayAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "scrollToBottom": "一番下にスクロール",
+  "invalidPairingQr": "有効な CC Pocket 接続用 QR コードではありません",
+  "qrScanUnavailable": "この環境ではカメラでスキャンできません。Bridge の URL を入力してください。",
+  "qrScanHint": "Bridge に表示された QR コードにカメラを向けてください",
+  "sessionCompleteTitle": "セッション完了",
+  "sessionDone": "セッションが終了しました",
+  "codexSessionDone": "Codex セッションが終了しました",
+  "startWithProvider": "{provider} で開始",
+  "@startWithProvider": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "permissionAutoMode": "自動",
+  "permissionAcceptEditsMode": "編集を自動承認",
+  "permissionPlanMode": "プラン",
+  "permissionBypassMode": "すべてスキップ",
+  "permissionChipAcceptEdits": "編集",
+  "permissionChipBypass": "スキップ",
+  "permissionsLabel": "権限",
+  "defaultPermissionsLabel": "デフォルト権限",
+  "autoReviewModeLabel": "自動レビュー",
+  "fullAccessLabel": "フルアクセス",
+  "fullAccessShort": "フル",
+  "customPermissionsLabel": "カスタム（config.toml）",
+  "customPermissionsShort": "カスタム",
+  "permissionsFromConfig": "config.toml の Codex 権限を使用します",
+  "permissionsFromProfile": "選択したプロファイルの Codex 権限を使用します",
+  "approvalNeverAsk": "確認しない",
+  "approvalOnRequest": "必要時に確認",
+  "approvalUntrusted": "信頼済みのみ",
+  "sandboxSafeMode": "サンドボックス（安全モード）",
+  "sandboxStandard": "標準",
+  "sandboxOnLabel": "サンドボックス有効",
+  "sandboxOffLabel": "サンドボックス無効",
+  "sandboxChipOff": "制限なし",
+  "planOnLabel": "プラン有効",
+  "planOffLabel": "プラン無効",
+  "speedLabel": "速度",
+  "fastOn": "高速モード有効",
+  "fastOff": "高速モード無効",
+  "fastSpeedDescription": "高速（1.5 倍速、使用量増加）",
+  "effortNoneLabel": "なし",
+  "effortMinimalLabel": "最小",
+  "effortLightLabel": "軽め",
+  "effortLowLabel": "低",
+  "effortMediumLabel": "中",
+  "effortHighLabel": "高",
+  "effortXHighLabel": "非常に高い",
+  "effortClaudeXHighLabel": "非常に高い",
+  "effortMaxLabel": "最大",
+  "effortUltraLabel": "超高",
+  "webSearchDisabled": "無効",
+  "webSearchCached": "キャッシュのみ",
+  "webSearchLive": "リアルタイム",
+  "galleryLoading": "ギャラリーを読み込み中…",
+  "galleryLoadFailed": "ギャラリーを読み込めませんでした。",
+  "galleryDeleteUnauthorized": "Bridge の接続キーを確認して再試行してください。",
+  "galleryOffline": "Bridge に接続できません。接続を確認して再試行してください。",
+  "galleryTimedOut": "Bridge が時間内に応答しませんでした。再試行してください。",
+  "galleryImageMissing": "この画像はすでに削除されています。",
+  "galleryDeleteServerError": "Bridge で画像を削除できませんでした。再試行してください。",
+  "galleryDeleted": "画像を削除しました",
+  "thinkingStreamingLabel": "考え中…",
+  "thinkingLabel": "思考過程",
+  "gitRevert": "変更を破棄",
+  "gitCommitLabel": "コミット",
+  "gitCommitPush": "コミットしてプッシュ",
+  "gitCommittedHash": "コミット済み：{hash}",
+  "@gitCommittedHash": {
+    "placeholders": {
+      "hash": {
+        "type": "String"
+      }
+    }
+  },
+  "gitCommitSuccess": "成功",
+  "gitUnknownError": "不明なエラー",
+  "gitTryAgain": "再試行",
+  "gitAutoGenerateAI": "AI で自動生成",
+  "gitCommitMessage": "コミットメッセージ",
+  "gitAutoGenerateMessage": "メッセージを自動生成",
+  "gitCommitting": "コミット中…",
+  "gitPushing": "プッシュ中…",
+  "gitViewFile": "ファイルを表示",
+  "gitViewFileDescription": "現在のファイル全体を開く",
+  "gitStage": "ステージ",
+  "gitUnstage": "ステージ解除",
+  "gitRequestChange": "変更を依頼",
+  "gitFileFeedback": "ファイルとフィードバックを AI に送信",
+  "gitHunkFeedback": "この差分とフィードバックを AI に送信",
+  "gitRevertAll": "すべて破棄",
+  "gitStageAll": "すべてステージ",
+  "gitUnstageAll": "すべてステージ解除",
+  "gitFilesLabel": "ファイル",
+  "gitFocusDiff": "差分に集中",
+  "gitExitFocus": "集中モードを終了",
+  "gitBranchList": "ブランチ",
+  "gitNewBranch": "新しいブランチ",
+  "gitSearchBranches": "ブランチを検索…",
+  "gitBranchInUse": "別のワークツリーで使用中",
+  "gitBranchNameHint": "ブランチ名（例：feat/login）",
+  "gitCreateCheckout": "作成して切り替え",
+  "gitNoUpstream": "上流ブランチなし",
+  "gitStaged": "ステージ済み",
+  "gitUnstaged": "未ステージ",
+  "sessionPlanningLabel": "計画中",
+  "environmentSection": "環境",
+  "profileLabel": "プロファイル",
+  "worktreeTooltip": "このセッション用に独立した Git ワークツリーを作成します。",
+  "sessionStartedLabel": "セッション開始",
+  "systemSubtypeLabel": "システム：{subtype}",
+  "@systemSubtypeLabel": {
+    "placeholders": {
+      "subtype": {
+        "type": "String"
+      }
+    }
+  },
+  "speedFastLabel": "高速",
+  "speedFastDetail": "1.5 倍速、使用量増加",
+  "speedStandardDetail": "標準速度",
+  "ultraEffortDetail": "使用量が増え、タスクを自動委任します"
 }

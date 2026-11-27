@@ -2020,6 +2020,18 @@ class AppLocalizationsJa extends AppLocalizations {
   String get settingsTitle => '設定';
 
   @override
+  String get settingsBridgeMachine => 'Bridge ホスト';
+
+  @override
+  String get settingsNotConnected => '未接続';
+
+  @override
+  String get sectionAgents => 'エージェント';
+
+  @override
+  String get settingsBothAgents => '両方';
+
+  @override
   String get sectionGeneral => '一般';
 
   @override
@@ -3330,4 +3342,346 @@ class AppLocalizationsJa extends AppLocalizations {
   @override
   String get usageResetFailed =>
       'Reset could not be confirmed. Refresh usage before retrying.';
+
+  @override
+  String get groupRecent => 'グループ';
+
+  @override
+  String get listRecent => 'リスト';
+
+  @override
+  String get toggleRecentGrouping => '最近のセッションのグループ表示を切り替え';
+
+  @override
+  String secondsAgo(int seconds) {
+    return '$seconds秒前';
+  }
+
+  @override
+  String todayAt(String time) {
+    return '今日 $time';
+  }
+
+  @override
+  String yesterdayAt(String time) {
+    return '昨日 $time';
+  }
+
+  @override
+  String get scrollToBottom => '一番下にスクロール';
+
+  @override
+  String get invalidPairingQr => '有効な CC Pocket 接続用 QR コードではありません';
+
+  @override
+  String get qrScanUnavailable => 'この環境ではカメラでスキャンできません。Bridge の URL を入力してください。';
+
+  @override
+  String get qrScanHint => 'Bridge に表示された QR コードにカメラを向けてください';
+
+  @override
+  String get sessionCompleteTitle => 'セッション完了';
+
+  @override
+  String get sessionDone => 'セッションが終了しました';
+
+  @override
+  String get codexSessionDone => 'Codex セッションが終了しました';
+
+  @override
+  String startWithProvider(String provider) {
+    return '$provider で開始';
+  }
+
+  @override
+  String get permissionAutoMode => '自動';
+
+  @override
+  String get permissionAcceptEditsMode => '編集を自動承認';
+
+  @override
+  String get permissionPlanMode => 'プラン';
+
+  @override
+  String get permissionBypassMode => 'すべてスキップ';
+
+  @override
+  String get permissionChipAcceptEdits => '編集';
+
+  @override
+  String get permissionChipBypass => 'スキップ';
+
+  @override
+  String get permissionsLabel => '権限';
+
+  @override
+  String get defaultPermissionsLabel => 'デフォルト権限';
+
+  @override
+  String get autoReviewModeLabel => '自動レビュー';
+
+  @override
+  String get fullAccessLabel => 'フルアクセス';
+
+  @override
+  String get fullAccessShort => 'フル';
+
+  @override
+  String get customPermissionsLabel => 'カスタム（config.toml）';
+
+  @override
+  String get customPermissionsShort => 'カスタム';
+
+  @override
+  String get permissionsFromConfig => 'config.toml の Codex 権限を使用します';
+
+  @override
+  String get permissionsFromProfile => '選択したプロファイルの Codex 権限を使用します';
+
+  @override
+  String get approvalNeverAsk => '確認しない';
+
+  @override
+  String get approvalOnRequest => '必要時に確認';
+
+  @override
+  String get approvalUntrusted => '信頼済みのみ';
+
+  @override
+  String get sandboxSafeMode => 'サンドボックス（安全モード）';
+
+  @override
+  String get sandboxStandard => '標準';
+
+  @override
+  String get sandboxOnLabel => 'サンドボックス有効';
+
+  @override
+  String get sandboxOffLabel => 'サンドボックス無効';
+
+  @override
+  String get sandboxChipOff => '制限なし';
+
+  @override
+  String get planOnLabel => 'プラン有効';
+
+  @override
+  String get planOffLabel => 'プラン無効';
+
+  @override
+  String get speedLabel => '速度';
+
+  @override
+  String get fastOn => '高速モード有効';
+
+  @override
+  String get fastOff => '高速モード無効';
+
+  @override
+  String get fastSpeedDescription => '高速（1.5 倍速、使用量増加）';
+
+  @override
+  String get effortNoneLabel => 'なし';
+
+  @override
+  String get effortMinimalLabel => '最小';
+
+  @override
+  String get effortLightLabel => '軽め';
+
+  @override
+  String get effortLowLabel => '低';
+
+  @override
+  String get effortMediumLabel => '中';
+
+  @override
+  String get effortHighLabel => '高';
+
+  @override
+  String get effortXHighLabel => '非常に高い';
+
+  @override
+  String get effortClaudeXHighLabel => '非常に高い';
+
+  @override
+  String get effortMaxLabel => '最大';
+
+  @override
+  String get effortUltraLabel => '超高';
+
+  @override
+  String get webSearchDisabled => '無効';
+
+  @override
+  String get webSearchCached => 'キャッシュのみ';
+
+  @override
+  String get webSearchLive => 'リアルタイム';
+
+  @override
+  String get galleryLoading => 'ギャラリーを読み込み中…';
+
+  @override
+  String get galleryLoadFailed => 'ギャラリーを読み込めませんでした。';
+
+  @override
+  String get galleryDeleteUnauthorized => 'Bridge の接続キーを確認して再試行してください。';
+
+  @override
+  String get galleryOffline => 'Bridge に接続できません。接続を確認して再試行してください。';
+
+  @override
+  String get galleryTimedOut => 'Bridge が時間内に応答しませんでした。再試行してください。';
+
+  @override
+  String get galleryImageMissing => 'この画像はすでに削除されています。';
+
+  @override
+  String get galleryDeleteServerError => 'Bridge で画像を削除できませんでした。再試行してください。';
+
+  @override
+  String get galleryDeleted => '画像を削除しました';
+
+  @override
+  String get thinkingStreamingLabel => '考え中…';
+
+  @override
+  String get thinkingLabel => '思考過程';
+
+  @override
+  String get gitRevert => '変更を破棄';
+
+  @override
+  String get gitCommitLabel => 'コミット';
+
+  @override
+  String get gitCommitPush => 'コミットしてプッシュ';
+
+  @override
+  String gitCommittedHash(String hash) {
+    return 'コミット済み：$hash';
+  }
+
+  @override
+  String get gitCommitSuccess => '成功';
+
+  @override
+  String get gitUnknownError => '不明なエラー';
+
+  @override
+  String get gitTryAgain => '再試行';
+
+  @override
+  String get gitAutoGenerateAI => 'AI で自動生成';
+
+  @override
+  String get gitCommitMessage => 'コミットメッセージ';
+
+  @override
+  String get gitAutoGenerateMessage => 'メッセージを自動生成';
+
+  @override
+  String get gitCommitting => 'コミット中…';
+
+  @override
+  String get gitPushing => 'プッシュ中…';
+
+  @override
+  String get gitViewFile => 'ファイルを表示';
+
+  @override
+  String get gitViewFileDescription => '現在のファイル全体を開く';
+
+  @override
+  String get gitStage => 'ステージ';
+
+  @override
+  String get gitUnstage => 'ステージ解除';
+
+  @override
+  String get gitRequestChange => '変更を依頼';
+
+  @override
+  String get gitFileFeedback => 'ファイルとフィードバックを AI に送信';
+
+  @override
+  String get gitHunkFeedback => 'この差分とフィードバックを AI に送信';
+
+  @override
+  String get gitRevertAll => 'すべて破棄';
+
+  @override
+  String get gitStageAll => 'すべてステージ';
+
+  @override
+  String get gitUnstageAll => 'すべてステージ解除';
+
+  @override
+  String get gitFilesLabel => 'ファイル';
+
+  @override
+  String get gitFocusDiff => '差分に集中';
+
+  @override
+  String get gitExitFocus => '集中モードを終了';
+
+  @override
+  String get gitBranchList => 'ブランチ';
+
+  @override
+  String get gitNewBranch => '新しいブランチ';
+
+  @override
+  String get gitSearchBranches => 'ブランチを検索…';
+
+  @override
+  String get gitBranchInUse => '別のワークツリーで使用中';
+
+  @override
+  String get gitBranchNameHint => 'ブランチ名（例：feat/login）';
+
+  @override
+  String get gitCreateCheckout => '作成して切り替え';
+
+  @override
+  String get gitNoUpstream => '上流ブランチなし';
+
+  @override
+  String get gitStaged => 'ステージ済み';
+
+  @override
+  String get gitUnstaged => '未ステージ';
+
+  @override
+  String get sessionPlanningLabel => '計画中';
+
+  @override
+  String get environmentSection => '環境';
+
+  @override
+  String get profileLabel => 'プロファイル';
+
+  @override
+  String get worktreeTooltip => 'このセッション用に独立した Git ワークツリーを作成します。';
+
+  @override
+  String get sessionStartedLabel => 'セッション開始';
+
+  @override
+  String systemSubtypeLabel(String subtype) {
+    return 'システム：$subtype';
+  }
+
+  @override
+  String get speedFastLabel => '高速';
+
+  @override
+  String get speedFastDetail => '1.5 倍速、使用量増加';
+
+  @override
+  String get speedStandardDetail => '標準速度';
+
+  @override
+  String get ultraEffortDetail => '使用量が増え、タスクを自動委任します';
 }

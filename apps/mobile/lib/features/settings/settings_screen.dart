@@ -11,6 +11,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../constants/app_constants.dart';
 import '../../constants/feature_flags.dart';
 import '../../l10n/app_localizations.dart';
+import '../../l10n/display_locale.dart';
+import '../../utils/network_endpoint.dart';
 import '../../models/app_icon.dart';
 import '../../models/git_diff_interaction_mode.dart';
 import '../../models/image_paste_shortcut.dart';
@@ -333,10 +335,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               Icons.computer_outlined,
                               color: cs.primary,
                             ),
-                            title: const Text('Bridge machine'),
+                            title: Text(l.settingsBridgeMachine),
                             subtitle: Text(
                               machine?.displayName ??
-                                  (bridge.lastUrl ?? 'Not connected'),
+                                  bridgeEndpointLabel(bridge.lastUrl) ??
+                                  l.settingsNotConnected,
                             ),
                           ),
                           Divider(
@@ -436,21 +439,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             context.read<SettingsCubit>().setThemeMode(mode),
                       ),
                     ),
-                    // Language
-                    ListTile(
-                      leading: Icon(Icons.language, color: cs.primary),
-                      title: Text(l.language),
-                      subtitle: Text(
-                        getAppLocaleLabel(context, state.appLocaleId),
+                    // Desktop display language
+                    if (!followsDeviceLanguage)
+                      ListTile(
+                        key: const ValueKey('settings_display_language'),
+                        leading: Icon(Icons.language, color: cs.primary),
+                        title: Text(l.language),
+                        subtitle: Text(
+                          getAppLocaleLabel(context, state.appLocaleId),
+                        ),
+                        trailing: const Icon(Icons.chevron_right, size: 20),
+                        onTap: () => showAppLocaleBottomSheet(
+                          context: context,
+                          current: state.appLocaleId,
+                          onChanged: (id) =>
+                              context.read<SettingsCubit>().setAppLocaleId(id),
+                        ),
                       ),
-                      trailing: const Icon(Icons.chevron_right, size: 20),
-                      onTap: () => showAppLocaleBottomSheet(
-                        context: context,
-                        current: state.appLocaleId,
-                        onChanged: (id) =>
-                            context.read<SettingsCubit>().setAppLocaleId(id),
-                      ),
-                    ),
                     Divider(
                       height: 1,
                       indent: 16,
@@ -603,7 +608,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               const SizedBox(height: 8),
 
-              _SectionHeader(title: 'AGENTS'),
+              _SectionHeader(title: l.sectionAgents),
               Card(
                 margin: const EdgeInsets.symmetric(horizontal: 16),
                 child: Column(
@@ -617,16 +622,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           Expanded(
                             child: SegmentedButton<EnabledAgentsMode>(
                               key: const ValueKey('enabled_agents_selector'),
-                              segments: const [
+                              segments: [
                                 ButtonSegment(
                                   value: EnabledAgentsMode.both,
-                                  label: Text('Both'),
+                                  label: Text(l.settingsBothAgents),
                                 ),
-                                ButtonSegment(
+                                const ButtonSegment(
                                   value: EnabledAgentsMode.codex,
                                   label: Text('Codex'),
                                 ),
-                                ButtonSegment(
+                                const ButtonSegment(
                                   value: EnabledAgentsMode.claude,
                                   label: Text('Claude'),
                                 ),
@@ -776,35 +781,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               .read<SettingsCubit>()
                               .toggleFcmPrivacy(enabled),
                         ),
-                        Divider(
-                          height: 1,
-                          indent: 16,
-                          endIndent: 16,
-                          color: cs.outlineVariant,
-                        ),
-                        _UpdateNotificationLanguageTile(
-                          syncInProgress: state.fcmSyncInProgress,
-                          onTap: () async {
-                            final cubit = context.read<SettingsCubit>();
-                            await cubit.syncPushLocale();
-                            if (context.mounted) {
-                              final status = cubit.state.fcmStatusKey;
-                              final isSuccess =
-                                  status == FcmStatusKey.enabled ||
-                                  status == FcmStatusKey.enabledPending;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    isSuccess
-                                        ? l.notificationLanguageUpdated
-                                        : l.fcmTokenFailed,
+                        if (!followsDeviceLanguage ||
+                            const {
+                              FcmStatusKey.unavailable,
+                              FcmStatusKey.bridgeNotInitialized,
+                              FcmStatusKey.tokenFailed,
+                              FcmStatusKey.registrationFailed,
+                            }.contains(state.fcmStatusKey)) ...[
+                          Divider(
+                            height: 1,
+                            indent: 16,
+                            endIndent: 16,
+                            color: cs.outlineVariant,
+                          ),
+                          _UpdateNotificationLanguageTile(
+                            syncInProgress: state.fcmSyncInProgress,
+                            onTap: () async {
+                              final cubit = context.read<SettingsCubit>();
+                              await cubit.syncPushLocale();
+                              if (context.mounted && !followsDeviceLanguage) {
+                                final status = cubit.state.fcmStatusKey;
+                                final isSuccess =
+                                    status == FcmStatusKey.enabled ||
+                                    status == FcmStatusKey.enabledPending;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      isSuccess
+                                          ? l.notificationLanguageUpdated
+                                          : l.fcmTokenFailed,
+                                    ),
+                                    duration: const Duration(seconds: 2),
                                   ),
-                                  duration: const Duration(seconds: 2),
-                                ),
-                              );
-                            }
-                          },
-                        ),
+                                );
+                              }
+                            },
+                          ),
+                        ],
                       ],
                     ],
                   ),
@@ -1238,9 +1251,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   children: [
                     Text(
                       'ccpocket',
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        color: cs.onSurfaceVariant,
-                      ),
+                      style: Theme.of(context).textTheme.titleSmall
+                          ?.copyWith(color: cs.onSurfaceVariant),
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -1432,10 +1444,7 @@ class _SectionHeader extends StatelessWidget {
     final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 22, 18, 8),
-      child: Text(
-        title,
-        style: theme.textTheme.titleMedium,
-      ),
+      child: Text(title, style: theme.textTheme.titleMedium),
     );
   }
 }
@@ -1577,16 +1586,14 @@ class _BridgeUpdateStatusTile extends StatelessWidget {
                 children: [
                   Text(
                     l.bridgeUpdateSetupTitle,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                    style: Theme.of(context).textTheme.titleLarge
+                        ?.copyWith(fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     l.bridgeUpdateSetupDescription,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: cs.onSurfaceVariant,
-                    ),
+                    style: Theme.of(context).textTheme.bodyMedium
+                        ?.copyWith(color: cs.onSurfaceVariant),
                   ),
                   const SizedBox(height: 20),
                   _BridgeUpdateSetupStep(
@@ -1611,9 +1618,8 @@ class _BridgeUpdateStatusTile extends StatelessWidget {
                     ),
                     child: SelectableText(
                       l.bridgeUpdateSetupCommand,
-                      style: Theme.of(
-                        context,
-                      ).textTheme.bodyMedium?.copyWith(fontFamily: 'monospace'),
+                      style: Theme.of(context).textTheme.bodyMedium
+                          ?.copyWith(fontFamily: 'monospace'),
                     ),
                   ),
                 ],
@@ -1742,8 +1748,12 @@ class _UpdateNotificationLanguageTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
     return ListTile(
-      leading: const Icon(Icons.translate_outlined),
-      title: Text(l.updateNotificationLanguage),
+      leading: Icon(
+        followsDeviceLanguage ? Icons.refresh : Icons.translate_outlined,
+      ),
+      title: Text(
+        followsDeviceLanguage ? l.retry : l.updateNotificationLanguage,
+      ),
       trailing: syncInProgress
           ? const SizedBox(
               width: 20,
@@ -1879,9 +1889,8 @@ class _TextScaleTile extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       l.textDensityDescription,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: cs.onSurfaceVariant,
-                      ),
+                      style: Theme.of(context).textTheme.bodySmall
+                          ?.copyWith(color: cs.onSurfaceVariant),
                     ),
                   ],
                 ),

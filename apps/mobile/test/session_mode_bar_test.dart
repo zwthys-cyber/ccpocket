@@ -76,11 +76,15 @@ class _MockBridgeService extends BridgeService {
   }
 }
 
-Widget _wrap(ChatSessionCubit cubit, {bool showExtendedCodexEfforts = false}) {
+Widget _wrap(
+  ChatSessionCubit cubit, {
+  bool showExtendedCodexEfforts = false,
+  Locale locale = const Locale('en'),
+}) {
   return MaterialApp(
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
-    locale: const Locale('en'),
+    locale: locale,
     theme: AppTheme.darkTheme,
     home: Scaffold(
       body: BlocProvider<ChatSessionCubit>.value(
@@ -181,6 +185,8 @@ void main() {
   ) async {
     await tester.pumpWidget(
       MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         theme: AppTheme.darkTheme,
         home: MediaQuery(
           data: const MediaQueryData(
@@ -615,6 +621,22 @@ void main() {
     expect(message['planMode'], true);
     expect(message['executionMode'], 'default');
   });
+
+  testWidgets(
+    'Chinese permission change uses localized names in both menu and confirmation',
+    (tester) async {
+      await tester.pumpWidget(_wrap(cubit, locale: const Locale('zh')));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('计划已关闭'), findsOneWidget);
+      await tester.tap(find.text('默认'));
+      await tester.pumpAndSettle();
+      expect(find.text('自动审查'), findsOneWidget);
+      await tester.tap(find.text('完全访问'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('切换到 完全访问'), findsOneWidget);
+      expect(find.text('重启'), findsOneWidget);
+    },
+  );
 
   testWidgets('codex permissions change shows restart confirmation', (
     tester,

@@ -3739,74 +3739,74 @@ abstract class AppLocalizations {
 
   /// No description provided for @statusWorking.
   ///
-  /// In en, this message translates to:
-  /// **'Working'**
+  /// In ja, this message translates to:
+  /// **'作業中'**
   String get statusWorking;
 
   /// No description provided for @statusNeedsYou.
   ///
-  /// In en, this message translates to:
-  /// **'Needs You'**
+  /// In ja, this message translates to:
+  /// **'要対応'**
   String get statusNeedsYou;
 
   /// No description provided for @statusReady.
   ///
-  /// In en, this message translates to:
-  /// **'Ready'**
+  /// In ja, this message translates to:
+  /// **'待機中'**
   String get statusReady;
 
   /// No description provided for @sessionNewActivity.
   ///
-  /// In en, this message translates to:
-  /// **'New activity'**
+  /// In ja, this message translates to:
+  /// **'新しいアクティビティ'**
   String get sessionNewActivity;
 
   /// No description provided for @chatResultStopped.
   ///
-  /// In en, this message translates to:
-  /// **'Stopped'**
+  /// In ja, this message translates to:
+  /// **'停止しました'**
   String get chatResultStopped;
 
   /// No description provided for @chatResultFailed.
   ///
-  /// In en, this message translates to:
-  /// **'Task failed'**
+  /// In ja, this message translates to:
+  /// **'タスクに失敗しました'**
   String get chatResultFailed;
 
   /// No description provided for @chatResultTruncated.
   ///
-  /// In en, this message translates to:
-  /// **'Output truncated'**
+  /// In ja, this message translates to:
+  /// **'出力が途中で切れています'**
   String get chatResultTruncated;
 
   /// No description provided for @chatResultToolCalls.
   ///
-  /// In en, this message translates to:
-  /// **'{count} tool calls'**
+  /// In ja, this message translates to:
+  /// **'ツール呼び出し {count} 回'**
   String chatResultToolCalls(int count);
 
   /// No description provided for @chatResultFileEdits.
   ///
-  /// In en, this message translates to:
-  /// **'{count} file edits'**
+  /// In ja, this message translates to:
+  /// **'ファイル編集 {count} 回'**
   String chatResultFileEdits(int count);
 
   /// No description provided for @sessionOpenSessions.
   ///
-  /// In en, this message translates to:
-  /// **'Open Sessions'**
+  /// In ja, this message translates to:
+  /// **'開いているセッション'**
   String get sessionOpenSessions;
 
   /// No description provided for @bridgeConnected.
   ///
-  /// In en, this message translates to:
-  /// **'Connected'**
+  /// In ja, this message translates to:
+  /// **'接続済み'**
   String get bridgeConnected;
 
   /// No description provided for @clearSessionSearch.
   ///
-  /// In en, this message translates to:
-  /// **'Clear search'**
+  /// In ja, this message translates to:
+  /// **'検索をクリア'**
   String get clearSessionSearch;
 
   /// No description provided for @startSessionToBegin.
@@ -3820,6 +3820,30 @@ abstract class AppLocalizations {
   /// In ja, this message translates to:
   /// **'設定'**
   String get settingsTitle;
+
+  /// No description provided for @settingsBridgeMachine.
+  ///
+  /// In ja, this message translates to:
+  /// **'Bridge ホスト'**
+  String get settingsBridgeMachine;
+
+  /// No description provided for @settingsNotConnected.
+  ///
+  /// In ja, this message translates to:
+  /// **'未接続'**
+  String get settingsNotConnected;
+
+  /// No description provided for @sectionAgents.
+  ///
+  /// In ja, this message translates to:
+  /// **'エージェント'**
+  String get sectionAgents;
+
+  /// No description provided for @settingsBothAgents.
+  ///
+  /// In ja, this message translates to:
+  /// **'両方'**
+  String get settingsBothAgents;
 
   /// No description provided for @sectionGeneral.
   ///
@@ -4753,8 +4777,8 @@ abstract class AppLocalizations {
 
   /// No description provided for @composerMoreActions.
   ///
-  /// In en, this message translates to:
-  /// **'More composer actions'**
+  /// In ja, this message translates to:
+  /// **'入力欄のその他の操作'**
   String get composerMoreActions;
 
   /// No description provided for @tooltipDedent.
@@ -6244,6 +6268,666 @@ abstract class AppLocalizations {
   /// In ja, this message translates to:
   /// **'Reset could not be confirmed. Refresh usage before retrying.'**
   String get usageResetFailed;
+
+  /// No description provided for @groupRecent.
+  ///
+  /// In ja, this message translates to:
+  /// **'グループ'**
+  String get groupRecent;
+
+  /// No description provided for @listRecent.
+  ///
+  /// In ja, this message translates to:
+  /// **'リスト'**
+  String get listRecent;
+
+  /// No description provided for @toggleRecentGrouping.
+  ///
+  /// In ja, this message translates to:
+  /// **'最近のセッションのグループ表示を切り替え'**
+  String get toggleRecentGrouping;
+
+  /// No description provided for @secondsAgo.
+  ///
+  /// In ja, this message translates to:
+  /// **'{seconds}秒前'**
+  String secondsAgo(int seconds);
+
+  /// No description provided for @todayAt.
+  ///
+  /// In ja, this message translates to:
+  /// **'今日 {time}'**
+  String todayAt(String time);
+
+  /// No description provided for @yesterdayAt.
+  ///
+  /// In ja, this message translates to:
+  /// **'昨日 {time}'**
+  String yesterdayAt(String time);
+
+  /// No description provided for @scrollToBottom.
+  ///
+  /// In ja, this message translates to:
+  /// **'一番下にスクロール'**
+  String get scrollToBottom;
+
+  /// No description provided for @invalidPairingQr.
+  ///
+  /// In ja, this message translates to:
+  /// **'有効な CC Pocket 接続用 QR コードではありません'**
+  String get invalidPairingQr;
+
+  /// No description provided for @qrScanUnavailable.
+  ///
+  /// In ja, this message translates to:
+  /// **'この環境ではカメラでスキャンできません。Bridge の URL を入力してください。'**
+  String get qrScanUnavailable;
+
+  /// No description provided for @qrScanHint.
+  ///
+  /// In ja, this message translates to:
+  /// **'Bridge に表示された QR コードにカメラを向けてください'**
+  String get qrScanHint;
+
+  /// No description provided for @sessionCompleteTitle.
+  ///
+  /// In ja, this message translates to:
+  /// **'セッション完了'**
+  String get sessionCompleteTitle;
+
+  /// No description provided for @sessionDone.
+  ///
+  /// In ja, this message translates to:
+  /// **'セッションが終了しました'**
+  String get sessionDone;
+
+  /// No description provided for @codexSessionDone.
+  ///
+  /// In ja, this message translates to:
+  /// **'Codex セッションが終了しました'**
+  String get codexSessionDone;
+
+  /// No description provided for @startWithProvider.
+  ///
+  /// In ja, this message translates to:
+  /// **'{provider} で開始'**
+  String startWithProvider(String provider);
+
+  /// No description provided for @permissionAutoMode.
+  ///
+  /// In ja, this message translates to:
+  /// **'自動'**
+  String get permissionAutoMode;
+
+  /// No description provided for @permissionAcceptEditsMode.
+  ///
+  /// In ja, this message translates to:
+  /// **'編集を自動承認'**
+  String get permissionAcceptEditsMode;
+
+  /// No description provided for @permissionPlanMode.
+  ///
+  /// In ja, this message translates to:
+  /// **'プラン'**
+  String get permissionPlanMode;
+
+  /// No description provided for @permissionBypassMode.
+  ///
+  /// In ja, this message translates to:
+  /// **'すべてスキップ'**
+  String get permissionBypassMode;
+
+  /// No description provided for @permissionChipAcceptEdits.
+  ///
+  /// In ja, this message translates to:
+  /// **'編集'**
+  String get permissionChipAcceptEdits;
+
+  /// No description provided for @permissionChipBypass.
+  ///
+  /// In ja, this message translates to:
+  /// **'スキップ'**
+  String get permissionChipBypass;
+
+  /// No description provided for @permissionsLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'権限'**
+  String get permissionsLabel;
+
+  /// No description provided for @defaultPermissionsLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'デフォルト権限'**
+  String get defaultPermissionsLabel;
+
+  /// No description provided for @autoReviewModeLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'自動レビュー'**
+  String get autoReviewModeLabel;
+
+  /// No description provided for @fullAccessLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'フルアクセス'**
+  String get fullAccessLabel;
+
+  /// No description provided for @fullAccessShort.
+  ///
+  /// In ja, this message translates to:
+  /// **'フル'**
+  String get fullAccessShort;
+
+  /// No description provided for @customPermissionsLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'カスタム（config.toml）'**
+  String get customPermissionsLabel;
+
+  /// No description provided for @customPermissionsShort.
+  ///
+  /// In ja, this message translates to:
+  /// **'カスタム'**
+  String get customPermissionsShort;
+
+  /// No description provided for @permissionsFromConfig.
+  ///
+  /// In ja, this message translates to:
+  /// **'config.toml の Codex 権限を使用します'**
+  String get permissionsFromConfig;
+
+  /// No description provided for @permissionsFromProfile.
+  ///
+  /// In ja, this message translates to:
+  /// **'選択したプロファイルの Codex 権限を使用します'**
+  String get permissionsFromProfile;
+
+  /// No description provided for @approvalNeverAsk.
+  ///
+  /// In ja, this message translates to:
+  /// **'確認しない'**
+  String get approvalNeverAsk;
+
+  /// No description provided for @approvalOnRequest.
+  ///
+  /// In ja, this message translates to:
+  /// **'必要時に確認'**
+  String get approvalOnRequest;
+
+  /// No description provided for @approvalUntrusted.
+  ///
+  /// In ja, this message translates to:
+  /// **'信頼済みのみ'**
+  String get approvalUntrusted;
+
+  /// No description provided for @sandboxSafeMode.
+  ///
+  /// In ja, this message translates to:
+  /// **'サンドボックス（安全モード）'**
+  String get sandboxSafeMode;
+
+  /// No description provided for @sandboxStandard.
+  ///
+  /// In ja, this message translates to:
+  /// **'標準'**
+  String get sandboxStandard;
+
+  /// No description provided for @sandboxOnLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'サンドボックス有効'**
+  String get sandboxOnLabel;
+
+  /// No description provided for @sandboxOffLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'サンドボックス無効'**
+  String get sandboxOffLabel;
+
+  /// No description provided for @sandboxChipOff.
+  ///
+  /// In ja, this message translates to:
+  /// **'制限なし'**
+  String get sandboxChipOff;
+
+  /// No description provided for @planOnLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'プラン有効'**
+  String get planOnLabel;
+
+  /// No description provided for @planOffLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'プラン無効'**
+  String get planOffLabel;
+
+  /// No description provided for @speedLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'速度'**
+  String get speedLabel;
+
+  /// No description provided for @fastOn.
+  ///
+  /// In ja, this message translates to:
+  /// **'高速モード有効'**
+  String get fastOn;
+
+  /// No description provided for @fastOff.
+  ///
+  /// In ja, this message translates to:
+  /// **'高速モード無効'**
+  String get fastOff;
+
+  /// No description provided for @fastSpeedDescription.
+  ///
+  /// In ja, this message translates to:
+  /// **'高速（1.5 倍速、使用量増加）'**
+  String get fastSpeedDescription;
+
+  /// No description provided for @effortNoneLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'なし'**
+  String get effortNoneLabel;
+
+  /// No description provided for @effortMinimalLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'最小'**
+  String get effortMinimalLabel;
+
+  /// No description provided for @effortLightLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'軽め'**
+  String get effortLightLabel;
+
+  /// No description provided for @effortLowLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'低'**
+  String get effortLowLabel;
+
+  /// No description provided for @effortMediumLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'中'**
+  String get effortMediumLabel;
+
+  /// No description provided for @effortHighLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'高'**
+  String get effortHighLabel;
+
+  /// No description provided for @effortXHighLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'非常に高い'**
+  String get effortXHighLabel;
+
+  /// No description provided for @effortClaudeXHighLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'非常に高い'**
+  String get effortClaudeXHighLabel;
+
+  /// No description provided for @effortMaxLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'最大'**
+  String get effortMaxLabel;
+
+  /// No description provided for @effortUltraLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'超高'**
+  String get effortUltraLabel;
+
+  /// No description provided for @webSearchDisabled.
+  ///
+  /// In ja, this message translates to:
+  /// **'無効'**
+  String get webSearchDisabled;
+
+  /// No description provided for @webSearchCached.
+  ///
+  /// In ja, this message translates to:
+  /// **'キャッシュのみ'**
+  String get webSearchCached;
+
+  /// No description provided for @webSearchLive.
+  ///
+  /// In ja, this message translates to:
+  /// **'リアルタイム'**
+  String get webSearchLive;
+
+  /// No description provided for @galleryLoading.
+  ///
+  /// In ja, this message translates to:
+  /// **'ギャラリーを読み込み中…'**
+  String get galleryLoading;
+
+  /// No description provided for @galleryLoadFailed.
+  ///
+  /// In ja, this message translates to:
+  /// **'ギャラリーを読み込めませんでした。'**
+  String get galleryLoadFailed;
+
+  /// No description provided for @galleryDeleteUnauthorized.
+  ///
+  /// In ja, this message translates to:
+  /// **'Bridge の接続キーを確認して再試行してください。'**
+  String get galleryDeleteUnauthorized;
+
+  /// No description provided for @galleryOffline.
+  ///
+  /// In ja, this message translates to:
+  /// **'Bridge に接続できません。接続を確認して再試行してください。'**
+  String get galleryOffline;
+
+  /// No description provided for @galleryTimedOut.
+  ///
+  /// In ja, this message translates to:
+  /// **'Bridge が時間内に応答しませんでした。再試行してください。'**
+  String get galleryTimedOut;
+
+  /// No description provided for @galleryImageMissing.
+  ///
+  /// In ja, this message translates to:
+  /// **'この画像はすでに削除されています。'**
+  String get galleryImageMissing;
+
+  /// No description provided for @galleryDeleteServerError.
+  ///
+  /// In ja, this message translates to:
+  /// **'Bridge で画像を削除できませんでした。再試行してください。'**
+  String get galleryDeleteServerError;
+
+  /// No description provided for @galleryDeleted.
+  ///
+  /// In ja, this message translates to:
+  /// **'画像を削除しました'**
+  String get galleryDeleted;
+
+  /// No description provided for @thinkingStreamingLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'考え中…'**
+  String get thinkingStreamingLabel;
+
+  /// No description provided for @thinkingLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'思考過程'**
+  String get thinkingLabel;
+
+  /// No description provided for @gitRevert.
+  ///
+  /// In ja, this message translates to:
+  /// **'変更を破棄'**
+  String get gitRevert;
+
+  /// No description provided for @gitCommitLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'コミット'**
+  String get gitCommitLabel;
+
+  /// No description provided for @gitCommitPush.
+  ///
+  /// In ja, this message translates to:
+  /// **'コミットしてプッシュ'**
+  String get gitCommitPush;
+
+  /// No description provided for @gitCommittedHash.
+  ///
+  /// In ja, this message translates to:
+  /// **'コミット済み：{hash}'**
+  String gitCommittedHash(String hash);
+
+  /// No description provided for @gitCommitSuccess.
+  ///
+  /// In ja, this message translates to:
+  /// **'成功'**
+  String get gitCommitSuccess;
+
+  /// No description provided for @gitUnknownError.
+  ///
+  /// In ja, this message translates to:
+  /// **'不明なエラー'**
+  String get gitUnknownError;
+
+  /// No description provided for @gitTryAgain.
+  ///
+  /// In ja, this message translates to:
+  /// **'再試行'**
+  String get gitTryAgain;
+
+  /// No description provided for @gitAutoGenerateAI.
+  ///
+  /// In ja, this message translates to:
+  /// **'AI で自動生成'**
+  String get gitAutoGenerateAI;
+
+  /// No description provided for @gitCommitMessage.
+  ///
+  /// In ja, this message translates to:
+  /// **'コミットメッセージ'**
+  String get gitCommitMessage;
+
+  /// No description provided for @gitAutoGenerateMessage.
+  ///
+  /// In ja, this message translates to:
+  /// **'メッセージを自動生成'**
+  String get gitAutoGenerateMessage;
+
+  /// No description provided for @gitCommitting.
+  ///
+  /// In ja, this message translates to:
+  /// **'コミット中…'**
+  String get gitCommitting;
+
+  /// No description provided for @gitPushing.
+  ///
+  /// In ja, this message translates to:
+  /// **'プッシュ中…'**
+  String get gitPushing;
+
+  /// No description provided for @gitViewFile.
+  ///
+  /// In ja, this message translates to:
+  /// **'ファイルを表示'**
+  String get gitViewFile;
+
+  /// No description provided for @gitViewFileDescription.
+  ///
+  /// In ja, this message translates to:
+  /// **'現在のファイル全体を開く'**
+  String get gitViewFileDescription;
+
+  /// No description provided for @gitStage.
+  ///
+  /// In ja, this message translates to:
+  /// **'ステージ'**
+  String get gitStage;
+
+  /// No description provided for @gitUnstage.
+  ///
+  /// In ja, this message translates to:
+  /// **'ステージ解除'**
+  String get gitUnstage;
+
+  /// No description provided for @gitRequestChange.
+  ///
+  /// In ja, this message translates to:
+  /// **'変更を依頼'**
+  String get gitRequestChange;
+
+  /// No description provided for @gitFileFeedback.
+  ///
+  /// In ja, this message translates to:
+  /// **'ファイルとフィードバックを AI に送信'**
+  String get gitFileFeedback;
+
+  /// No description provided for @gitHunkFeedback.
+  ///
+  /// In ja, this message translates to:
+  /// **'この差分とフィードバックを AI に送信'**
+  String get gitHunkFeedback;
+
+  /// No description provided for @gitRevertAll.
+  ///
+  /// In ja, this message translates to:
+  /// **'すべて破棄'**
+  String get gitRevertAll;
+
+  /// No description provided for @gitStageAll.
+  ///
+  /// In ja, this message translates to:
+  /// **'すべてステージ'**
+  String get gitStageAll;
+
+  /// No description provided for @gitUnstageAll.
+  ///
+  /// In ja, this message translates to:
+  /// **'すべてステージ解除'**
+  String get gitUnstageAll;
+
+  /// No description provided for @gitFilesLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'ファイル'**
+  String get gitFilesLabel;
+
+  /// No description provided for @gitFocusDiff.
+  ///
+  /// In ja, this message translates to:
+  /// **'差分に集中'**
+  String get gitFocusDiff;
+
+  /// No description provided for @gitExitFocus.
+  ///
+  /// In ja, this message translates to:
+  /// **'集中モードを終了'**
+  String get gitExitFocus;
+
+  /// No description provided for @gitBranchList.
+  ///
+  /// In ja, this message translates to:
+  /// **'ブランチ'**
+  String get gitBranchList;
+
+  /// No description provided for @gitNewBranch.
+  ///
+  /// In ja, this message translates to:
+  /// **'新しいブランチ'**
+  String get gitNewBranch;
+
+  /// No description provided for @gitSearchBranches.
+  ///
+  /// In ja, this message translates to:
+  /// **'ブランチを検索…'**
+  String get gitSearchBranches;
+
+  /// No description provided for @gitBranchInUse.
+  ///
+  /// In ja, this message translates to:
+  /// **'別のワークツリーで使用中'**
+  String get gitBranchInUse;
+
+  /// No description provided for @gitBranchNameHint.
+  ///
+  /// In ja, this message translates to:
+  /// **'ブランチ名（例：feat/login）'**
+  String get gitBranchNameHint;
+
+  /// No description provided for @gitCreateCheckout.
+  ///
+  /// In ja, this message translates to:
+  /// **'作成して切り替え'**
+  String get gitCreateCheckout;
+
+  /// No description provided for @gitNoUpstream.
+  ///
+  /// In ja, this message translates to:
+  /// **'上流ブランチなし'**
+  String get gitNoUpstream;
+
+  /// No description provided for @gitStaged.
+  ///
+  /// In ja, this message translates to:
+  /// **'ステージ済み'**
+  String get gitStaged;
+
+  /// No description provided for @gitUnstaged.
+  ///
+  /// In ja, this message translates to:
+  /// **'未ステージ'**
+  String get gitUnstaged;
+
+  /// No description provided for @sessionPlanningLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'計画中'**
+  String get sessionPlanningLabel;
+
+  /// No description provided for @environmentSection.
+  ///
+  /// In ja, this message translates to:
+  /// **'環境'**
+  String get environmentSection;
+
+  /// No description provided for @profileLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'プロファイル'**
+  String get profileLabel;
+
+  /// No description provided for @worktreeTooltip.
+  ///
+  /// In ja, this message translates to:
+  /// **'このセッション用に独立した Git ワークツリーを作成します。'**
+  String get worktreeTooltip;
+
+  /// No description provided for @sessionStartedLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'セッション開始'**
+  String get sessionStartedLabel;
+
+  /// No description provided for @systemSubtypeLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'システム：{subtype}'**
+  String systemSubtypeLabel(String subtype);
+
+  /// No description provided for @speedFastLabel.
+  ///
+  /// In ja, this message translates to:
+  /// **'高速'**
+  String get speedFastLabel;
+
+  /// No description provided for @speedFastDetail.
+  ///
+  /// In ja, this message translates to:
+  /// **'1.5 倍速、使用量増加'**
+  String get speedFastDetail;
+
+  /// No description provided for @speedStandardDetail.
+  ///
+  /// In ja, this message translates to:
+  /// **'標準速度'**
+  String get speedStandardDetail;
+
+  /// No description provided for @ultraEffortDetail.
+  ///
+  /// In ja, this message translates to:
+  /// **'使用量が増え、タスクを自動委任します'**
+  String get ultraEffortDetail;
 }
 
 class _AppLocalizationsDelegate

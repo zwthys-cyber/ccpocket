@@ -3,6 +3,18 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('network endpoint formatting', () {
+    test('connection labels contain only the host and port', () {
+      expect(
+        bridgeEndpointLabel('wss://user:password@host:8443/ws?token=example'),
+        'host:8443',
+      );
+      expect(
+        bridgeEndpointLabel('ws://[::1]:8765?token=example'),
+        '[::1]:8765',
+      );
+      expect(bridgeEndpointLabel(null), isNull);
+    });
+
     test('keeps IPv4 and DNS hosts unchanged', () {
       expect(formatHostPort('192.168.1.1', 9000), '192.168.1.1:9000');
       expect(

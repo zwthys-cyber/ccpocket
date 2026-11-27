@@ -10,17 +10,47 @@ import 'package:ccpocket/theme/app_theme.dart';
 import 'package:ccpocket/widgets/session_card.dart';
 import 'package:ccpocket/widgets/session_visual_status.dart';
 
-Widget _wrap(Widget child) {
+Widget _wrap(Widget child, {Locale locale = const Locale('en')}) {
   return MaterialApp(
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
-    locale: const Locale('en'),
+    locale: locale,
     theme: AppTheme.darkTheme,
     home: Scaffold(body: child),
   );
 }
 
 void main() {
+  testWidgets(
+    'Chinese running card shows elapsed time, approval and sandbox status',
+    (tester) async {
+      final lastActive = DateTime.now()
+          .subtract(const Duration(minutes: 5))
+          .toIso8601String();
+      await tester.pumpWidget(
+        _wrap(
+          RunningSessionCard(
+            session: SessionInfo(
+              id: 'zh-card',
+              projectPath: '/sample',
+              provider: 'codex',
+              status: 'running',
+              createdAt: lastActive,
+              lastActivityAt: lastActive,
+              codexApprovalPolicy: 'never',
+              codexSandboxMode: 'danger-full-access',
+            ),
+            onTap: () {},
+          ),
+          locale: const Locale('zh'),
+        ),
+      );
+      expect(find.text('5 分钟前'), findsOneWidget);
+      expect(find.text('不询问'), findsOneWidget);
+      expect(find.text('沙箱已关闭'), findsOneWidget);
+    },
+  );
+
   for (final recent in [false, true]) {
     testWidgets('Fast indicator follows tier updates (recent: $recent)', (
       tester,
@@ -643,7 +673,7 @@ void main() {
       );
 
       expect(
-        find.text('claude-sonnet-4-20250514  default  plan-on'),
+        find.text('claude-sonnet-4-20250514  Default  Plan On'),
         findsOneWidget,
       );
     });
@@ -665,7 +695,7 @@ void main() {
         _wrap(RunningSessionCard(session: session, onTap: () {})),
       );
 
-      expect(find.text('full-access'), findsOneWidget);
+      expect(find.text('Full access'), findsOneWidget);
     });
 
     testWidgets('shows only mode when claude model is null', (tester) async {
@@ -683,7 +713,7 @@ void main() {
         _wrap(RunningSessionCard(session: session, onTap: () {})),
       );
 
-      expect(find.text('default  plan-on'), findsOneWidget);
+      expect(find.text('Default  Plan On'), findsOneWidget);
     });
 
     testWidgets('hides lastMessage row when empty', (tester) async {

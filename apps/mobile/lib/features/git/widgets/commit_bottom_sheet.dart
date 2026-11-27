@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../l10n/app_localizations.dart';
 import '../../../widgets/workspace_pane_chrome.dart';
 import '../state/commit_cubit.dart';
 import '../state/commit_state.dart';
@@ -41,6 +42,7 @@ class _CommitBottomSheetContentState extends State<_CommitBottomSheetContent> {
       builder: (context, state) {
         final cubit = context.read<CommitCubit>();
         final cs = Theme.of(context).colorScheme;
+        final l = AppLocalizations.of(context);
         final isIdle = state.status == CommitStatus.idle;
         final isBusy =
             state.status == CommitStatus.committing ||
@@ -61,7 +63,7 @@ class _CommitBottomSheetContentState extends State<_CommitBottomSheetContent> {
               children: [
                 // Title
                 Text(
-                  'Commit',
+                  l.gitCommitLabel,
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.w600,
@@ -76,8 +78,8 @@ class _CommitBottomSheetContentState extends State<_CommitBottomSheetContent> {
                   const SizedBox(height: 8),
                   Text(
                     state.commitHash != null
-                        ? 'Committed: ${state.commitHash}'
-                        : 'Success',
+                        ? l.gitCommittedHash(state.commitHash!)
+                        : l.gitCommitSuccess,
                     textAlign: TextAlign.center,
                     style: TextStyle(color: cs.onSurfaceVariant),
                   ),
@@ -87,7 +89,7 @@ class _CommitBottomSheetContentState extends State<_CommitBottomSheetContent> {
                       cubit.reset();
                       Navigator.of(context).pop();
                     },
-                    child: const Text('Done'),
+                    child: Text(l.done),
                   ),
                 ]
                 // Error state
@@ -95,14 +97,14 @@ class _CommitBottomSheetContentState extends State<_CommitBottomSheetContent> {
                   Icon(Icons.error_outline, color: cs.error, size: 48),
                   const SizedBox(height: 8),
                   Text(
-                    state.error ?? 'Unknown error',
+                    state.error ?? l.gitUnknownError,
                     textAlign: TextAlign.center,
                     style: TextStyle(color: cs.error, fontSize: 13),
                   ),
                   const SizedBox(height: 12),
                   FilledButton(
                     onPressed: cubit.reset,
-                    child: const Text('Try Again'),
+                    child: Text(l.gitTryAgain),
                   ),
                 ]
                 // Idle / busy state
@@ -115,8 +117,8 @@ class _CommitBottomSheetContentState extends State<_CommitBottomSheetContent> {
                     onChanged: cubit.setMessage,
                     decoration: InputDecoration(
                       hintText: state.autoGenerate
-                          ? 'Auto-generate with AI'
-                          : 'Commit message',
+                          ? l.gitAutoGenerateAI
+                          : l.gitCommitMessage,
                       border: const OutlineInputBorder(),
                       isDense: true,
                     ),
@@ -137,7 +139,7 @@ class _CommitBottomSheetContentState extends State<_CommitBottomSheetContent> {
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        'Auto-generate message',
+                        l.gitAutoGenerateMessage,
                         style: TextStyle(
                           fontSize: 13,
                           color: cs.onSurfaceVariant,
@@ -155,8 +157,8 @@ class _CommitBottomSheetContentState extends State<_CommitBottomSheetContent> {
                     const SizedBox(height: 8),
                     Text(
                       switch (state.status) {
-                        CommitStatus.committing => 'Committing...',
-                        CommitStatus.pushing => 'Pushing...',
+                        CommitStatus.committing => l.gitCommitting,
+                        CommitStatus.pushing => l.gitPushing,
                         _ => '',
                       },
                       textAlign: TextAlign.center,
@@ -174,14 +176,14 @@ class _CommitBottomSheetContentState extends State<_CommitBottomSheetContent> {
                       key: const ValueKey('commit_button_action'),
                       onPressed: _canCommit(state) ? cubit.commit : null,
                       icon: const Icon(Icons.check),
-                      label: const Text('Commit'),
+                      label: Text(l.gitCommitLabel),
                     ),
                     const SizedBox(height: 8),
                     OutlinedButton.icon(
                       key: const ValueKey('commit_push_button'),
                       onPressed: _canCommit(state) ? cubit.commitAndPush : null,
                       icon: const Icon(Icons.upload),
-                      label: const Text('Commit & Push'),
+                      label: Text(l.gitCommitPush),
                     ),
                   ],
                 ],

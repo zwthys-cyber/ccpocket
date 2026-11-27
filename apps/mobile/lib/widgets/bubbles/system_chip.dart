@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../l10n/app_localizations.dart';
 import '../../models/messages.dart';
 import '../../theme/app_theme.dart';
 import '../codex_environment_summary.dart';
@@ -14,14 +15,15 @@ class SystemChip extends StatelessWidget {
     final isCodexStarted =
         message.provider == 'codex' &&
         (message.subtype == 'init' || message.subtype == 'session_created');
-    final label = isCodexStarted ? null : 'System: ${message.subtype}';
+    final l = AppLocalizations.of(context);
+    final label = isCodexStarted ? null : l.systemSubtypeLabel(message.subtype);
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Chip(
           label: isCodexStarted
               ? CodexEnvironmentSummary(
-                  leadingLabel: 'Session started',
+                  leadingLabel: l.sessionStartedLabel,
                   model: message.model,
                   reasoningEffort: message.modelReasoningEffort,
                   approvalPolicy: message.approvalPolicy,
