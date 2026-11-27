@@ -315,6 +315,11 @@ class ChatMessageHandler {
             UserChatEntry(
               text,
               clientMessageId: clientMessageId,
+              imageCount: imageCount,
+              imageUrls: imageUrls,
+              bridgeTimestamp: timestamp == null
+                  ? null
+                  : DateTime.tryParse(timestamp)?.toLocal(),
               status: MessageStatus.sent,
             ),
           ],
@@ -663,7 +668,7 @@ class ChatMessageHandler {
             messageUuid: m.userMessageUuid,
             imageCount: m.imageCount,
             imageUrls: m.imageUrls,
-            timestamp: ts,
+            bridgeTimestamp: ts,
           ),
         );
       } else {

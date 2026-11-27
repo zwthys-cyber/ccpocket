@@ -1096,6 +1096,85 @@ void main() {
     );
 
     test(
+      'two clients converge on one accepted time after live echo and restore',
+      () async {
+        final sender = createCubit('s1', provider: Provider.codex);
+        final observer = createCubit('s1', provider: Provider.codex);
+        addTearDown(sender.close);
+        addTearDown(observer.close);
+        const live = UserInputMessage(
+          text: 'Continue',
+          clientMessageId: 'send-1',
+          userMessageUuid: 'codex:user-turn:4',
+          timestamp: '2026-11-27T09:18:00Z',
+        );
+        const restored = UserInputMessage(
+          text: 'Continue',
+          clientMessageId: 'send-1',
+          userMessageUuid: 'codex:user-turn:5',
+          timestamp: '2026-11-27T09:32:00Z',
+          imageCount: 1,
+          imageUrls: ['/images/restored'],
+        );
+        mockBridge.emitMessage(live, sessionId: 's1');
+        await pumpEventQueue();
+        for (var refresh = 0; refresh < 2; refresh++) {
+          mockBridge.emitMessage(
+            const HistoryMessage(messages: [restored]),
+            sessionId: 's1',
+          );
+          await pumpEventQueue();
+          for (final cubit in [sender, observer]) {
+            final user = cubit.state.entries.whereType<UserChatEntry>().single;
+            expect(user.clientMessageId, 'send-1');
+            expect(user.messageUuid, 'codex:user-turn:5');
+            expect(user.timestamp.toUtc(), DateTime.utc(2026, 11, 27, 9, 32));
+            expect(user.imageUrls, ['/images/restored']);
+          }
+        }
+      },
+    );
+
+    test(
+      'identical text from distinct sends survives a colliding rewind ordinal',
+      () async {
+        final cubit = createCubit('s1', provider: Provider.codex);
+        addTearDown(cubit.close);
+        const first = UserInputMessage(
+          text: 'Continue',
+          clientMessageId: 'send-1',
+          userMessageUuid: 'codex:user-turn:5',
+        );
+        const second = UserInputMessage(
+          text: 'Continue',
+          clientMessageId: 'send-2',
+          userMessageUuid: 'codex:user-turn:5',
+        );
+        for (final message in [first, second, second]) {
+          mockBridge.emitMessage(message, sessionId: 's1');
+        }
+        await pumpEventQueue();
+        List<String?> sendIds() => cubit.state.entries
+            .whereType<UserChatEntry>()
+            .map((e) => e.clientMessageId)
+            .toList();
+        expect(sendIds(), ['send-1', 'send-2']);
+        mockBridge.emitMessage(
+          const HistoryMessage(messages: [first]),
+          sessionId: 's1',
+        );
+        await pumpEventQueue();
+        expect(sendIds(), ['send-1', 'send-2']);
+        mockBridge.emitMessage(
+          const HistoryMessage(messages: [first, second]),
+          sessionId: 's1',
+        );
+        await pumpEventQueue();
+        expect(sendIds(), ['send-1', 'send-2']);
+      },
+    );
+
+    test(
       'history replace keeps live tail without duplicating matched user input',
       () async {
         final cubit = createCubit('s1', provider: Provider.codex);

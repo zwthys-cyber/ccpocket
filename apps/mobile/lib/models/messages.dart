@@ -5735,11 +5735,15 @@ class UserChatEntry implements ChatEntry {
 
   /// UUID assigned by the SDK for this user message (set when tool_result arrives).
   String? messageUuid;
+
+  /// Per-message timestamp supplied by the Bridge, when available.
+  final DateTime? bridgeTimestamp;
   @override
   final DateTime timestamp;
   UserChatEntry(
     this.text, {
     DateTime? timestamp,
+    this.bridgeTimestamp,
     this.sessionId,
     this.clientMessageId,
     List<Uint8List>? imageBytesList,
@@ -5749,7 +5753,7 @@ class UserChatEntry implements ChatEntry {
     this.messageUuid,
   }) : imageBytesList = imageBytesList ?? const [],
        imageUrls = imageUrls ?? const [],
-       timestamp = timestamp ?? DateTime.now();
+       timestamp = timestamp ?? bridgeTimestamp ?? DateTime.now();
 }
 
 class StreamingChatEntry implements ChatEntry {
