@@ -105,6 +105,13 @@ jobs:
                 final loader = FontLoader('EvidenceSans');
                 loader.addFont(font.readAsBytes().then(ByteData.sublistView));
                 await loader.load();
+                final materialIcons =
+                    File(Platform.environment['CCPOCKET_MATERIAL_ICONS']!);
+                final iconLoader = FontLoader('MaterialIcons');
+                iconLoader.addFont(
+                  materialIcons.readAsBytes().then(ByteData.sublistView),
+                );
+                await iconLoader.load();
               });
               final out = Directory(Platform.environment['CCPOCKET_UI_OUTPUT']!);
               out.createSync(recursive: true);
@@ -122,6 +129,11 @@ jobs:
                     screenshotTheme: theme.copyWith(
                       platform: TargetPlatform.iOS,
                       textTheme: theme.textTheme.apply(fontFamily: 'EvidenceSans'),
+                      inputDecorationTheme: theme.inputDecorationTheme.copyWith(
+                        hintStyle: theme.inputDecorationTheme.hintStyle?.copyWith(
+                          fontFamily: 'EvidenceSans',
+                        ),
+                      ),
                     ),
                     cubit: cubit,
                     draftService: draftService,
@@ -154,6 +166,8 @@ jobs:
           Path('test/ui_refresh_evidence_test.dart').write_text(source)
           PY
           export CCPOCKET_UI_OUTPUT="$RUNNER_TEMP/ccpocket-ui"
+          flutter_sdk="$(dirname "$(dirname "$(readlink -f "$(command -v flutter)")")")"
+          export CCPOCKET_MATERIAL_ICONS="$flutter_sdk/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf"
           flutter test --no-pub test/ui_refresh_evidence_test.dart --plain-name 'capture refresh evidence'
           printf '%s\n' "$(git rev-parse HEAD)" > "$CCPOCKET_UI_OUTPUT/commit.txt"
       - uses: actions/upload-artifact@v7
