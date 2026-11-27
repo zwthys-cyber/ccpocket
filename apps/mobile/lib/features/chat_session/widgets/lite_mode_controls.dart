@@ -6,7 +6,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../../models/messages.dart';
 import '../../settings/state/settings_cubit.dart';
-import '../../settings/state/settings_state.dart';
 import '../state/chat_session_cubit.dart';
 import '../state/chat_session_state.dart';
 
@@ -82,28 +81,26 @@ class SessionActivityBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocSelector<SettingsCubit, SettingsState, bool>(
-      selector: (state) => state.liteModeForSession(sessionId),
-      builder: (context, liteMode) =>
-          BlocSelector<ChatSessionCubit, ChatSessionState, (ProcessStatus, bool)>(
-            selector: (state) =>
-                (state.status, state.approval is! ApprovalNone),
-            builder: (context, activity) {
-              final (status, hasApproval) = activity;
-              if (!liteMode &&
-                  (!isConnected ||
-                      hasApproval ||
-                      status == ProcessStatus.idle ||
-                      status == ProcessStatus.waitingApproval)) {
-                return const SizedBox.shrink();
-              }
-              return _ActivityStatus(
-                status: status,
-                liteMode: liteMode,
-                hasApproval: hasApproval,
-              );
-            },
-          ),
+    final liteMode = context.select<SettingsCubit, bool>(
+      (settings) => settings.state.liteModeForSession(sessionId),
+    );
+    return BlocSelector<ChatSessionCubit, ChatSessionState, (ProcessStatus, bool)>(
+      selector: (state) => (state.status, state.approval is! ApprovalNone),
+      builder: (context, activity) {
+        final (status, hasApproval) = activity;
+        if (!liteMode &&
+            (!isConnected ||
+                hasApproval ||
+                status == ProcessStatus.idle ||
+                status == ProcessStatus.waitingApproval)) {
+          return const SizedBox.shrink();
+        }
+        return _ActivityStatus(
+          status: status,
+          liteMode: liteMode,
+          hasApproval: hasApproval,
+        );
+      },
     );
   }
 }
@@ -182,7 +179,7 @@ class _ActivityStatusState extends State<_ActivityStatus> {
     ].join(' · ');
 
     return Padding(
-      key: ValueKey(
+      key: ValueKey<String>(
         widget.liteMode
             ? 'lite_mode_activity_indicator'
             : 'session_activity_indicator',

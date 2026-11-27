@@ -208,10 +208,12 @@ void main() {
       );
       bridge.emitMessage(const StatusMessage(status: ProcessStatus.running));
       await tester.pump();
+      expect(chat.state.status, ProcessStatus.running);
       expect(chat.activityObservedSince, isNotNull);
       final started = chat.activityObservedSince;
       settings.setLiteMode(false);
-      await tester.pump();
+      await tester.pumpAndSettle();
+      expect(settings.state.liteModeForSession('s'), isFalse);
       expect(
         find.byKey(const ValueKey('session_activity_indicator')),
         findsOneWidget,
