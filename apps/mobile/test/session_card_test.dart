@@ -545,7 +545,7 @@ void main() {
     });
 
     testWidgets(
-      'selected running session keeps its status fill and emphasizes its border',
+      'selected running session uses a neutral fill and a status border',
       (tester) async {
         final session = SessionInfo(
           id: 'selected-running',
@@ -570,7 +570,7 @@ void main() {
         final theme = Theme.of(tester.element(find.byType(Card).first));
         final appColors = theme.extension<AppColors>()!;
 
-        expect(card.color, theme.colorScheme.primaryContainer);
+        expect(card.color, theme.colorScheme.surfaceContainerHigh);
         expect(shape.side.width, 2.2);
         expect(
           shape.side.color,
