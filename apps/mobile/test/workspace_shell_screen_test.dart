@@ -565,6 +565,75 @@ void main() {
     NotificationService.instance.clearActiveSession();
   });
 
+  for (final topInset in [59.0, 0.0]) {
+    testWidgets(
+      'phone home keeps its scrolling viewport below a $topInset top inset',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(402, 874);
+        tester.view.padding = FakeViewPadding(top: topInset);
+        tester.view.viewPadding = FakeViewPadding(top: topInset);
+        addTearDown(tester.view.reset);
+
+        final bridge = _MockBridgeService();
+        await tester.pumpWidget(
+          _buildWorkspaceApp(
+            bridge: bridge,
+            settingsCubit: await _createSettingsCubit(bridge),
+            draftService: DraftService(await SharedPreferences.getInstance()),
+            revenueCatService: _FakeRevenueCatService(),
+            supportBannerService: await _createSupportBannerService(),
+            platform: TargetPlatform.iOS,
+            adaptiveHome: true,
+            debugRecentSessions: List.generate(20, (i) => _recentSession('$i')),
+          ),
+        );
+        await _pumpUi(tester);
+
+        final header = find.byKey(const ValueKey('settings_button'));
+        final search = find.byKey(const ValueKey('search_field'));
+        final create = find.byKey(const ValueKey('new_session_button'));
+        final viewport = find.byType(NestedScrollViewViewport);
+        final outer = tester
+            .state<NestedScrollViewState>(find.byType(NestedScrollView))
+            .outerController;
+
+        void expectProtectedViewport() {
+          expect(tester.getTopLeft(viewport).dy, topInset);
+          expect(tester.widget<Viewport>(viewport).clipBehavior, isNot(Clip.none));
+          if (topInset > 0) {
+            final point = Offset(tester.getCenter(search).dx, topInset - 1);
+            final hits = tester.hitTestOnBinding(point).path;
+            expect(
+              hits.map((hit) => hit.target),
+              isNot(contains(tester.renderObject(viewport))),
+            );
+          }
+        }
+
+        expectProtectedViewport();
+        expect(tester.getCenter(header).dy, topInset + kToolbarHeight / 2);
+        final expandedSearchTop = tester.getTopLeft(search).dy;
+
+        // Stop exactly as the floating toolbar disappears, while both actions
+        // are still at the top of the list as in the reported screenshot.
+        expect(outer.position.maxScrollExtent, greaterThan(0));
+        outer.jumpTo(outer.position.maxScrollExtent);
+        await tester.pump();
+        expectProtectedViewport();
+        expect(tester.getTopLeft(search).dy, lessThan(expandedSearchTop));
+        expect(tester.getTopLeft(search).dy, greaterThanOrEqualTo(topInset));
+        expect(tester.getTopLeft(create).dy, greaterThanOrEqualTo(topInset));
+
+        outer.jumpTo(outer.position.minScrollExtent);
+        await _pumpUi(tester);
+        expectProtectedViewport();
+        expect(tester.getCenter(header).dy, topInset + kToolbarHeight / 2);
+        expect(tester.getTopLeft(search).dy, expandedSearchTop);
+      },
+    );
+  }
+
   testWidgets('shows a scoped localized Codex writer conflict', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1400, 900));
     addTearDown(() => tester.binding.setSurfaceSize(null));
