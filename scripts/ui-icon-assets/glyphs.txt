@@ -1,0 +1,202 @@
+activity data_usage_outlined query_stats_outlined graphic_eq_rounded
+workflow account_tree_outlined hub
+plus add add_rounded
+circle_plus add_circle_outline
+message_square_plus add_comment_outlined
+clipboard_check approval_outlined assignment
+panels_top_left apps_outlined space_dashboard_outlined web web_asset
+archive archive_outlined
+arrow_left arrow_back
+chevron_down arrow_drop_down keyboard_arrow_down keyboard_arrow_down_rounded expand_more
+arrow_right arrow_forward
+arrow_up_right arrow_outward near_me_outlined
+arrow_up arrow_upward arrow_upward_rounded
+newspaper article_outlined
+clipboard_list assignment_outlined pending_actions_outlined list_alt
+dollar_sign attach_money
+file_music audio_file_outlined
+sparkles auto_awesome auto_awesome_outlined
+wand_sparkles auto_fix_normal auto_mode_outlined
+refresh_cw autorenew refresh sync
+hand back_hand_outlined touch_app
+zap bolt bolt_outlined flash_on
+image_off broken_image broken_image_outlined
+wrench build_circle_outlined build_outlined
+split call_split
+megaphone campaign_outlined
+focus center_focus_strong
+message_circle chat_bubble_outline chat_outlined
+check check
+square_check check_box
+square check_box_outline_blank crop_square
+circle_check check_circle check_circle_outline task_alt_outlined
+list_checks checklist checklist_rtl
+chevron_left chevron_left
+chevron_right chevron_right
+chevron_up keyboard_arrow_up expand_less
+circle circle circle_outlined radio_button_off_outlined radio_button_unchecked
+circle_dot radio_button_checked
+x close clear cancel
+cloud_check cloud_done
+cloud_off cloud_off
+cloud_upload cloud_sync cloud_sync_outlined
+images collections collections_outlined photo_library photo_library_outlined
+message_square comment_outlined
+git_commit_horizontal commit
+columns_2 compare view_column_outlined difference
+minimize_2 compress fullscreen_exit
+monitor computer computer_outlined desktop_mac_outlined screenshot_monitor
+copy content_copy content_copy_rounded copy
+clipboard_paste content_paste
+folder_plus create_new_folder_outlined
+moon dark_mode dark_mode_outlined
+braces data_object data_object_outlined
+laptop_minimal laptop_mac
+monitor_smartphone devices
+trash delete delete_outline delete_outline_rounded
+file_text description description_outlined notes_outlined receipt_long_outlined
+server dns dns_outlined
+check_check done_all
+chart_pie donut_large_outlined
+download download download_outlined file_download_outlined save_alt system_update_alt vertical_align_bottom
+grip_horizontal drag_handle linear_scale_rounded
+pencil draw_outlined edit edit_outlined
+square_pen drive_file_rename_outline edit_note rate_review_outlined
+circle_exclamation_point error error_outline
+puzzle extension extension_outlined
+heart favorite favorite_border favorite_outline volunteer_activism volunteer_activism_outlined
+funnel_x filter_alt_off
+list_filter filter_list tune tune_rounded
+folder folder folder_outlined
+folders folder_copy_outlined
+folder_x folder_off_outlined
+folder_open folder_open folder_open_outlined
+archive folder_zip_outlined
+case_sensitive font_download_outlined text_fields
+git_fork fork_right
+list_start format_indent_decrease
+list_end format_indent_increase
+list format_list_bulleted view_list_outlined
+list_ordered format_list_numbered
+a_large_small format_size
+messages_square forum forum_outlined
+fast_forward forward_10_rounded
+maximize fullscreen open_in_full
+layout_grid grid_view_rounded
+shield_plus health_and_safety
+circle_question_mark help_center_outlined help_outline quiz quiz_outlined
+clock_arrow_left history restore update
+house home_outlined
+image image image_outlined
+inbox inbox_outlined
+info info_outline
+file insert_drive_file_outlined
+share_2 share
+share ios_share_outlined
+file_code javascript
+key_round key vpn_key
+keyboard keyboard
+keyboard_off keyboard_hide
+tag label label_outline label_outlined
+globe language
+layers layers_outlined
+sun light_mode
+lightbulb lightbulb_outline
+baseline line_weight
+link link
+unlink link_off
+coffee local_cafe
+lock lock lock_outline
+clock_fading lock_clock_outlined
+lock_open lock_open
+log_in login
+utensils lunch_dining
+map map_outlined
+book_open menu_book_outlined
+git_merge merge_outlined
+mic mic
+mic_off mic_off
+ellipsis more_horiz
+ellipsis_vertical more_vert
+bell_ring notifications_active_outlined
+hash numbers
+external_link open_in_new
+palette palette palette_outlined
+key_square password
+circle_pause pause_circle_outline
+pause pause_rounded
+user_round person person_outline
+contact_round person_pin
+camera photo_camera photo_camera_outlined
+file_type picture_as_pdf_outlined
+play play_arrow play_arrow_rounded
+circle_play play_circle_filled play_circle_outline
+circle_slash play_disabled_outlined
+shield policy_outlined security shield shield_outlined
+scan_eye preview_outlined
+brain psychology
+pin push_pin push_pin_outlined
+qr_code qr_code
+scan_qr_code qr_code_scanner
+audio_lines record_voice_over
+redo redo
+minus remove
+circle_minus remove_circle_outline
+repeat repeat
+rotate_ccw replay
+rewind replay_10_rounded
+rocket rocket_launch rocket_launch_outlined
+folder_check rule_folder_outlined
+clock access_time schedule
+send_to_back schedule_send_outlined
+flask_conical science science_outlined
+search search travel_explore
+send send
+radio sensors_rounded stream
+settings settings settings_outlined
+sun_moon settings_brightness
+shield_half shield_moon_outlined
+skip_forward skip_next
+bot smart_toy_outlined
+smartphone smartphone
+gauge speed
+star star star_border
+square stop stop_rounded
+circle_stop stop_circle stop_circle_outlined
+ruler straighten
+corner_down_left subdirectory_arrow_left
+arrow_left_right swap_horiz
+smartphone_nfc system_update
+panels_top_left tab
+terminal terminal terminal_outlined terminal_rounded
+timer timer_outlined timelapse
+folder_closed topic_outlined
+target track_changes
+languages translate_outlined
+trending_down trending_down
+trending_up trending_up
+undo undo
+chevrons_up_down unfold_more unfold_more_double
+arrow_up_from_line upgrade
+upload upload
+file_up upload_file
+shield_check verified_user_outlined
+file_video_camera video_file_outlined
+video_off videocam_off
+gallery_horizontal_end view_carousel_outlined
+box view_in_ar_outlined
+panel_left view_sidebar view_sidebar_outlined
+eye_off visibility_off_outlined
+eye visibility_outlined remove_red_eye
+shield_keyhole vpn_lock
+triangle_exclamation_point warning_amber warning_amber_outlined warning_amber_rounded warning_rounded
+panel_top_close web_asset_off_outlined
+wifi wifi wifi_find
+badge_check workspace_premium
+chevron_left arrow_back_ios arrow_back_ios_new
+chevron_right arrow_forward_ios
+network bubble_chart_outlined
+code_xml code
+volume_1 volume_down_rounded
+volume_off volume_off_rounded
+volume_2 volume_up_rounded
