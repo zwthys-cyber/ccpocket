@@ -767,6 +767,7 @@ jobs:
           PREVIEW_OUTPUT: ${{ runner.temp }}/safe-area
           PREVIEW_FONT: ${{ runner.temp }}/NotoSansCJKsc-Regular.otf
         run: |
+          set -euo pipefail
           mkdir -p "$PREVIEW_OUTPUT"
           revision=$(git rev-parse HEAD)
           export PREVIEW_VARIANT=after
@@ -776,6 +777,7 @@ jobs:
           flutter pub get
           python3 "$GITHUB_WORKSPACE/diagnostics/scripts/zh-preview/prepare-safe-area.py"
           timeout --kill-after=10s --signal=INT 90s flutter test --no-pub --concurrency=1 --reporter expanded --plain-name 'capture compact home status inset during scroll' test/status_inset_capture_test.dart | tee "$RUNNER_TEMP/layout.log"
+          grep -Fq 'All tests passed!' "$RUNNER_TEMP/layout.log"
           grep '^SAFE_AREA ' "$RUNNER_TEMP/layout.log" > "$PREVIEW_OUTPUT/geometry.txt"
       - uses: actions/upload-artifact@v7
         if: always()

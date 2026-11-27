@@ -104,7 +104,10 @@ void registerSafeAreaCapture() {
     expect(tester.getTopLeft(search).dy, closeTo(initial, 0.1));
     await tester.pumpWidget(const SizedBox.shrink());
     print('CAPTURE_STEP teardown');
-    await settings.close();
+    // Unmounting the shell pauses its platform-event subscriptions. Leave
+    // service cleanup outside the widget tester's synthetic clock.
+    unawaited(settings.close());
+    await tester.pump();
     print('CAPTURE_STEP complete');
   }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 }
