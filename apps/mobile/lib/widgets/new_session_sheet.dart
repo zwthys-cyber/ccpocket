@@ -5,10 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../l10n/app_localizations.dart';
+import '../l10n/session_labels.dart';
 import '../features/session_list/session_list_screen.dart'
     show recentProjects, shortenPath;
 import '../features/projects/widgets/project_manager_sheet.dart';
-import '../l10n/app_localizations.dart';
 import '../models/messages.dart';
 import '../models/new_session_tab.dart';
 import '../services/bridge_service.dart';
@@ -2666,8 +2667,8 @@ class _OptionsSection extends StatelessWidget {
           CodexPermissionsMode.fullAccess => l.sandboxNativeCautionDescription,
           CodexPermissionsMode.custom =>
             selectedCodexProfile == null
-                ? 'Codex uses permissions from config.toml'
-                : 'Codex uses permissions from the selected profile',
+                ? l.permissionsFromConfig
+                : l.permissionsFromProfile,
         };
 
     IconData permissionIcon(PermissionMode mode) => switch (mode) {
@@ -2684,9 +2685,7 @@ class _OptionsSection extends StatelessWidget {
         ? Icons.shield_outlined
         : (isClaude ? Icons.code : Icons.warning_amber);
 
-    String sandboxLabel(SandboxMode mode) => isClaude
-        ? (mode == SandboxMode.on ? 'Sandbox (Safe Mode)' : 'Standard')
-        : mode.label;
+    String sandboxLabel(SandboxMode mode) => l.sandboxMenuLabel(mode, isClaude: isClaude);
 
     // -- Selector field widget (shows current selection with description) --
 
@@ -2852,7 +2851,7 @@ class _OptionsSection extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: Text(
-              'Environment',
+              l.environmentSection,
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
@@ -2866,7 +2865,7 @@ class _OptionsSection extends StatelessWidget {
               key: const ValueKey('dialog_codex_profile'),
               initialValue: selectedCodexProfile,
               isExpanded: true,
-              decoration: buildInputDecoration('Profile'),
+              decoration: buildInputDecoration(l.profileLabel),
               style: TextStyle(
                 fontSize: 13,
                 color: Theme.of(context).colorScheme.onSurface,
@@ -2904,21 +2903,21 @@ class _OptionsSection extends StatelessWidget {
           provider == Provider.codex
               ? modeSelectorField(
                   key: const ValueKey('dialog_codex_permissions_mode'),
-                  label: 'Permissions',
+                  label: l.permissionsLabel,
                   icon: codexPermissionsIcon(codexPermissionsMode),
-                  title: codexPermissionsMode.label,
+                  title: l.codexPermissionsLabel(codexPermissionsMode),
                   subtitle: codexPermissionsDescription(codexPermissionsMode),
                   accentColor:
                       codexPermissionsMode == CodexPermissionsMode.fullAccess
                       ? Theme.of(context).colorScheme.error
                       : null,
                   onTap: () => showModeSheet<CodexPermissionsMode>(
-                    title: 'Permissions',
+                    title: l.permissionsLabel,
                     subtitle: l.sheetSubtitleApproval,
                     modes: CodexPermissionsMode.values,
                     currentMode: codexPermissionsMode,
                     iconFor: codexPermissionsIcon,
-                    labelFor: (mode) => mode.label,
+                    labelFor: l.codexPermissionsLabel,
                     descriptionFor: codexPermissionsDescription,
                     enabledFor: (mode) =>
                         !codexAutoReviewDisabled ||
@@ -2935,7 +2934,7 @@ class _OptionsSection extends StatelessWidget {
                   key: const ValueKey('dialog_permission_mode'),
                   label: l.approval,
                   icon: permissionIcon(selectedPermissionMode),
-                  title: selectedPermissionMode.label,
+                  title: l.claudePermissionLabel(selectedPermissionMode),
                   subtitle: permissionDescription(selectedPermissionMode),
                   accentColor: switch (selectedPermissionMode) {
                     PermissionMode.auto => autoModeColor,
@@ -2950,7 +2949,7 @@ class _OptionsSection extends StatelessWidget {
                     modes: PermissionMode.values,
                     currentMode: selectedPermissionMode,
                     iconFor: permissionIcon,
-                    labelFor: (m) => m.label,
+                    labelFor: l.claudePermissionLabel,
                     descriptionFor: permissionDescription,
                     onSelected: (value) {
                       onClaudePermissionModeChanged(value);
@@ -3030,7 +3029,7 @@ class _OptionsSection extends StatelessWidget {
               key: const ValueKey('dialog_claude_effort'),
               label: l.effort,
               icon: Icons.speed,
-              title: claudeEffort.label,
+              title: l.claudeEffortLevel(claudeEffort),
               subtitle: _claudeEffortDescription(claudeEffort, l),
               onTap: () => showModeSheet<ClaudeEffort>(
                 title: l.effort,
@@ -3038,7 +3037,7 @@ class _OptionsSection extends StatelessWidget {
                 modes: selectedClaudeEfforts,
                 currentMode: claudeEffort,
                 iconFor: (_) => Icons.speed,
-                labelFor: (e) => e.label,
+                labelFor: l.claudeEffortLevel,
                 descriptionFor: (e) => _claudeEffortDescription(e, l),
                 onSelected: onClaudeEffortChanged,
               ),
@@ -3153,7 +3152,7 @@ class _WorktreeToggleTile extends StatelessWidget {
                     ),
                   ),
                   Tooltip(
-                    message: 'Creates an isolated git working tree for this session.',
+                    message: l.worktreeTooltip,
                     child: Icon(
                       Icons.info_outline,
                       size: 16,
@@ -3605,7 +3604,7 @@ class _CodexModelOptions extends StatelessWidget {
           decoration: buildInputDecoration(l.effort),
           items: [
             for (final effort in reasoningEfforts)
-              DropdownMenuItem(value: effort, child: Text(effort.label)),
+              DropdownMenuItem(value: effort, child: Text(l.reasoningLevel(effort))),
           ],
           onChanged: (value) {
             if (value != null) onReasoningEffortChanged(value);
@@ -3619,16 +3618,16 @@ class _CodexModelOptions extends StatelessWidget {
           key: const ValueKey('dialog_codex_speed_advanced'),
           initialValue: speed,
           isExpanded: true,
-          decoration: buildInputDecoration('Speed'),
+          decoration: buildInputDecoration(l.speedLabel),
           items: [
-            const DropdownMenuItem(
+            DropdownMenuItem(
               value: CodexSpeed.standard,
-              child: Text('Standard'),
+              child: Text(l.sandboxStandard),
             ),
             if (supportsFast)
-              const DropdownMenuItem(
+              DropdownMenuItem(
                 value: CodexSpeed.fast,
-                child: Text('Fast — 1.5× speed, more usage'),
+                child: Text(l.fastSpeedDescription),
               ),
           ],
           onChanged: (value) {
@@ -3686,7 +3685,7 @@ class _CodexAdvancedOptions extends StatelessWidget {
           for (final mode in WebSearchMode.values)
             DropdownMenuItem<WebSearchMode?>(
               value: mode,
-              child: Text(mode.label, style: const TextStyle(fontSize: 13)),
+              child: Text(l.webSearchLabel(mode), style: const TextStyle(fontSize: 13)),
             ),
         ],
         onChanged: onWebSearchModeChanged,
@@ -3966,7 +3965,7 @@ class _SheetActions extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text(
-                      'Start with ${provider.label}',
+                      l.startWithProvider(provider.label),
                       style: const TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,

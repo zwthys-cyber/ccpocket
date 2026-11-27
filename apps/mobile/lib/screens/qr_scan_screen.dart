@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../l10n/app_localizations.dart';
 import '../services/connection_url_parser.dart';
 import '../utils/platform_helper.dart';
 
@@ -51,9 +52,9 @@ class _QrScanScreenState extends State<QrScanScreen> {
 
     // Invalid QR — show error but keep scanning
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Not a valid CC Pocket connection QR code'),
-        duration: Duration(seconds: 2),
+      SnackBar(
+        content: Text(AppLocalizations.of(context).invalidPairingQr),
+        duration: const Duration(seconds: 2),
       ),
     );
   }
@@ -62,15 +63,16 @@ class _QrScanScreenState extends State<QrScanScreen> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final controller = _controller;
+    final l = AppLocalizations.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Scan QR Code')),
+      appBar: AppBar(title: Text(l.scanQrCode)),
       body: !_isSupported || controller == null
-          ? const Center(
+          ? Center(
               child: Padding(
-                padding: EdgeInsets.all(24),
+                padding: const EdgeInsets.all(24),
                 child: Text(
-                  'QR camera scan is not available on this platform. Enter the Bridge URL manually.',
+                  l.qrScanUnavailable,
                   textAlign: TextAlign.center,
                 ),
               ),
@@ -98,7 +100,7 @@ class _QrScanScreenState extends State<QrScanScreen> {
                   left: 0,
                   right: 0,
                   child: Text(
-                    'Point camera at the QR code\nshown by bridge server',
+                    l.qrScanHint,
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: colorScheme.onSurface.withValues(alpha: 0.8),

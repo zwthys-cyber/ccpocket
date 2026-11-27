@@ -1,3 +1,4 @@
+import 'package:ccpocket/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -7,6 +8,9 @@ import 'package:ccpocket/widgets/bubbles/system_chip.dart';
 
 Widget _wrap(Widget child) {
   return MaterialApp(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    locale: const Locale('en'),
     theme: AppTheme.darkTheme,
     home: Scaffold(body: child),
   );

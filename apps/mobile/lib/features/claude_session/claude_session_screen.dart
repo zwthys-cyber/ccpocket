@@ -1610,7 +1610,8 @@ void _executeSideEffects(
       case ChatSideEffect.notifySessionComplete:
         if (useLocalNotification) {
           NotificationService.instance.showSessionCompleteNotification(
-            body: 'Session done',
+            l: l,
+            body: l.sessionDone,
             id: 3,
             payload: sessionId,
           );

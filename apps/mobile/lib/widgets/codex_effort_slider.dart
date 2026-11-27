@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../l10n/app_localizations.dart';
+import '../l10n/session_labels.dart';
 import '../models/messages.dart';
 
 String codexModelDisplayName(String model) {
@@ -204,8 +206,9 @@ class _CodexSettingsHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
     final effortText = Text(
-      effort.label,
+      l.reasoningLevel(effort),
       key: ValueKey(effortLabelKey),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
@@ -244,8 +247,8 @@ class _CodexSettingsHeader extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 Semantics(
-                  label: 'Effort',
-                  value: effort.label,
+                  label: l.effort,
+                  value: l.reasoningLevel(effort),
                   excludeSemantics: true,
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 112),
@@ -316,6 +319,7 @@ class CodexEffortSlider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
     final quickEfforts = codexQuickEfforts(
       efforts,
       includeExtended: includeExtended,
@@ -340,15 +344,15 @@ class CodexEffortSlider extends StatelessWidget {
           inactiveTickMarkColor: cs.onSurfaceVariant.withValues(alpha: 0.45),
         ),
         child: Semantics(
-          label: 'Effort',
-          value: value.label,
+          label: l.effort,
+          value: l.reasoningLevel(value),
           child: Slider(
             key: ValueKey(sliderKey),
             value: sliderIndex.toDouble(),
             min: 0,
             max: (quickEfforts.length - 1).toDouble(),
             divisions: quickEfforts.length > 1 ? quickEfforts.length - 1 : null,
-            label: quickEfforts[sliderIndex].label,
+            label: l.reasoningLevel(quickEfforts[sliderIndex]),
             onChanged: quickEfforts.length < 2
                 ? null
                 : (raw) {
@@ -381,9 +385,10 @@ class CodexSpeedButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
     final isFast = speed == CodexSpeed.fast;
     return Tooltip(
-      message: isFast ? 'Fast mode on' : 'Fast mode off',
+      message: isFast ? l.fastOn : l.fastOff,
       child: IconButton(
         key: ValueKey(buttonKey),
         onPressed: enabled

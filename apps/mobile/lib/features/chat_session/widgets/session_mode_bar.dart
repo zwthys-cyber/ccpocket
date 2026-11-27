@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../l10n/app_localizations.dart';
+import '../../../l10n/session_labels.dart';
 import '../../../models/messages.dart';
 import '../../../theme/app_theme.dart';
 import '../../../widgets/codex_effort_slider.dart';
@@ -429,6 +430,7 @@ void showCodexPermissionsMenu(
     return;
   }
   final currentMode = chatCubit.state.codexPermissionsMode;
+  final l = AppLocalizations.of(context);
 
   showModalBottomSheet(
     context: context,
@@ -444,7 +446,7 @@ void showCodexPermissionsMenu(
                 child: Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
-                    'Permissions',
+                    l.permissionsLabel,
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
@@ -463,7 +465,7 @@ void showCodexPermissionsMenu(
                               : sheetCs.primary)
                         : sheetCs.onSurfaceVariant,
                   ),
-                  title: Text(mode.label),
+                  title: Text(l.codexPermissionsLabel(mode)),
                   subtitle: Text(
                     _codexPermissionsSubtitle(
                       mode,
@@ -516,7 +518,7 @@ Future<void> _confirmCodexPermissionsModeChange(
       final cs = Theme.of(dialogContext).colorScheme;
       return AlertDialog(
         title: Text(l.changeApprovalPolicyTitle),
-        content: Text(l.changeApprovalPolicyBody(mode.label)),
+        content: Text(l.changeApprovalPolicyBody(l.codexPermissionsLabel(mode))),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -609,7 +611,7 @@ void showSandboxModeMenu(
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'Sandbox',
+                  l.sandbox,
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
@@ -628,7 +630,7 @@ void showSandboxModeMenu(
                       : _sandboxMenuIconColor(mode, isClaude, sheetCs),
                 ),
                 title: Text(
-                  _sandboxMenuTitle(mode, isClaude),
+                  l.sandboxMenuLabel(mode, isClaude: isClaude),
                   style: TextStyle(
                     color:
                         !isClaude &&
@@ -676,13 +678,6 @@ Color _sandboxMenuIconColor(SandboxMode mode, bool isClaude, ColorScheme cs) {
   return cs.onSurfaceVariant;
 }
 
-String _sandboxMenuTitle(SandboxMode mode, bool isClaude) {
-  if (isClaude) {
-    return mode == SandboxMode.on ? 'Sandbox (Safe Mode)' : 'Standard';
-  }
-  return mode == SandboxMode.on ? 'Sandbox On' : 'Sandbox Off';
-}
-
 String _sandboxMenuSubtitle(
   SandboxMode mode,
   bool isClaude,
@@ -708,9 +703,7 @@ Future<void> _confirmSandboxModeChange(
   Future<void> Function()? onBeforeRestart,
 }) async {
   final l = AppLocalizations.of(context);
-  final modeLabel = isClaude
-      ? (mode == SandboxMode.on ? 'Sandbox (Safe Mode)' : 'Standard')
-      : mode.label;
+  final modeLabel = l.sandboxMenuLabel(mode, isClaude: isClaude);
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) {
@@ -798,7 +791,7 @@ void showPermissionModeMenu(
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  'Permission',
+                  l.permission,
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
@@ -815,7 +808,7 @@ void showPermissionModeMenu(
                       ? modeDetails[mode]!.color
                       : sheetCs.onSurfaceVariant,
                 ),
-                title: Text(mode.label),
+                title: Text(l.claudePermissionLabel(mode)),
                 subtitle: Text(
                   modeDetails[mode]!.description,
                   style: const TextStyle(fontSize: 12),
@@ -860,7 +853,7 @@ Future<void> _confirmPermissionModeChange(
       final cs = Theme.of(dialogContext).colorScheme;
       return AlertDialog(
         title: Text(l.changePermissionModeTitle),
-        content: Text(l.changePermissionModeBody(mode.label)),
+        content: Text(l.changePermissionModeBody(l.claudePermissionLabel(mode))),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -896,6 +889,7 @@ class PermissionModeChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
     final plan = Theme.of(context).extension<AppColors>()!.statusPlan;
     final appColors = Theme.of(context).extension<AppColors>()!;
     final autoModeColor = Theme.of(context).brightness == Brightness.dark
@@ -905,13 +899,13 @@ class PermissionModeChip extends StatelessWidget {
     final (IconData icon, String label, Color fg) = switch (currentMode) {
       PermissionMode.defaultMode => (
         Icons.tune,
-        'Default',
+        l.defaultLabel,
         cs.onSurfaceVariant,
       ),
-      PermissionMode.auto => (Icons.auto_mode_outlined, 'Auto', autoModeColor),
-      PermissionMode.acceptEdits => (Icons.edit_note, 'Edits', cs.primary),
-      PermissionMode.plan => (Icons.assignment_outlined, 'Plan', plan),
-      PermissionMode.bypassPermissions => (Icons.flash_on, 'Bypass', cs.error),
+      PermissionMode.auto => (Icons.auto_mode_outlined, l.permissionAutoMode, autoModeColor),
+      PermissionMode.acceptEdits => (Icons.edit_note, l.permissionChipAcceptEdits, cs.primary),
+      PermissionMode.plan => (Icons.assignment_outlined, l.permissionPlanMode, plan),
+      PermissionMode.bypassPermissions => (Icons.flash_on, l.permissionChipBypass, cs.error),
     };
 
     return Material(
@@ -970,6 +964,7 @@ class ExecutionModeChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
+    final l = AppLocalizations.of(context);
     final (IconData icon, String label, Color fg) = provider == Provider.codex
         ? _codexPermissionsChipStyle(
             codexPermissionsMode ??
@@ -979,15 +974,16 @@ class ExecutionModeChip extends StatelessWidget {
                   sandboxMode: null,
                 ),
             cs,
+            l,
           )
         : switch (currentMode) {
             ExecutionMode.defaultMode => (
               Icons.tune,
-              'Default',
+              l.defaultLabel,
               cs.onSurfaceVariant,
             ),
-            ExecutionMode.acceptEdits => (Icons.edit_note, 'Edits', cs.primary),
-            ExecutionMode.fullAccess => (Icons.flash_on, 'Full', cs.error),
+            ExecutionMode.acceptEdits => (Icons.edit_note, l.permissionChipAcceptEdits, cs.primary),
+            ExecutionMode.fullAccess => (Icons.flash_on, l.fullAccessShort, cs.error),
           };
 
     return Material(
@@ -1043,7 +1039,8 @@ class CodexModelChip extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final fg = cs.onSurfaceVariant;
     final label = codexModelDisplayName(model);
-    final suffix = reasoningEffort == null ? '' : ' ${reasoningEffort!.label}';
+    final l = AppLocalizations.of(context);
+    final suffix = reasoningEffort == null ? '' : ' ${l.reasoningLevel(reasoningEffort!)}';
 
     return Material(
       color: Colors.transparent,
@@ -1100,31 +1097,32 @@ String _codexPermissionsSubtitle(
   CodexPermissionsMode.defaultPermissions => l.sandboxRestrictedDescription,
   CodexPermissionsMode.autoReview => l.codexAutoReviewDescription,
   CodexPermissionsMode.fullAccess => l.sandboxNativeCautionDescription,
-  CodexPermissionsMode.custom => 'Codex uses permissions from config.toml',
+  CodexPermissionsMode.custom => l.permissionsFromConfig,
 };
 
 (IconData, String, Color) _codexPermissionsChipStyle(
   CodexPermissionsMode mode,
   ColorScheme cs,
+  AppLocalizations l,
 ) => switch (mode) {
   CodexPermissionsMode.defaultPermissions => (
     _codexPermissionsIcon(mode),
-    'Default',
+    l.defaultLabel,
     cs.onSurfaceVariant,
   ),
   CodexPermissionsMode.autoReview => (
     _codexPermissionsIcon(mode),
-    'Auto Review',
+    l.codexAutoReview,
     cs.primary,
   ),
   CodexPermissionsMode.fullAccess => (
     _codexPermissionsIcon(mode),
-    'Full',
+    l.fullAccessShort,
     cs.error,
   ),
   CodexPermissionsMode.custom => (
     _codexPermissionsIcon(mode),
-    'Custom',
+    l.customPermissionsShort,
     cs.primary,
   ),
 };
@@ -1145,6 +1143,7 @@ class PlanModeChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final appColors = Theme.of(context).extension<AppColors>()!;
     final cs = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
     final fg = enabled ? appColors.statusPlan : cs.onSurfaceVariant;
 
     final chip = Material(
@@ -1159,7 +1158,7 @@ class PlanModeChip extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                enabled ? 'Plan On' : 'Plan Off',
+                enabled ? l.planOnLabel : l.planOffLabel,
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
@@ -1197,14 +1196,15 @@ class SandboxModeChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final l = AppLocalizations.of(context);
     final isClaude = provider != Provider.codex;
 
     final (IconData icon, String label, Color fg) = switch (currentMode) {
-      SandboxMode.on => (Icons.shield_outlined, 'Sandbox', cs.tertiary),
+      SandboxMode.on => (Icons.shield_outlined, l.sandbox, cs.tertiary),
       SandboxMode.off =>
         isClaude
-            ? (Icons.code, 'Standard', cs.onSurfaceVariant)
-            : (Icons.warning_amber, 'No SB', cs.error),
+            ? (Icons.code, l.sandboxStandard, cs.onSurfaceVariant)
+            : (Icons.warning_amber, l.sandboxChipOff, cs.error),
     };
 
     return Material(

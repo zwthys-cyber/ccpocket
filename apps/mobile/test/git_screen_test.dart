@@ -450,7 +450,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('git_file_list_button')));
       await tester.pumpAndSettle();
 
-      expect(find.text('1 files • Staged'), findsOneWidget);
+      expect(find.text('1 file • Staged'), findsOneWidget);
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('git_file_list_tree')),

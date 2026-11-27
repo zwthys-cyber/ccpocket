@@ -185,12 +185,13 @@ class NotificationService extends ChangeNotifier {
   }
 
   Future<void> showSessionCompleteNotification({
+    required AppLocalizations l,
     required String body,
     int id = 3,
     String? payload,
   }) {
     return show(
-      title: 'Session Complete',
+      title: l.sessionCompleteTitle,
       body: body,
       id: id,
       payload: payload,
