@@ -647,19 +647,23 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
               (e) => e is UserChatEntry && e.clientMessageId == clientMessageId,
             );
       if (match == -1 && rawItemId != null) {
-        match = entries.lastIndexWhere((e) =>
-            e is UserChatEntry &&
-            e.rawItemId == rawItemId &&
-            _sameUserIdentity(e, incoming) == true);
+        match = entries.lastIndexWhere(
+          (e) =>
+              e is UserChatEntry &&
+              e.rawItemId == rawItemId &&
+              _sameUserIdentity(e, incoming) == true,
+        );
       }
       if (match == -1) {
-        match = entries.lastIndexWhere((e) =>
-            e is UserChatEntry &&
-            (_sameUserIdentity(e, incoming) ??
-                (e.messageUuid == null &&
-                    clientMessageId == null &&
-                    e.text == text &&
-                    e.imageCount == imageCount)));
+        match = entries.lastIndexWhere(
+          (e) =>
+              e is UserChatEntry &&
+              (_sameUserIdentity(e, incoming) ??
+                  (e.messageUuid == null &&
+                      clientMessageId == null &&
+                      e.text == text &&
+                      e.imageCount == imageCount)),
+        );
       }
       entries = [...entries];
       if (match == -1) {
@@ -717,7 +721,8 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
       for (var i = pastEntries.length; i < entries.length; i++) {
         final e = entries[i];
         if (e is! UserChatEntry) continue;
-        final existing = byClient[e.clientMessageId] ??
+        final existing =
+            byClient[e.clientMessageId] ??
             byRaw[e.rawItemId] ??
             byUuid[e.messageUuid] ??
             (textCounts[e.text] == 1 ? legacyByText[e.text] : null);
@@ -1192,7 +1197,10 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
     }
     final aUuid = a.messageUuid;
     final bUuid = b.messageUuid;
-    if (aUuid != null && aUuid.isNotEmpty && bUuid != null && bUuid.isNotEmpty) {
+    if (aUuid != null &&
+        aUuid.isNotEmpty &&
+        bUuid != null &&
+        bUuid.isNotEmpty) {
       if (aUuid != bUuid) return false;
       if (aUuid.startsWith('codex:user-turn:')) {
         return a.text == b.text && a.imageCount == b.imageCount;
@@ -1386,7 +1394,8 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
       final imageCount = incoming.imageCount > 0
           ? incoming.imageCount
           : existing.imageCount;
-      final keepRestored = isCodex && existing.fromHistory && !incoming.fromHistory;
+      final keepRestored =
+          isCodex && existing.fromHistory && !incoming.fromHistory;
       final preferred = keepRestored ? existing : incoming;
       final fallback = keepRestored ? incoming : existing;
       return UserChatEntry(
@@ -1403,7 +1412,9 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
         rawItemId: preferred.rawItemId ?? fallback.rawItemId,
         fromHistory: existing.fromHistory || incoming.fromHistory,
         timestamp: isCodex
-            ? preferred.bridgeTimestamp ?? fallback.bridgeTimestamp ?? existing.timestamp
+            ? preferred.bridgeTimestamp ??
+                  fallback.bridgeTimestamp ??
+                  existing.timestamp
             : existing.timestamp,
         bridgeTimestamp: preferred.bridgeTimestamp ?? fallback.bridgeTimestamp,
       );
@@ -1418,9 +1429,10 @@ class ChatSessionCubit extends Cubit<ChatSessionState> {
     bool beforeTrailingAssistant = false,
   }) {
     if (item == null) return entries;
-    if (clientMessageId != null && entries.whereType<UserChatEntry>().any(
-      (e) => e.clientMessageId == clientMessageId,
-    )) {
+    if (clientMessageId != null &&
+        entries.whereType<UserChatEntry>().any(
+          (e) => e.clientMessageId == clientMessageId,
+        )) {
       return entries;
     }
     // Older Bridges may echo a delivered input without its send ID. Only

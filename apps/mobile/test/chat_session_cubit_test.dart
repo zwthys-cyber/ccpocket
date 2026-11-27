@@ -1118,7 +1118,10 @@ void main() {
         );
         await pumpEventQueue();
         final bytes = Uint8List.fromList([1, 2, 3]);
-        sender.sendMessage('Continue', images: [(bytes: bytes, mimeType: 'image/png')]);
+        sender.sendMessage(
+          'Continue',
+          images: [(bytes: bytes, mimeType: 'image/png')],
+        );
         final payload = jsonDecode(mockBridge.sentMessages.single.toJson());
         final id = payload['clientMessageId'] as String;
         final live = UserInputMessage(
@@ -1143,10 +1146,12 @@ void main() {
         await pumpEventQueue();
         for (var refresh = 0; refresh < 2; refresh++) {
           mockBridge.emitMessage(
-            HistoryMessage(messages: [restored]), sessionId: 's1',
+            HistoryMessage(messages: [restored]),
+            sessionId: 's1',
           );
           peerBridge.emitMessage(
-            HistoryMessage(messages: [live, restored]), sessionId: 's1',
+            HistoryMessage(messages: [live, restored]),
+            sessionId: 's1',
           );
           await pumpEventQueue();
           peerBridge.emitMessage(live, sessionId: 's1');
