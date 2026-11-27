@@ -5,7 +5,7 @@ on:
     inputs:
       verification:
         type: choice
-        options: [screenshots, bridge, icons, ipa, menubar, polish]
+        options: [screenshots, bridge, icons, ipa, menubar, polish, zh-previews]
         default: screenshots
       source_ref:
         description: App commit to build or generate from
@@ -625,4 +625,50 @@ jobs:
         with:
           name: generated-source-patch
           path: ${{ runner.temp }}/generated.patch
+          if-no-files-found: error
+  zh-previews:
+    if: inputs.verification == 'zh-previews'
+    name: Simplified Chinese UI (${{ matrix.variant }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [before, after]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: diagnostics
+          sparse-checkout: scripts/zh-preview
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.variant == 'before' && '31ada26bac19ee7ec9e11c80222caa551ec8319d' || inputs.source_ref }}
+          path: app
+      - name: Read Flutter version
+        id: sdk
+        run: echo "version=$(sed -n 's/^flutter = "\(.*\)"/\1/p' app/.mise.toml)" >> "$GITHUB_OUTPUT"
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: ${{ steps.sdk.outputs.version }}
+          cache: true
+      - name: Render Chinese app screens with synthetic data and the bundled icon font
+        working-directory: app/apps/mobile
+        env:
+          PREVIEW_VARIANT: ${{ matrix.variant }}
+          PREVIEW_OUTPUT: ${{ runner.temp }}/zh-previews
+          PREVIEW_FONT: ${{ runner.temp }}/NotoSansCJKsc-Regular.otf
+        run: |
+          mkdir -p "$PREVIEW_OUTPUT"
+          git rev-parse HEAD > "$PREVIEW_OUTPUT/$PREVIEW_VARIANT-source.txt"
+          curl -fsSL --retry 3 -o "$PREVIEW_FONT" \
+            https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf
+          flutter pub get
+          flutter gen-l10n
+          python3 "$GITHUB_WORKSPACE/diagnostics/scripts/zh-preview/prepare.py"
+          flutter test --no-pub --concurrency=1 --plain-name 'capture Chinese preview' \
+            test/zh_home_preview_test.dart test/zh_theme_preview_test.dart test/zh_gallery_preview_test.dart
+      - uses: actions/upload-artifact@v7
+        with:
+          name: zh-previews-${{ matrix.variant }}
+          path: ${{ runner.temp }}/zh-previews
           if-no-files-found: error
