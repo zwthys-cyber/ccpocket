@@ -94,6 +94,7 @@ harness("settings_usage_visibility_test.dart", "zh_theme_preview_test.dart",
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     expect(find.text(after ? '深色' : 'Dark'), findsWidgets);
+    if (after) expect(find.text('Bridge machine'), findsNothing);
     await savePreview(tester, 'theme');
     await settings.close();
     await manager.close();
