@@ -121,11 +121,9 @@ class _RunningSessionCardState extends State<RunningSessionCard> {
       SessionPrimaryStatus.ready =>
         isReadyUnseen ? l.sessionNewActivity : l.statusReady,
     };
-    final cardColor = switch (visualStatus.primary) {
-      SessionPrimaryStatus.working => colorScheme.primaryContainer,
-      SessionPrimaryStatus.needsYou => appColors.approvalBar,
-      SessionPrimaryStatus.ready => colorScheme.surfaceContainerHigh,
-    };
+    final cardColor = visualStatus.primary == SessionPrimaryStatus.needsYou
+        ? appColors.approvalBar
+        : colorScheme.surfaceContainerHigh;
 
     final permission = session.pendingPermission;
     final hasPermission = permission != null;
@@ -159,7 +157,7 @@ class _RunningSessionCardState extends State<RunningSessionCard> {
         side: BorderSide(
           color: widget.isSelected
               ? statusColor.withValues(alpha: 0.95)
-              : colorScheme.outlineVariant.withValues(alpha: 0.5),
+              : colorScheme.outlineVariant,
           width: widget.isSelected ? 2.2 : 1,
         ),
       ),

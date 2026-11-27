@@ -14,25 +14,29 @@ class AppTheme {
 
   static ThemeData lightThemeForLocale(Locale? locale) {
     const colorScheme = ColorScheme.light(
-      surface: Color(0xFFF7F8FC),
-      onSurface: Color(0xFF181B32),
-      onSurfaceVariant: Color(0xFF525B73),
+      surface: Color(0xFFFBFAF7),
+      onSurface: Color(0xFF232925),
+      onSurfaceVariant: Color(0xFF525C55),
       surfaceContainerLowest: Color(0xFFFFFFFF),
-      surfaceContainerLow: Color(0xFFF0F2FA),
-      surfaceContainer: Color(0xFFECEEF7),
+      surfaceContainerLow: Color(0xFFF7F6F2),
+      surfaceContainer: Color(0xFFF2F1EC),
       surfaceContainerHigh: Color(0xFFFFFFFF),
-      surfaceContainerHighest: Color(0xFFE0E4F1),
-      primary: Color(0xFF4E46CC),
+      surfaceContainerHighest: Color(0xFFE9EBE5),
+      primary: Color(0xFF246451),
       onPrimary: Color(0xFFFFFFFF),
-      primaryContainer: Color(0xFFEDEEFF),
-      onPrimaryContainer: Color(0xFF362D9E),
-      secondary: Color(0xFF365C80),
+      primaryContainer: Color(0xFFE6F1EB),
+      onPrimaryContainer: Color(0xFF194B3B),
+      secondary: Color(0xFF415F6D),
       onSecondary: Color(0xFFFFFFFF),
+      secondaryContainer: Color(0xFFE8EFF1),
+      onSecondaryContainer: Color(0xFF263F4A),
       tertiary: Color(0xFF815114),
+      tertiaryContainer: Color(0xFFFAECD2),
+      onTertiaryContainer: Color(0xFF59360B),
       error: Color(0xFFB42335),
       onError: Color(0xFFFFFFFF),
-      outline: Color(0xFF68728D),
-      outlineVariant: Color(0xFFDCE0EC),
+      outline: Color(0xFF667269),
+      outlineVariant: Color(0xFFDBDFD7),
     );
 
     return _buildTheme(
@@ -49,25 +53,29 @@ class AppTheme {
 
   static ThemeData darkThemeForLocale(Locale? locale) {
     const colorScheme = ColorScheme.dark(
-      surface: Color(0xFF111426),
-      onSurface: Color(0xFFEEF0FF),
-      onSurfaceVariant: Color(0xFFB5BDD8),
-      surfaceContainerLowest: Color(0xFF0D1020),
-      surfaceContainerLow: Color(0xFF15192C),
-      surfaceContainer: Color(0xFF202641),
-      surfaceContainerHigh: Color(0xFF191E33),
-      surfaceContainerHighest: Color(0xFF2C3451),
-      primary: Color(0xFFB5B0FF),
-      onPrimary: Color(0xFF171735),
-      primaryContainer: Color(0xFF23274B),
-      onPrimaryContainer: Color(0xFFDAD6FF),
-      secondary: Color(0xFFA4C7EA),
-      onSecondary: Color(0xFF102D48),
+      surface: Color(0xFF171C1A),
+      onSurface: Color(0xFFF0F2EE),
+      onSurfaceVariant: Color(0xFFB9C3BB),
+      surfaceContainerLowest: Color(0xFF121614),
+      surfaceContainerLow: Color(0xFF1E2521),
+      surfaceContainer: Color(0xFF222A25),
+      surfaceContainerHigh: Color(0xFF252D28),
+      surfaceContainerHighest: Color(0xFF333D36),
+      primary: Color(0xFFA6D6C2),
+      onPrimary: Color(0xFF163D30),
+      primaryContainer: Color(0xFF294438),
+      onPrimaryContainer: Color(0xFFD7EEE3),
+      secondary: Color(0xFFA8C6D1),
+      onSecondary: Color(0xFF193640),
+      secondaryContainer: Color(0xFF263B44),
+      onSecondaryContainer: Color(0xFFCFE8EF),
       tertiary: Color(0xFFF1BD70),
+      tertiaryContainer: Color(0xFF48341B),
+      onTertiaryContainer: Color(0xFFF8DCB5),
       error: Color(0xFFFF9DA8),
       onError: Color(0xFF490D1B),
-      outline: Color(0xFF8B96B6),
-      outlineVariant: Color(0xFF303754),
+      outline: Color(0xFF909E93),
+      outlineVariant: Color(0xFF3A453D),
     );
 
     return _buildTheme(
@@ -380,7 +388,6 @@ class AppTheme {
 
 // ---------------------------------------------------------------------------
 // AppColors: Semantic color tokens (ThemeExtension)
-// Harmonised with the Graphite & Ember palette
 // ---------------------------------------------------------------------------
 
 class AppColors extends ThemeExtension<AppColors> {
@@ -497,14 +504,13 @@ class AppColors extends ThemeExtension<AppColors> {
     required this.diffDeletionText,
   });
 
-  // ---- Light (Graphite & Ember palette) ----
   factory AppColors.light() => const AppColors(
-    userBubble: Color(0xFFEDEEFF),
-    userBubbleText: Color(0xFF242255),
-    assistantBubble: Color(0xFFECEEF7),
-    toolBubble: Color(0xFFEDF2FA),
-    toolBubbleBorder: Color(0xFFDCE0EC),
-    toolIcon: Color(0xFF365C80),
+    userBubble: Color(0xFFE6F1EB),
+    userBubbleText: Color(0xFF194B3B),
+    assistantBubble: Color(0xFFF2F1EC),
+    toolBubble: Color(0xFFF1F4F4),
+    toolBubbleBorder: Color(0xFFDBE2E3),
+    toolIcon: Color(0xFF415F6D),
     errorBubble: Color(0xFFFEF2F2), // Red 50
     errorBubbleBorder: Color(0xFFEF4444), // Red 500
     errorText: Color(0xFFB91C1C), // Red 700
@@ -517,39 +523,38 @@ class AppColors extends ThemeExtension<AppColors> {
     askBubble: Color(0xFFFFF7E8),
     askBubbleBorder: Color(0xFFC48531),
     askIcon: Color(0xFF815114),
-    systemChip: Color(0xFFEDF2FA),
+    systemChip: Color(0xFFE8EFF1),
     successChip: Color(0xFFE7F6EF),
     errorChip: Color(0xFFFEE2E2), // Red 100
     approvalBar: Color(0xFFFFF7E8),
     approvalBarBorder: Color(0xFFC48531),
-    statusStarting: Color(0xFF525B73),
-    statusRunning: Color(0xFF4E46CC),
+    statusStarting: Color(0xFF525C55),
+    statusRunning: Color(0xFF246451),
     statusApproval: Color(0xFF815114),
     statusCompacting: Color(0xFF7C3AED), // Violet 600
-    statusIdle: Color(0xFF525B73),
+    statusIdle: Color(0xFF525C55),
     statusOnline: Color(0xFF18734E),
     statusPlan: Color(0xFF1F8F4E), // structured plan green
     statusPlanGlow: Color(0xFF7BD89A), // lighter green for glow
-    subtleText: Color(0xFF525B73),
-    codeBackground: Color(0xFFECEEF7),
-    codeBorder: Color(0xFFD1D7E8),
-    toolResultBackground: Color(0xFFECEEF7),
-    toolResultText: Color(0xFF525B73),
-    toolResultTextExpanded: Color(0xFF303754),
+    subtleText: Color(0xFF525C55),
+    codeBackground: Color(0xFFF2F1EC),
+    codeBorder: Color(0xFFDBDFD7),
+    toolResultBackground: Color(0xFFF2F1EC),
+    toolResultText: Color(0xFF525C55),
+    toolResultTextExpanded: Color(0xFF333F36),
     diffAdditionBackground: Color(0xFFDCFCE7), // Green 100
     diffAdditionText: Color(0xFF166534), // Green 800
     diffDeletionBackground: Color(0xFFFEE2E2), // Red 100
     diffDeletionText: Color(0xFF991B1B), // Red 800
   );
 
-  // ---- Dark (Graphite & Ember palette) ----
   factory AppColors.dark() => const AppColors(
-    userBubble: Color(0xFF252A49),
-    userBubbleText: Color(0xFFEEF0FF),
-    assistantBubble: Color(0xFF191E33),
-    toolBubble: Color(0xFF1B2940),
-    toolBubbleBorder: Color(0xFF354866),
-    toolIcon: Color(0xFFA4C7EA),
+    userBubble: Color(0xFF294438),
+    userBubbleText: Color(0xFFD7EEE3),
+    assistantBubble: Color(0xFF252D28),
+    toolBubble: Color(0xFF202D31),
+    toolBubbleBorder: Color(0xFF384A51),
+    toolIcon: Color(0xFFA8C6D1),
     errorBubble: Color(0xFF2A1215),
     errorBubbleBorder: Color(0xFF5C2020),
     errorText: Color(0xFFFCA5A5), // Red 300
@@ -562,25 +567,25 @@ class AppColors extends ThemeExtension<AppColors> {
     askBubble: Color(0xFF2B2117),
     askBubbleBorder: Color(0xFF75502A),
     askIcon: Color(0xFFF1BD70),
-    systemChip: Color(0xFF1B2940),
+    systemChip: Color(0xFF263B44),
     successChip: Color(0xFF14362B),
     errorChip: Color(0xFF2A1215),
     approvalBar: Color(0xFF2B2117),
     approvalBarBorder: Color(0xFF75502A),
-    statusStarting: Color(0xFFB5BDD8),
-    statusRunning: Color(0xFFB5B0FF),
+    statusStarting: Color(0xFFB9C3BB),
+    statusRunning: Color(0xFFA6D6C2),
     statusApproval: Color(0xFFF1BD70),
     statusCompacting: Color(0xFFA78BFA), // Violet 400
-    statusIdle: Color(0xFFB5BDD8),
+    statusIdle: Color(0xFFB9C3BB),
     statusOnline: Color(0xFF81DFB5),
     statusPlan: Color(0xFF57C779), // natural plan green
     statusPlanGlow: Color(0xFF9AE6B4), // lifted green glow
-    subtleText: Color(0xFFB5BDD8),
-    codeBackground: Color(0xFF202641),
-    codeBorder: Color(0xFF303754),
-    toolResultBackground: Color(0xFF202641),
-    toolResultText: Color(0xFFB5BDD8),
-    toolResultTextExpanded: Color(0xFFD5DCF3),
+    subtleText: Color(0xFFB9C3BB),
+    codeBackground: Color(0xFF222A25),
+    codeBorder: Color(0xFF3A453D),
+    toolResultBackground: Color(0xFF222A25),
+    toolResultText: Color(0xFFB9C3BB),
+    toolResultTextExpanded: Color(0xFFD8DED8),
     diffAdditionBackground: Color(0xFF14532D), // Green 900
     diffAdditionText: Color(0xFF86EFAC), // Green 300
     diffDeletionBackground: Color(0xFF7F1D1D), // Red 900

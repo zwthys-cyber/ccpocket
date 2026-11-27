@@ -1001,7 +1001,11 @@ class _SessionSearchField extends StatelessWidget {
         style: theme.textTheme.bodyMedium,
         decoration: InputDecoration(
           hintText: l.searchSessions,
-          fillColor: colors.surfaceContainer,
+          fillColor: colors.surfaceContainerHigh,
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: colors.outlineVariant),
+          ),
           prefixIcon: const Icon(Icons.search, size: 20),
           suffixIcon: value.text.isEmpty
               ? null

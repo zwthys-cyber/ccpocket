@@ -192,7 +192,8 @@ class _ActivityStatusState extends State<_ActivityStatus> {
       ),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: widget.liteMode ? colors.surfaceContainer : colors.primaryContainer,
+          color: colors.surfaceContainerLow,
+          border: Border.all(color: colors.outlineVariant),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Padding(

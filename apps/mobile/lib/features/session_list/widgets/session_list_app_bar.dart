@@ -38,6 +38,7 @@ class SessionListSliverAppBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
+    final colors = Theme.of(context).colorScheme;
     final newSession = onNewSession;
 
     return SliverAppBar(
@@ -86,6 +87,10 @@ class SessionListSliverAppBar extends StatelessWidget {
               tooltip: l.newSession,
               onPressed: newSession,
               icon: const Icon(Icons.add),
+              style: IconButton.styleFrom(
+                backgroundColor: colors.primary,
+                foregroundColor: colors.onPrimary,
+              ),
             ),
           ),
       ],
