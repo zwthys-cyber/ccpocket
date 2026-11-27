@@ -1121,6 +1121,7 @@ export class BridgeWebSocketServer {
         type: "user_input",
         text,
         ...(item.uuid ? { userMessageUuid: item.uuid } : {}),
+        ...(item.rawItemId ? { rawItemId: item.rawItemId } : {}),
         ...(item.isMeta ? { isMeta: true } : {}),
         ...(item.imageCount != null || images.length > 0
           ? { imageCount: Math.max(item.imageCount ?? 0, images.length) }

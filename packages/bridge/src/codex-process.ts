@@ -763,6 +763,10 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
           if (!item || !turn) {
             throw new Error("Codex history changed while reading; retry opening the session");
           }
+          if (item.type === "userMessage" && entry) {
+            if (typeof entry.startedAtMs === "number") item.startedAtMs ??= entry.startedAtMs;
+            if (typeof entry.completedAtMs === "number") item.completedAtMs ??= entry.completedAtMs;
+          }
           const compacted = compactCodexHistoryItem(item);
           retainedChars += compacted.chars;
           this.checkHistorySize(retainedChars);
@@ -3931,7 +3935,8 @@ export class CodexProcess extends EventEmitter<CodexProcessEvents> {
         this.emitMessage({
           type: "user_input",
           text,
-          userMessageUuid: itemId,
+          ...(typeof item.id === "string" && item.id.trim()
+            ? { userMessageUuid: item.id, rawItemId: item.id } : {}),
           ...(typeof item.timestamp === "string"
             ? { timestamp: item.timestamp }
             : {}),

@@ -75,6 +75,7 @@ vi.mock("./sessions-index.js", () => ({
   getSessionHistory: getSessionHistoryMock,
   getCodexSessionHistory: getCodexSessionHistoryMock,
   codexThreadToSessionHistory: codexThreadToSessionHistoryMock,
+  codexThreadUserTimes: async () => undefined,
   extractMessageImages: extractMessageImagesMock,
   codexUserTurnUuid: (ordinal: number) => `codex:user-turn:${ordinal}`,
   getAllRecentSessions: getAllRecentSessionsMock,
@@ -718,6 +719,48 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
       for (const socket of wss.clients) socket.terminate();
       bridge.close();
     }
+  });
+
+  it("merges late steering input across a moved tool anchor and repeated snapshots", async () => {
+    const started = "2026-11-27T09:18:41.123Z";
+    const delivered = "2026-11-27T09:32:09.853Z";
+    const user = (ordinal: number, rawItemId: string, text: string) => ({
+      role: "user", uuid: `codex:user-turn:${ordinal}`, rawItemId, timestamp: started,
+      content: [{ type: "text", text }],
+    });
+    codexThreadToSessionHistoryMock.mockReturnValue([
+      user(1, "first", "begin"), user(2, "steer-A", "confirm"),
+      { role: "assistant", uuid: "anchor", content: [{ type: "text", text: "working" }] },
+      user(3, "steer-B", "confirm"),
+    ]);
+    const bridge = new BridgeWebSocketServer({ server: httpServer });
+    const manager = (bridge as any).sessionManager;
+    const id = manager.create("/tmp/project-codex", undefined, undefined, undefined, "codex");
+    const session = manager.get(id);
+    session.claudeSessionId = "thread-steering";
+    // A raw provider completion previously reconciled this live ordinal.
+    session.codexUserTurnUuidByRawId = new Map([["steer-A", "codex:user-turn:8"]]);
+    try {
+      manager.appendHistory(id, { type: "assistant", messageUuid: "anchor",
+        message: { id: "anchor", role: "assistant", model: "", content: [{ type: "text", text: "working" }] } });
+      manager.appendHistory(id, { type: "user_input", text: "confirm", timestamp: delivered,
+        userMessageUuid: "codex:user-turn:8", clientMessageId: "send-A" });
+      manager.appendHistory(id, { type: "user_input", text: "confirm", timestamp: "2026-11-27T09:33:01.000Z",
+        userMessageUuid: "codex:user-turn:9", rawItemId: "steer-B", clientMessageId: "send-B" });
+      for (let refresh = 0; refresh < 2; refresh++) {
+        const entries = await (bridge as any).codexCanonicalHistoryEntries(session);
+        const inputs = entries.map((entry: any) => entry.message).filter((m: any) => m.type === "user_input");
+        expect(inputs.map((m: any) => [m.text, m.userMessageUuid, m.clientMessageId, m.timestamp])).toEqual([
+          ["begin", "codex:user-turn:1", undefined, started],
+          ["confirm", "codex:user-turn:2", "send-A", delivered],
+          ["confirm", "codex:user-turn:3", "send-B", "2026-11-27T09:33:01.000Z"],
+        ]);
+      }
+      // A legacy, unidentifiable entry must never be merged on text alone.
+      manager.appendHistory(id, { type: "user_input", text: "confirm", rawItemId: "", userMessageUuid: "" });
+      const entries = await (bridge as any).codexCanonicalHistoryEntries(session);
+      expect(entries.filter((e: any) => e.message.type === "user_input")).toHaveLength(4);
+    } finally { bridge.close(); }
   });
 
   it("preserves more than 100 canonical messages and stable user identities", async () => {

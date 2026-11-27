@@ -2916,8 +2916,32 @@ function appendCodexOfficialToolResult(
   });
 }
 
+function codexItemTime(item: Record<string, unknown>): string | undefined {
+  const millis = item.startedAtMs ?? item.started_at_ms ?? item.completedAtMs ?? item.completed_at_ms;
+  const value = typeof millis === "number" ? millis
+    : typeof item.timestamp === "string" ? Date.parse(item.timestamp) : NaN;
+  const time = new Date(value);
+  return Number.isFinite(time.getTime()) ? time.toISOString() : undefined;
+}
+
+/** Older RPC schemas omit per-item times. Read them only for mid-turn inputs,
+ * using immutable provider IDs from the existing per-thread rollout index. */
+export async function codexThreadUserTimes(
+  threadId: string,
+  thread: unknown,
+): Promise<Map<string, string> | undefined> {
+  const needsTimes = arrayValue(asObject(thread)?.turns).some((rawTurn) => {
+    const users = arrayValue(asObject(rawTurn)?.items).map(asObject)
+      .filter((item) => item?.type === "userMessage");
+    return users.slice(1).some((item) => item && item.id && !codexItemTime(item));
+  });
+  if (!needsTimes) return undefined;
+  return (await getCodexMessageImageIndex(threadId))?.userTimesById;
+}
+
 export function codexThreadToSessionHistory(
   thread: unknown,
+  userTimesById?: ReadonlyMap<string, string>,
 ): SessionHistoryMessage[] {
   const messages: SessionHistoryMessage[] = [];
   const turns = arrayValue(asObject(thread)?.turns);
@@ -2948,6 +2972,7 @@ export function codexThreadToSessionHistory(
                 : "";
           if (displayText.trim().length === 0) break;
           userTurnOrdinal += 1;
+          const timestamp = codexItemTime(item) ?? (rawItemId ? userTimesById?.get(rawItemId) : undefined) ?? turnStartedAt;
           messages.push({
             role: "user",
             uuid: codexUserTurnUuid(userTurnOrdinal),
@@ -2956,7 +2981,7 @@ export function codexThreadToSessionHistory(
             ...(imageCount > 0 ? { imageCount } : {}),
             ...(imagePaths.length > 0 ? { imagePaths } : {}),
             ...(imageBase64.length > 0 ? { imageBase64 } : {}),
-            ...(turnStartedAt ? { timestamp: turnStartedAt } : {}),
+            ...(timestamp ? { timestamp } : {}),
           });
           break;
         }
@@ -3924,6 +3949,7 @@ export interface ExtractedImage {
 }
 
 interface CodexMessageImageIndex {
+  userTimesById: Map<string, string>;
   jsonlPath: string;
   size: number;
   mtimeMs: number;
@@ -4174,10 +4200,12 @@ async function buildCodexMessageImageIndex(
 
   try {
     const fileStat = await stat(jsonlPath);
+    const userTimesById = new Map<string, string>();
     const imagesByUuid = fileStat.size === 0
       ? new Map<string, ExtractedImage[]>()
-      : await collectCodexMessageImages(jsonlPath, fileStat.size);
+      : await collectCodexMessageImages(jsonlPath, fileStat.size, userTimesById);
     return {
+      userTimesById,
       jsonlPath,
       size: fileStat.size,
       mtimeMs: fileStat.mtimeMs,
@@ -4203,6 +4231,7 @@ async function* readCodexImageIndexLines(path: string, size: number) {
 async function collectCodexMessageImages(
   path: string,
   size: number,
+  userTimesById: Map<string, string>,
 ): Promise<Map<string, ExtractedImage[]>> {
   const imagesByUuid = new Map<string, ExtractedImage[]>();
   const responseItemImagesByOrdinal =
@@ -4221,9 +4250,21 @@ async function collectCodexMessageImages(
       continue;
     }
 
-    if (entry.type !== "event_msg") continue;
     const payload = asObject(entry.payload);
-    if (!payload || payload.type !== "user_message") continue;
+    if (!payload) continue;
+    if (entry.type === "response_item" && payload.type === "message" && payload.role === "user") {
+      const timestamp = codexItemTime(entry);
+      if (typeof payload.id === "string" && payload.id && timestamp) userTimesById.set(payload.id, timestamp);
+    }
+    if (entry.type !== "event_msg") continue;
+    if (payload.type === "item_completed") {
+      const item = asObject(payload.item);
+      if (typeof item?.id === "string" && item.id && String(item.type).toLowerCase() === "usermessage") {
+        const timestamp = codexItemTime(payload) ?? codexItemTime(entry);
+        if (timestamp) userTimesById.set(item.id, timestamp);
+      }
+    }
+    if (payload.type !== "user_message") continue;
 
     const lineImages = await extractCodexUserMessagePayloadImages(payload);
     imagesByUuid.set(`codex-line-${lineIndex}`, lineImages);
