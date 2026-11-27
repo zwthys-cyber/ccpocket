@@ -21,23 +21,35 @@ Widget _wrap(Widget child, {Locale locale = const Locale('en')}) {
 }
 
 void main() {
-  testWidgets('Chinese running card shows elapsed time, approval and sandbox status', (tester) async {
-    final lastActive = DateTime.now().subtract(const Duration(minutes: 5)).toIso8601String();
-    await tester.pumpWidget(_wrap(
-      RunningSessionCard(
-        session: SessionInfo(
-          id: 'zh-card', projectPath: '/sample', provider: 'codex',
-          status: 'running', createdAt: lastActive, lastActivityAt: lastActive,
-          codexApprovalPolicy: 'never', codexSandboxMode: 'danger-full-access',
+  testWidgets(
+    'Chinese running card shows elapsed time, approval and sandbox status',
+    (tester) async {
+      final lastActive = DateTime.now()
+          .subtract(const Duration(minutes: 5))
+          .toIso8601String();
+      await tester.pumpWidget(
+        _wrap(
+          RunningSessionCard(
+            session: SessionInfo(
+              id: 'zh-card',
+              projectPath: '/sample',
+              provider: 'codex',
+              status: 'running',
+              createdAt: lastActive,
+              lastActivityAt: lastActive,
+              codexApprovalPolicy: 'never',
+              codexSandboxMode: 'danger-full-access',
+            ),
+            onTap: () {},
+          ),
+          locale: const Locale('zh'),
         ),
-        onTap: () {},
-      ),
-      locale: const Locale('zh'),
-    ));
-    expect(find.text('5 分钟前'), findsOneWidget);
-    expect(find.text('不询问'), findsOneWidget);
-    expect(find.text('沙箱已关闭'), findsOneWidget);
-  });
+      );
+      expect(find.text('5 分钟前'), findsOneWidget);
+      expect(find.text('不询问'), findsOneWidget);
+      expect(find.text('沙箱已关闭'), findsOneWidget);
+    },
+  );
 
   for (final recent in [false, true]) {
     testWidgets('Fast indicator follows tier updates (recent: $recent)', (

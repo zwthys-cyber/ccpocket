@@ -122,7 +122,9 @@ class _CodexSettingsSheetState extends State<CodexSettingsSheet> {
               _SettingsRow(
                 key: const ValueKey('codex_speed_advanced'),
                 label: l.speedLabel,
-                value: _speed == CodexSpeed.fast ? l.speedFastLabel : l.sandboxStandard,
+                value: _speed == CodexSpeed.fast
+                    ? l.speedFastLabel
+                    : l.sandboxStandard,
                 onTap: () => _showSpeedPicker(context),
               ),
             ],
@@ -151,9 +153,8 @@ class _CodexSettingsSheetState extends State<CodexSettingsSheet> {
       values: _efforts,
       selected: _effort,
       label: l.reasoningLevel,
-      subtitle: (effort) => effort == ReasoningEffort.ultra
-          ? l.ultraEffortDetail
-          : null,
+      subtitle: (effort) =>
+          effort == ReasoningEffort.ultra ? l.ultraEffortDetail : null,
       onSelected: _selectEffort,
     );
   }
@@ -165,7 +166,8 @@ class _CodexSettingsSheetState extends State<CodexSettingsSheet> {
       title: l.speedLabel,
       values: [CodexSpeed.standard, if (_supportsFast) CodexSpeed.fast],
       selected: _speed,
-      label: (speed) => speed == CodexSpeed.fast ? l.speedFastLabel : l.sandboxStandard,
+      label: (speed) =>
+          speed == CodexSpeed.fast ? l.speedFastLabel : l.sandboxStandard,
       subtitle: (speed) =>
           speed == CodexSpeed.fast ? l.speedFastDetail : l.speedStandardDetail,
       onSelected: _selectSpeed,

@@ -47,7 +47,9 @@ class _GalleryContentState extends State<GalleryContent> {
 
   List<GalleryImage> _filteredImages() {
     if (_selectedProject == null) return widget.images;
-    return widget.images.where((img) => img.projectName == _selectedProject).toList();
+    return widget.images
+        .where((img) => img.projectName == _selectedProject)
+        .toList();
   }
 
   String _timeAgo(AppLocalizations l, String isoDate) {
@@ -92,7 +94,11 @@ class _GalleryContentState extends State<GalleryContent> {
       final result = await bridge.deleteGalleryImageWithResult(image.id);
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(galleryDeleteMessage(AppLocalizations.of(context), result))),
+        SnackBar(
+          content: Text(
+            galleryDeleteMessage(AppLocalizations.of(context), result),
+          ),
+        ),
       );
     } finally {
       if (mounted) setState(() => _deleteInProgress = false);
@@ -133,8 +139,12 @@ class _GalleryContentState extends State<GalleryContent> {
                 image: image,
                 httpBaseUrl: widget.httpBaseUrl,
                 timeAgo: _timeAgo(l, image.addedAt),
-                onTap: _deleteInProgress ? null : () => _openViewer(context, filtered, index),
-                onLongPress: _deleteInProgress ? null : () => _showDeleteDialog(context, image),
+                onTap: _deleteInProgress
+                    ? null
+                    : () => _openViewer(context, filtered, index),
+                onLongPress: _deleteInProgress
+                    ? null
+                    : () => _showDeleteDialog(context, image),
               );
             },
           ),

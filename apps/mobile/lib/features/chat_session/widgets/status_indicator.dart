@@ -70,7 +70,10 @@ class StatusIndicator extends HookWidget {
             ? (appColors.statusPlan, l.permissionPlanMode)
             : (appColors.statusOnline, l.liteModeRunning),
       ProcessStatus.waitingApproval => (appColors.statusApproval, l.approval),
-      ProcessStatus.compacting => (appColors.statusCompacting, l.liteModeCompacting),
+      ProcessStatus.compacting => (
+        appColors.statusCompacting,
+        l.liteModeCompacting,
+      ),
     };
 
     // Format elapsed time
@@ -105,7 +108,8 @@ class StatusIndicator extends HookWidget {
               // Animated status dot
               _AnimatedStatusDot(
                 color: color,
-                isAnimating: isActive && !MediaQuery.disableAnimationsOf(context),
+                isAnimating:
+                    isActive && !MediaQuery.disableAnimationsOf(context),
               ),
             ],
           ),

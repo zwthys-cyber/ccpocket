@@ -122,7 +122,9 @@ class _ThinkingBubbleState extends State<ThinkingBubble>
                       Icon(Icons.psychology, size: 16, color: thinkingColor),
                     const SizedBox(width: 6),
                     Text(
-                      widget.isStreaming ? l.thinkingStreamingLabel : l.thinkingLabel,
+                      widget.isStreaming
+                          ? l.thinkingStreamingLabel
+                          : l.thinkingLabel,
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,

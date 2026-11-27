@@ -974,12 +974,17 @@ class BridgeService implements BridgeServiceBase {
                 _messageController.add(msg);
               case ErrorMessage(:final message):
                 _routeProjectRequestError(msg);
-                final galleryRequest = _pendingGalleryRequestsById[msg.requestId];
+                final galleryRequest =
+                    _pendingGalleryRequestsById[msg.requestId];
                 if (galleryRequest != null) {
-                  _finishGalleryRequest(galleryRequest, GalleryLoadResult.failed);
+                  _finishGalleryRequest(
+                    galleryRequest,
+                    GalleryLoadResult.failed,
+                  );
                 } else if (msg.errorCode == 'unsupported_message' &&
                     msg.message == 'list_gallery') {
-                  for (final request in _pendingGalleryRequestsById.values.toList()) {
+                  for (final request
+                      in _pendingGalleryRequestsById.values.toList()) {
                     _finishGalleryRequest(request, GalleryLoadResult.failed);
                   }
                 }
@@ -4346,9 +4351,8 @@ class BridgeService implements BridgeServiceBase {
       final token = connectionUrl == null
           ? null
           : Uri.parse(connectionUrl).queryParametersAll['token']?.firstOrNull;
-      final endpoint = Uri.parse(baseUrl).replace(
-        pathSegments: ['api', 'gallery', id],
-      );
+      final endpoint = Uri.parse(baseUrl)
+          .replace(pathSegments: ['api', 'gallery', id]);
       final response = await http
           .delete(
             endpoint,
@@ -4358,7 +4362,8 @@ class BridgeService implements BridgeServiceBase {
             },
           )
           .timeout(const Duration(seconds: 10));
-      if (epoch != _connectionEpoch || _disposed) return GalleryDeleteResult.offline;
+      if (epoch != _connectionEpoch || _disposed)
+        return GalleryDeleteResult.offline;
       final result = switch (response.statusCode) {
         200 || 204 => GalleryDeleteResult.deleted,
         404 || 410 => GalleryDeleteResult.alreadyMissing,
@@ -4372,7 +4377,9 @@ class BridgeService implements BridgeServiceBase {
         _galleryImages = _galleryImages.where((img) => img.id != id).toList();
         _galleryController.add(_galleryImages);
         for (final state in _galleryScopeStates.values) {
-          final remaining = state.images.where((image) => image.id != id).toList();
+          final remaining = state.images
+              .where((image) => image.id != id)
+              .toList();
           if (remaining.length == state.images.length) continue;
           state.images = remaining;
           state.controller.add(state.images);

@@ -168,7 +168,11 @@ IconData _executionIcon({String? approvalPolicy, String? approvalsReviewer}) {
   };
 }
 
-String? _executionLabel(AppLocalizations l, {String? approvalPolicy, String? approvalsReviewer}) {
+String? _executionLabel(
+  AppLocalizations l, {
+  String? approvalPolicy,
+  String? approvalsReviewer,
+}) {
   if (approvalPolicy == 'on-request' &&
       isCodexAutoReviewApprovalsReviewer(approvalsReviewer)) {
     return l.codexAutoReview;

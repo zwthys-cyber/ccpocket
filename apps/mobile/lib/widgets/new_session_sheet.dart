@@ -2685,7 +2685,8 @@ class _OptionsSection extends StatelessWidget {
         ? Icons.shield_outlined
         : (isClaude ? Icons.code : Icons.warning_amber);
 
-    String sandboxLabel(SandboxMode mode) => l.sandboxMenuLabel(mode, isClaude: isClaude);
+    String sandboxLabel(SandboxMode mode) =>
+        l.sandboxMenuLabel(mode, isClaude: isClaude);
 
     // -- Selector field widget (shows current selection with description) --
 
@@ -3604,7 +3605,10 @@ class _CodexModelOptions extends StatelessWidget {
           decoration: buildInputDecoration(l.effort),
           items: [
             for (final effort in reasoningEfforts)
-              DropdownMenuItem(value: effort, child: Text(l.reasoningLevel(effort))),
+              DropdownMenuItem(
+                value: effort,
+                child: Text(l.reasoningLevel(effort)),
+              ),
           ],
           onChanged: (value) {
             if (value != null) onReasoningEffortChanged(value);
@@ -3685,7 +3689,10 @@ class _CodexAdvancedOptions extends StatelessWidget {
           for (final mode in WebSearchMode.values)
             DropdownMenuItem<WebSearchMode?>(
               value: mode,
-              child: Text(l.webSearchLabel(mode), style: const TextStyle(fontSize: 13)),
+              child: Text(
+                l.webSearchLabel(mode),
+                style: const TextStyle(fontSize: 13),
+              ),
             ),
         ],
         onChanged: onWebSearchModeChanged,

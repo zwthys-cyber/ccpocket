@@ -81,11 +81,17 @@ class GalleryImageViewer extends HookWidget {
         if (!context.mounted) return;
         if (result != GalleryDeleteResult.deleted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(galleryDeleteMessage(AppLocalizations.of(context), result))),
+            SnackBar(
+              content: Text(
+                galleryDeleteMessage(AppLocalizations.of(context), result),
+              ),
+            ),
           );
         }
         if (result.removed) {
-          final newList = imageList.value.where((image) => image.id != currentImage.id).toList();
+          final newList = imageList.value
+              .where((image) => image.id != currentImage.id)
+              .toList();
           if (newList.isEmpty) {
             Navigator.pop(context);
             return;
@@ -336,11 +342,12 @@ Future<bool> showDeleteConfirmDialog(BuildContext context) async {
   return confirmed == true;
 }
 
-String galleryDeleteMessage(AppLocalizations l, GalleryDeleteResult result) => switch (result) {
-  GalleryDeleteResult.deleted => l.galleryDeleted,
-  GalleryDeleteResult.alreadyMissing => l.galleryImageMissing,
-  GalleryDeleteResult.unauthorized => l.galleryDeleteUnauthorized,
-  GalleryDeleteResult.offline => l.galleryOffline,
-  GalleryDeleteResult.timedOut => l.galleryTimedOut,
-  GalleryDeleteResult.failed => l.galleryDeleteServerError,
-};
+String galleryDeleteMessage(AppLocalizations l, GalleryDeleteResult result) =>
+    switch (result) {
+      GalleryDeleteResult.deleted => l.galleryDeleted,
+      GalleryDeleteResult.alreadyMissing => l.galleryImageMissing,
+      GalleryDeleteResult.unauthorized => l.galleryDeleteUnauthorized,
+      GalleryDeleteResult.offline => l.galleryOffline,
+      GalleryDeleteResult.timedOut => l.galleryTimedOut,
+      GalleryDeleteResult.failed => l.galleryDeleteServerError,
+    };

@@ -71,10 +71,7 @@ class _QrScanScreenState extends State<QrScanScreen> {
           ? Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
-                child: Text(
-                  l.qrScanUnavailable,
-                  textAlign: TextAlign.center,
-                ),
+                child: Text(l.qrScanUnavailable, textAlign: TextAlign.center),
               ),
             )
           : Stack(

@@ -3356,4 +3356,347 @@ class AppLocalizationsKo extends AppLocalizations {
   @override
   String get usageResetFailed =>
       'Reset could not be confirmed. Refresh usage before retrying.';
+
+  @override
+  String get groupRecent => '그룹';
+
+  @override
+  String get listRecent => '목록';
+
+  @override
+  String get toggleRecentGrouping => '최근 세션 그룹 표시 전환';
+
+  @override
+  String secondsAgo(int seconds) {
+    return '$seconds초 전';
+  }
+
+  @override
+  String todayAt(String time) {
+    return '오늘 $time';
+  }
+
+  @override
+  String yesterdayAt(String time) {
+    return '어제 $time';
+  }
+
+  @override
+  String get scrollToBottom => '맨 아래로 스크롤';
+
+  @override
+  String get invalidPairingQr => '올바른 CC Pocket 연결 QR 코드가 아닙니다';
+
+  @override
+  String get qrScanUnavailable =>
+      '이 환경에서는 카메라 스캔을 사용할 수 없습니다. Bridge 주소를 직접 입력하세요.';
+
+  @override
+  String get qrScanHint => 'Bridge에 표시된 QR 코드에 카메라를 맞추세요';
+
+  @override
+  String get sessionCompleteTitle => '세션 완료';
+
+  @override
+  String get sessionDone => '세션이 끝났습니다';
+
+  @override
+  String get codexSessionDone => 'Codex 세션이 끝났습니다';
+
+  @override
+  String startWithProvider(String provider) {
+    return '$provider로 시작';
+  }
+
+  @override
+  String get permissionAutoMode => '자동';
+
+  @override
+  String get permissionAcceptEditsMode => '편집 자동 승인';
+
+  @override
+  String get permissionPlanMode => '계획';
+
+  @override
+  String get permissionBypassMode => '모든 승인 건너뛰기';
+
+  @override
+  String get permissionChipAcceptEdits => '편집';
+
+  @override
+  String get permissionChipBypass => '승인 생략';
+
+  @override
+  String get permissionsLabel => '권한';
+
+  @override
+  String get defaultPermissionsLabel => '기본 권한';
+
+  @override
+  String get autoReviewModeLabel => '자동 검토';
+
+  @override
+  String get fullAccessLabel => '전체 접근';
+
+  @override
+  String get fullAccessShort => '전체';
+
+  @override
+  String get customPermissionsLabel => '사용자 지정(config.toml)';
+
+  @override
+  String get customPermissionsShort => '사용자 지정';
+
+  @override
+  String get permissionsFromConfig => 'config.toml의 Codex 권한을 사용합니다';
+
+  @override
+  String get permissionsFromProfile => '선택한 프로필의 Codex 권한을 사용합니다';
+
+  @override
+  String get approvalNeverAsk => '묻지 않음';
+
+  @override
+  String get approvalOnRequest => '필요할 때 묻기';
+
+  @override
+  String get approvalUntrusted => '신뢰된 명령만';
+
+  @override
+  String get sandboxSafeMode => '샌드박스(안전 모드)';
+
+  @override
+  String get sandboxStandard => '표준';
+
+  @override
+  String get sandboxOnLabel => '샌드박스 켜짐';
+
+  @override
+  String get sandboxOffLabel => '샌드박스 꺼짐';
+
+  @override
+  String get sandboxChipOff => '샌드박스 없음';
+
+  @override
+  String get planOnLabel => '계획 켜짐';
+
+  @override
+  String get planOffLabel => '계획 꺼짐';
+
+  @override
+  String get speedLabel => '속도';
+
+  @override
+  String get fastOn => '고속 모드 켜짐';
+
+  @override
+  String get fastOff => '고속 모드 꺼짐';
+
+  @override
+  String get fastSpeedDescription => '고속 (1.5배 속도, 사용량 증가)';
+
+  @override
+  String get effortNoneLabel => '없음';
+
+  @override
+  String get effortMinimalLabel => '최소';
+
+  @override
+  String get effortLightLabel => '낮음';
+
+  @override
+  String get effortLowLabel => '낮음';
+
+  @override
+  String get effortMediumLabel => '보통';
+
+  @override
+  String get effortHighLabel => '높음';
+
+  @override
+  String get effortXHighLabel => '매우 높음';
+
+  @override
+  String get effortClaudeXHighLabel => '매우 높음';
+
+  @override
+  String get effortMaxLabel => '최대';
+
+  @override
+  String get effortUltraLabel => '초고';
+
+  @override
+  String get webSearchDisabled => '꺼짐';
+
+  @override
+  String get webSearchCached => '캐시 사용';
+
+  @override
+  String get webSearchLive => '실시간 검색';
+
+  @override
+  String get galleryLoading => '갤러리 불러오는 중…';
+
+  @override
+  String get galleryLoadFailed => '갤러리를 불러올 수 없습니다.';
+
+  @override
+  String get galleryDeleteUnauthorized => 'Bridge 연결 키를 확인한 후 다시 시도하세요.';
+
+  @override
+  String get galleryOffline => 'Bridge에 연결할 수 없습니다. 연결 상태를 확인한 후 다시 시도하세요.';
+
+  @override
+  String get galleryTimedOut => 'Bridge 응답 시간이 초과되었습니다. 다시 시도하세요.';
+
+  @override
+  String get galleryImageMissing => '이미 삭제된 이미지입니다.';
+
+  @override
+  String get galleryDeleteServerError => 'Bridge가 이미지를 삭제할 수 없습니다. 다시 시도하세요.';
+
+  @override
+  String get galleryDeleted => '이미지를 삭제했습니다';
+
+  @override
+  String get thinkingStreamingLabel => '생각 중…';
+
+  @override
+  String get thinkingLabel => '생각 과정';
+
+  @override
+  String get gitRevert => '변경 취소';
+
+  @override
+  String get gitCommitLabel => '커밋';
+
+  @override
+  String get gitCommitPush => '커밋 및 푸시';
+
+  @override
+  String gitCommittedHash(String hash) {
+    return '커밋됨: $hash';
+  }
+
+  @override
+  String get gitCommitSuccess => '성공';
+
+  @override
+  String get gitUnknownError => '알 수 없는 오류';
+
+  @override
+  String get gitTryAgain => '다시 시도';
+
+  @override
+  String get gitAutoGenerateAI => 'AI로 자동 생성';
+
+  @override
+  String get gitCommitMessage => '커밋 메시지';
+
+  @override
+  String get gitAutoGenerateMessage => '메시지 자동 생성';
+
+  @override
+  String get gitCommitting => '커밋 중…';
+
+  @override
+  String get gitPushing => '푸시 중…';
+
+  @override
+  String get gitViewFile => '파일 보기';
+
+  @override
+  String get gitViewFileDescription => '현재 파일 전체 열기';
+
+  @override
+  String get gitStage => '스테이징';
+
+  @override
+  String get gitUnstage => '스테이징 해제';
+
+  @override
+  String get gitRequestChange => '변경 요청';
+
+  @override
+  String get gitFileFeedback => 'AI에게 파일과 피드백 보내기';
+
+  @override
+  String get gitHunkFeedback => 'AI에게 변경 구간과 피드백 보내기';
+
+  @override
+  String get gitRevertAll => '모든 변경 취소';
+
+  @override
+  String get gitStageAll => '모두 스테이징';
+
+  @override
+  String get gitUnstageAll => '모두 스테이징 해제';
+
+  @override
+  String get gitFilesLabel => '파일';
+
+  @override
+  String get gitFocusDiff => '차이 집중 보기';
+
+  @override
+  String get gitExitFocus => '집중 모드 종료';
+
+  @override
+  String get gitBranchList => '브랜치';
+
+  @override
+  String get gitNewBranch => '새 브랜치';
+
+  @override
+  String get gitSearchBranches => '브랜치 검색…';
+
+  @override
+  String get gitBranchInUse => '다른 작업 트리에서 사용 중';
+
+  @override
+  String get gitBranchNameHint => '브랜치 이름(예: feat/login)';
+
+  @override
+  String get gitCreateCheckout => '만들고 전환';
+
+  @override
+  String get gitNoUpstream => '업스트림 없음';
+
+  @override
+  String get gitStaged => '스테이징됨';
+
+  @override
+  String get gitUnstaged => '스테이징되지 않음';
+
+  @override
+  String get sessionPlanningLabel => '계획 중';
+
+  @override
+  String get environmentSection => '환경';
+
+  @override
+  String get profileLabel => '프로필';
+
+  @override
+  String get worktreeTooltip => '이 세션에 독립적인 Git 작업 트리를 만듭니다.';
+
+  @override
+  String get sessionStartedLabel => '세션 시작';
+
+  @override
+  String systemSubtypeLabel(String subtype) {
+    return '시스템: $subtype';
+  }
+
+  @override
+  String get speedFastLabel => '고속';
+
+  @override
+  String get speedFastDetail => '1.5배 속도, 사용량 증가';
+
+  @override
+  String get speedStandardDetail => '기본 속도';
+
+  @override
+  String get ultraEffortDetail => '사용량이 늘어나며 작업을 자동으로 위임합니다';
 }

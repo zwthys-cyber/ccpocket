@@ -152,7 +152,9 @@ class SessionModeBar extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(12, 3, 12, 8),
         child: _PulsingModeBarSurface(
           inPlanMode:
-              inPlanMode && isActive && !MediaQuery.disableAnimationsOf(context),
+              inPlanMode &&
+              isActive &&
+              !MediaQuery.disableAnimationsOf(context),
           child: bar,
         ),
       ),
@@ -518,7 +520,9 @@ Future<void> _confirmCodexPermissionsModeChange(
       final cs = Theme.of(dialogContext).colorScheme;
       return AlertDialog(
         title: Text(l.changeApprovalPolicyTitle),
-        content: Text(l.changeApprovalPolicyBody(l.codexPermissionsLabel(mode))),
+        content: Text(
+          l.changeApprovalPolicyBody(l.codexPermissionsLabel(mode)),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -853,7 +857,9 @@ Future<void> _confirmPermissionModeChange(
       final cs = Theme.of(dialogContext).colorScheme;
       return AlertDialog(
         title: Text(l.changePermissionModeTitle),
-        content: Text(l.changePermissionModeBody(l.claudePermissionLabel(mode))),
+        content: Text(
+          l.changePermissionModeBody(l.claudePermissionLabel(mode)),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -902,10 +908,26 @@ class PermissionModeChip extends StatelessWidget {
         l.defaultLabel,
         cs.onSurfaceVariant,
       ),
-      PermissionMode.auto => (Icons.auto_mode_outlined, l.permissionAutoMode, autoModeColor),
-      PermissionMode.acceptEdits => (Icons.edit_note, l.permissionChipAcceptEdits, cs.primary),
-      PermissionMode.plan => (Icons.assignment_outlined, l.permissionPlanMode, plan),
-      PermissionMode.bypassPermissions => (Icons.flash_on, l.permissionChipBypass, cs.error),
+      PermissionMode.auto => (
+        Icons.auto_mode_outlined,
+        l.permissionAutoMode,
+        autoModeColor,
+      ),
+      PermissionMode.acceptEdits => (
+        Icons.edit_note,
+        l.permissionChipAcceptEdits,
+        cs.primary,
+      ),
+      PermissionMode.plan => (
+        Icons.assignment_outlined,
+        l.permissionPlanMode,
+        plan,
+      ),
+      PermissionMode.bypassPermissions => (
+        Icons.flash_on,
+        l.permissionChipBypass,
+        cs.error,
+      ),
     };
 
     return Material(
@@ -982,8 +1004,16 @@ class ExecutionModeChip extends StatelessWidget {
               l.defaultLabel,
               cs.onSurfaceVariant,
             ),
-            ExecutionMode.acceptEdits => (Icons.edit_note, l.permissionChipAcceptEdits, cs.primary),
-            ExecutionMode.fullAccess => (Icons.flash_on, l.fullAccessShort, cs.error),
+            ExecutionMode.acceptEdits => (
+              Icons.edit_note,
+              l.permissionChipAcceptEdits,
+              cs.primary,
+            ),
+            ExecutionMode.fullAccess => (
+              Icons.flash_on,
+              l.fullAccessShort,
+              cs.error,
+            ),
           };
 
     return Material(
@@ -1040,7 +1070,9 @@ class CodexModelChip extends StatelessWidget {
     final fg = cs.onSurfaceVariant;
     final label = codexModelDisplayName(model);
     final l = AppLocalizations.of(context);
-    final suffix = reasoningEffort == null ? '' : ' ${l.reasoningLevel(reasoningEffort!)}';
+    final suffix = reasoningEffort == null
+        ? ''
+        : ' ${l.reasoningLevel(reasoningEffort!)}';
 
     return Material(
       color: Colors.transparent,

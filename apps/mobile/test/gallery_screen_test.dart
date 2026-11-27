@@ -33,7 +33,10 @@ class _MockBridgeService extends BridgeService {
   String? get httpBaseUrl => 'http://localhost:8765';
 
   @override
-  Future<GalleryLoadResult> requestGallery({String? projectPath, String? sessionId}) {
+  Future<GalleryLoadResult> requestGallery({
+    String? projectPath,
+    String? sessionId,
+  }) {
     galleryRequested = true;
     _galleryStreamController.add(_mockImages);
     return pending?.future ?? Future.value(GalleryLoadResult.loaded);
@@ -45,7 +48,11 @@ class _MockBridgeService extends BridgeService {
   }
 }
 
-Widget _wrapWithTheme(Widget child, _MockBridgeService mock, {Locale locale = const Locale('en')}) {
+Widget _wrapWithTheme(
+  Widget child,
+  _MockBridgeService mock, {
+  Locale locale = const Locale('en'),
+}) {
   return RepositoryProvider<BridgeService>.value(
     value: mock,
     child: MultiBlocProvider(
@@ -77,27 +84,43 @@ void main() {
       expect(mock.galleryRequested, isTrue);
     });
 
-    testWidgets('shows loading, localized timeout and retry before a confirmed empty list', (tester) async {
-      final mock = _MockBridgeService()..pending = Completer<GalleryLoadResult>();
-      await tester.pumpWidget(_wrapWithTheme(const GalleryScreen(), mock, locale: const Locale('zh')));
-      final l = AppLocalizations.of(tester.element(find.byType(GalleryScreen)));
-      expect(
-        tester.widget<CircularProgressIndicator>(find.byType(CircularProgressIndicator)).semanticsLabel,
-        l.galleryLoading,
-      );
-      expect(find.text(l.noScreenshotsYet), findsNothing);
-      mock.pending!.complete(GalleryLoadResult.timedOut);
-      await tester.pump();
-      await tester.pump();
-      expect(find.text(l.galleryTimedOut), findsOneWidget);
-      expect(find.text(l.noScreenshotsYet), findsNothing);
-      mock.pending = null;
-      await tester.tap(find.text(l.retry));
-      await tester.pump();
-      await tester.pump();
-      expect(find.text(l.noScreenshotsYet), findsOneWidget);
-      expect(find.text(l.galleryTimedOut), findsNothing);
-    });
+    testWidgets(
+      'shows loading, localized timeout and retry before a confirmed empty list',
+      (tester) async {
+        final mock = _MockBridgeService()
+          ..pending = Completer<GalleryLoadResult>();
+        await tester.pumpWidget(
+          _wrapWithTheme(
+            const GalleryScreen(),
+            mock,
+            locale: const Locale('zh'),
+          ),
+        );
+        final l = AppLocalizations.of(
+          tester.element(find.byType(GalleryScreen)),
+        );
+        expect(
+          tester
+              .widget<CircularProgressIndicator>(
+                find.byType(CircularProgressIndicator),
+              )
+              .semanticsLabel,
+          l.galleryLoading,
+        );
+        expect(find.text(l.noScreenshotsYet), findsNothing);
+        mock.pending!.complete(GalleryLoadResult.timedOut);
+        await tester.pump();
+        await tester.pump();
+        expect(find.text(l.galleryTimedOut), findsOneWidget);
+        expect(find.text(l.noScreenshotsYet), findsNothing);
+        mock.pending = null;
+        await tester.tap(find.text(l.retry));
+        await tester.pump();
+        await tester.pump();
+        expect(find.text(l.noScreenshotsYet), findsOneWidget);
+        expect(find.text(l.galleryTimedOut), findsNothing);
+      },
+    );
 
     testWidgets('shows images in grid when images exist', (tester) async {
       final mock = _MockBridgeService();

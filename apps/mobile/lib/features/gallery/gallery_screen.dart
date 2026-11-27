@@ -65,7 +65,9 @@ class GalleryScreen extends HookWidget {
       [bridge, sessionId, online, attempt.value],
     );
     final load = useFuture(request, preserveState: false);
-    final result = load.connectionState == ConnectionState.done ? load.data : null;
+    final result = load.connectionState == ConnectionState.done
+        ? load.data
+        : null;
     void retry() {
       if (!online) bridge.ensureConnected();
       attempt.value++;
@@ -141,7 +143,11 @@ class GalleryScreen extends HookWidget {
               ),
           if (result != null && result != GalleryLoadResult.loaded)
             if (images.isEmpty)
-              Expanded(child: Center(child: _GalleryRetry(result: result, retry: retry)))
+              Expanded(
+                child: Center(
+                  child: _GalleryRetry(result: result, retry: retry),
+                ),
+              )
             else
               _GalleryRetry(result: result, retry: retry),
           if (images.isEmpty && result == GalleryLoadResult.loaded)

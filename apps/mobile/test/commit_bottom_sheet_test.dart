@@ -1,4 +1,5 @@
 import 'package:ccpocket/l10n/app_localizations.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -79,7 +80,9 @@ void main() {
       );
     });
 
-    testWidgets('Chinese commit sheet labels the action and push separately', (tester) async {
+    testWidgets('Chinese commit sheet labels the action and push separately', (
+      tester,
+    ) async {
       await tester.pumpWidget(_buildTestApp(cubit, locale: const Locale('zh')));
       await tester.tap(find.text('Open'));
       await tester.pumpAndSettle();

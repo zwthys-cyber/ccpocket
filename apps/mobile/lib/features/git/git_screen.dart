@@ -664,7 +664,9 @@ class _FocusModeButton extends StatelessWidget {
     return IconButton(
       key: ValueKey(active ? 'git_focus_exit_button' : 'git_focus_button'),
       icon: Icon(active ? Icons.fullscreen_exit : Icons.fullscreen),
-      tooltip: active ? AppLocalizations.of(context).gitExitFocus : AppLocalizations.of(context).gitFocusDiff,
+      tooltip: active
+          ? AppLocalizations.of(context).gitExitFocus
+          : AppLocalizations.of(context).gitFocusDiff,
       style: active ? _gitFocusChromeButtonStyle(context) : null,
       onPressed: onPressed,
     );

@@ -733,7 +733,9 @@ class UsageInfo {
           : null,
       error: json['error'] as String?,
       resetCredits: json['resetCredits'] is Map<String, dynamic>
-          ? UsageResetCredits.fromJson(json['resetCredits'] as Map<String, dynamic>)
+          ? UsageResetCredits.fromJson(
+              json['resetCredits'] as Map<String, dynamic>,
+            )
           : null,
     );
   }
@@ -777,7 +779,10 @@ class UsageResetCredit {
 
   factory UsageResetCredit.fromJson(Map<String, dynamic> json) {
     DateTime? timestamp(dynamic value) => value is num
-        ? DateTime.fromMillisecondsSinceEpoch((value * 1000).round(), isUtc: true)
+        ? DateTime.fromMillisecondsSinceEpoch(
+            (value * 1000).round(),
+            isUtc: true,
+          )
         : null;
     return UsageResetCredit(
       id: json['id'] as String,
@@ -3462,7 +3467,11 @@ class UsageResetResultMessage implements ServerMessage {
   final String requestId;
   final String? outcome;
   final String? error;
-  const UsageResetResultMessage({required this.requestId, this.outcome, this.error});
+  const UsageResetResultMessage({
+    required this.requestId,
+    this.outcome,
+    this.error,
+  });
 }
 
 class RecordingListMessage implements ServerMessage {
@@ -5410,7 +5419,11 @@ class ClientMessage {
 
   factory ClientMessage.getUsage() => ClientMessage._({'type': 'get_usage'});
 
-  factory ClientMessage.consumeUsageReset({required String requestId, required String idempotencyKey, String? creditId}) => ClientMessage._({
+  factory ClientMessage.consumeUsageReset({
+    required String requestId,
+    required String idempotencyKey,
+    String? creditId,
+  }) => ClientMessage._({
     'type': 'consume_usage_reset',
     'requestId': requestId,
     'idempotencyKey': idempotencyKey,

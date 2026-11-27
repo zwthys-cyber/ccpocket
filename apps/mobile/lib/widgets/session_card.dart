@@ -189,7 +189,8 @@ class _RunningSessionCardState extends State<RunningSessionCard> {
                           children: [
                             _StatusDot(
                               color: statusColor,
-                              animate: visualStatus.animate &&
+                              animate:
+                                  visualStatus.animate &&
                                   !MediaQuery.disableAnimationsOf(context),
                               glow: isReadyUnseen,
                               inPlanMode:
@@ -475,7 +476,8 @@ class _LiveSessionSummary extends StatelessWidget {
           if (provider == Provider.codex)
             CodexEnvironmentSummary(
               leadingLabel:
-                  (session.status == 'running' || session.status == 'starting') &&
+                  (session.status == 'running' ||
+                          session.status == 'starting') &&
                       session.resolvedPlanMode
                   ? l.sessionPlanningLabel
                   : null,
@@ -2784,7 +2786,8 @@ class RecentSessionCard extends StatelessWidget {
 }
 
 /// Build a compact settings summary for Claude session cards.
-String _buildClaudeSettingsSummary(AppLocalizations l, {
+String _buildClaudeSettingsSummary(
+  AppLocalizations l, {
   String? model,
   String? permissionMode,
   String? executionMode,

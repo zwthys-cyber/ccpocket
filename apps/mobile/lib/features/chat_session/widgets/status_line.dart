@@ -88,8 +88,12 @@ class _StatusLineState extends State<StatusLine>
     return AnimatedBuilder(
       animation: _glowAnimation,
       builder: (context, child) {
-        final glowOpacity = _isActive && !_reduceMotion ? _glowAnimation.value : 0.4;
-        final blurRadius = _isActive && !_reduceMotion ? 6.0 * _glowAnimation.value : 0.0;
+        final glowOpacity = _isActive && !_reduceMotion
+            ? _glowAnimation.value
+            : 0.4;
+        final blurRadius = _isActive && !_reduceMotion
+            ? 6.0 * _glowAnimation.value
+            : 0.0;
 
         return Container(
           height: 2,

@@ -169,7 +169,10 @@ class _MockBridgeService extends BridgeService {
   }) {}
 
   @override
-  Future<GalleryLoadResult> requestGallery({String? projectPath, String? sessionId}) async {
+  Future<GalleryLoadResult> requestGallery({
+    String? projectPath,
+    String? sessionId,
+  }) async {
     _galleryController.add(_images);
     return GalleryLoadResult.loaded;
   }

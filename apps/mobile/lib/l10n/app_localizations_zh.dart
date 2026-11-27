@@ -592,13 +592,13 @@ class AppLocalizationsZh extends AppLocalizations {
       '离线时远程启动 Bridge Server';
 
   @override
-  String get machineEditSshUsername => 'SSH Username';
+  String get machineEditSshUsername => 'SSH 用户名';
 
   @override
   String get machineEditSshUsernameHint => 'myuser';
 
   @override
-  String get machineEditSshPort => 'SSH Port';
+  String get machineEditSshPort => 'SSH 端口';
 
   @override
   String get machineEditSshPortHint => '22';
@@ -607,62 +607,60 @@ class AppLocalizationsZh extends AppLocalizations {
   String get machineEditTargetAuthentication => '目标认证';
 
   @override
-  String get machineEditPrivateKey => 'Private Key';
+  String get machineEditPrivateKey => '私钥';
 
   @override
-  String get machineEditSshPrivateKeyPem => 'SSH Private Key (PEM)';
+  String get machineEditSshPrivateKeyPem => 'SSH 私钥（PEM）';
 
   @override
   String get machineEditOpenSshPrivateKeyHint =>
       '-----BEGIN OPENSSH PRIVATE KEY-----';
 
   @override
-  String get machineEditSavedPrivateKeyIndicator =>
-      'Private Key 已保存。输入新内容会替换它。';
+  String get machineEditSavedPrivateKeyIndicator => '已保存私钥。输入新私钥可替换。';
 
   @override
-  String get machineEditUseSshJumpHost => '使用 SSH Jump Host';
+  String get machineEditUseSshJumpHost => '使用 SSH 跳板机';
 
   @override
-  String get machineEditUseSshJumpHostSubtitle => '通过 bastion 或中间 SSH 主机连接';
+  String get machineEditUseSshJumpHostSubtitle => '通过堡垒机或中间 SSH 主机连接';
 
   @override
-  String get machineEditSshJumpHost => 'SSH Jump Host';
+  String get machineEditSshJumpHost => 'SSH 跳板机';
 
   @override
-  String get machineEditJumpHost => 'Jump Host';
+  String get machineEditJumpHost => '跳板机地址';
 
   @override
   String get machineEditJumpHostHint => 'bastion.example.com';
 
   @override
-  String get machineEditJumpPort => 'Jump Port';
+  String get machineEditJumpPort => '跳板机端口';
 
   @override
-  String get machineEditJumpUsername => 'Jump Username';
+  String get machineEditJumpUsername => '跳板机用户名';
 
   @override
-  String get machineEditJumpUsernameHint => '留空则使用 SSH Username';
+  String get machineEditJumpUsernameHint => '留空则沿用目标主机的 SSH 用户名';
 
   @override
-  String get machineEditJumpHostAuthentication => 'Jump Host 认证';
+  String get machineEditJumpHostAuthentication => '跳板机认证';
 
   @override
   String get machineEditJumpHostAuthenticationSubtitle => '留空则复用目标 SSH 认证信息';
 
   @override
-  String get machineEditJumpPassword => 'Jump Password';
+  String get machineEditJumpPassword => '跳板机密码';
 
   @override
-  String get machineEditSavedJumpHostPasswordIndicator =>
-      'Jump Host 密码已保存。输入新内容会替换它。';
+  String get machineEditSavedJumpHostPasswordIndicator => '已保存跳板机密码。输入新密码可替换。';
 
   @override
-  String get machineEditJumpPrivateKeyPem => 'Jump Private Key (PEM)';
+  String get machineEditJumpPrivateKeyPem => '跳板机私钥（PEM）';
 
   @override
   String get machineEditSavedJumpHostPrivateKeyIndicator =>
-      'Jump Host Private Key 已保存。输入新内容会替换它。';
+      '已保存跳板机私钥。输入新私钥可替换。';
 
   @override
   String get machineEditTesting => '正在测试...';
@@ -935,14 +933,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get modelOptional => '模型（可选）';
 
   @override
-  String get effort => 'Effort';
+  String get effort => '推理强度';
 
   @override
   String get defaultLabel => '默认';
 
   @override
-  String get codexProfilePrecedenceNote =>
-      '如果所选 profile 定义了相同设置，则 profile 设置会优先于下方选项。';
+  String get codexProfilePrecedenceNote => '如果所选配置中定义了相同的设置，则优先使用该配置。';
 
   @override
   String get maxTurns => '最大轮数';
@@ -978,10 +975,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sandbox => '沙箱';
 
   @override
-  String get reasoning => 'Reasoning';
+  String get reasoning => '推理';
 
   @override
-  String get webSearch => 'Web Search';
+  String get webSearch => '联网搜索';
 
   @override
   String get networkAccess => '网络访问';
@@ -1282,16 +1279,16 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get enablePlanModeTitle => '启用 Plan Mode';
+  String get enablePlanModeTitle => '开启计划模式';
 
   @override
-  String get disablePlanModeTitle => '关闭 Plan Mode';
+  String get disablePlanModeTitle => '关闭计划模式';
 
   @override
-  String get enablePlanModeBody => '启用 Plan Mode 会重启当前会话。你的对话会被保留。';
+  String get enablePlanModeBody => '开启计划模式会重启当前会话并保留对话。';
 
   @override
-  String get disablePlanModeBody => '关闭 Plan Mode 会重启当前会话。你的对话会被保留。';
+  String get disablePlanModeBody => '关闭计划模式会重启当前会话并保留对话。';
 
   @override
   String get changeSandboxModeTitle => '更改沙箱模式';
@@ -3285,4 +3282,346 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get usageResetFailed => '未能确认重置结果，请刷新用量后再重试。';
+
+  @override
+  String get groupRecent => '按项目分组';
+
+  @override
+  String get listRecent => '列表';
+
+  @override
+  String get toggleRecentGrouping => '切换最近会话的分组方式';
+
+  @override
+  String secondsAgo(int seconds) {
+    return '$seconds 秒前';
+  }
+
+  @override
+  String todayAt(String time) {
+    return '今天 $time';
+  }
+
+  @override
+  String yesterdayAt(String time) {
+    return '昨天 $time';
+  }
+
+  @override
+  String get scrollToBottom => '滚动到底部';
+
+  @override
+  String get invalidPairingQr => '这不是有效的 CC Pocket 连接二维码';
+
+  @override
+  String get qrScanUnavailable => '当前设备无法使用相机扫码，请手动输入 Bridge 地址。';
+
+  @override
+  String get qrScanHint => '请将摄像头对准 Bridge 显示的二维码';
+
+  @override
+  String get sessionCompleteTitle => '会话已完成';
+
+  @override
+  String get sessionDone => '会话已结束';
+
+  @override
+  String get codexSessionDone => 'Codex 会话已结束';
+
+  @override
+  String startWithProvider(String provider) {
+    return '使用 $provider 开始';
+  }
+
+  @override
+  String get permissionAutoMode => '自动';
+
+  @override
+  String get permissionAcceptEditsMode => '自动批准编辑';
+
+  @override
+  String get permissionPlanMode => '计划';
+
+  @override
+  String get permissionBypassMode => '跳过所有审批';
+
+  @override
+  String get permissionChipAcceptEdits => '编辑';
+
+  @override
+  String get permissionChipBypass => '跳过审批';
+
+  @override
+  String get permissionsLabel => '权限';
+
+  @override
+  String get defaultPermissionsLabel => '默认权限';
+
+  @override
+  String get autoReviewModeLabel => '自动审查';
+
+  @override
+  String get fullAccessLabel => '完全访问';
+
+  @override
+  String get fullAccessShort => '完全访问';
+
+  @override
+  String get customPermissionsLabel => '自定义（config.toml）';
+
+  @override
+  String get customPermissionsShort => '自定义';
+
+  @override
+  String get permissionsFromConfig => '使用 config.toml 中的 Codex 权限设置';
+
+  @override
+  String get permissionsFromProfile => '使用所选配置中的 Codex 权限设置';
+
+  @override
+  String get approvalNeverAsk => '不询问';
+
+  @override
+  String get approvalOnRequest => '按需询问';
+
+  @override
+  String get approvalUntrusted => '仅信任已知命令';
+
+  @override
+  String get sandboxSafeMode => '沙箱（安全模式）';
+
+  @override
+  String get sandboxStandard => '标准';
+
+  @override
+  String get sandboxOnLabel => '沙箱已开启';
+
+  @override
+  String get sandboxOffLabel => '沙箱已关闭';
+
+  @override
+  String get sandboxChipOff => '无沙箱';
+
+  @override
+  String get planOnLabel => '计划已开启';
+
+  @override
+  String get planOffLabel => '计划已关闭';
+
+  @override
+  String get speedLabel => '速度';
+
+  @override
+  String get fastOn => '快速模式已开启';
+
+  @override
+  String get fastOff => '快速模式已关闭';
+
+  @override
+  String get fastSpeedDescription => '快速模式（1.5 倍速，用量较高）';
+
+  @override
+  String get effortNoneLabel => '无';
+
+  @override
+  String get effortMinimalLabel => '极低';
+
+  @override
+  String get effortLightLabel => '低';
+
+  @override
+  String get effortLowLabel => '低';
+
+  @override
+  String get effortMediumLabel => '中';
+
+  @override
+  String get effortHighLabel => '高';
+
+  @override
+  String get effortXHighLabel => '很高';
+
+  @override
+  String get effortClaudeXHighLabel => '很高';
+
+  @override
+  String get effortMaxLabel => '最高';
+
+  @override
+  String get effortUltraLabel => '超高';
+
+  @override
+  String get webSearchDisabled => '关闭';
+
+  @override
+  String get webSearchCached => '仅使用缓存';
+
+  @override
+  String get webSearchLive => '实时搜索';
+
+  @override
+  String get galleryLoading => '正在加载图库…';
+
+  @override
+  String get galleryLoadFailed => '无法加载图库。';
+
+  @override
+  String get galleryDeleteUnauthorized => '请检查 Bridge 连接密钥，然后重试。';
+
+  @override
+  String get galleryOffline => '无法连接到 Bridge，请检查连接后重试。';
+
+  @override
+  String get galleryTimedOut => 'Bridge 响应超时，请重试。';
+
+  @override
+  String get galleryImageMissing => '这张图片已被删除。';
+
+  @override
+  String get galleryDeleteServerError => 'Bridge 未能删除图片，请重试。';
+
+  @override
+  String get galleryDeleted => '图片已删除';
+
+  @override
+  String get thinkingStreamingLabel => '思考中…';
+
+  @override
+  String get thinkingLabel => '思考过程';
+
+  @override
+  String get gitRevert => '撤销更改';
+
+  @override
+  String get gitCommitLabel => '提交';
+
+  @override
+  String get gitCommitPush => '提交并推送';
+
+  @override
+  String gitCommittedHash(String hash) {
+    return '已提交 $hash';
+  }
+
+  @override
+  String get gitCommitSuccess => '提交成功';
+
+  @override
+  String get gitUnknownError => '未知错误';
+
+  @override
+  String get gitTryAgain => '重试';
+
+  @override
+  String get gitAutoGenerateAI => '使用 AI 自动生成';
+
+  @override
+  String get gitCommitMessage => '提交说明';
+
+  @override
+  String get gitAutoGenerateMessage => '自动生成提交说明';
+
+  @override
+  String get gitCommitting => '正在提交…';
+
+  @override
+  String get gitPushing => '正在推送…';
+
+  @override
+  String get gitViewFile => '查看文件';
+
+  @override
+  String get gitViewFileDescription => '打开当前文件的完整内容';
+
+  @override
+  String get gitStage => '暂存';
+
+  @override
+  String get gitUnstage => '取消暂存';
+
+  @override
+  String get gitRequestChange => '请求修改';
+
+  @override
+  String get gitFileFeedback => '将文件和修改意见发送给 AI';
+
+  @override
+  String get gitHunkFeedback => '将这段差异和修改意见发送给 AI';
+
+  @override
+  String get gitRevertAll => '撤销全部更改';
+
+  @override
+  String get gitStageAll => '全部暂存';
+
+  @override
+  String get gitUnstageAll => '全部取消暂存';
+
+  @override
+  String get gitFilesLabel => '文件';
+
+  @override
+  String get gitFocusDiff => '专注查看差异';
+
+  @override
+  String get gitExitFocus => '退出专注模式';
+
+  @override
+  String get gitBranchList => '分支';
+
+  @override
+  String get gitNewBranch => '新建分支';
+
+  @override
+  String get gitSearchBranches => '搜索分支…';
+
+  @override
+  String get gitBranchInUse => '正由其他工作树使用';
+
+  @override
+  String get gitBranchNameHint => '分支名（如 feat/login）';
+
+  @override
+  String get gitCreateCheckout => '创建并切换';
+
+  @override
+  String get gitNoUpstream => '未设置上游分支';
+
+  @override
+  String get gitStaged => '已暂存';
+
+  @override
+  String get gitUnstaged => '未暂存';
+
+  @override
+  String get sessionPlanningLabel => '规划中';
+
+  @override
+  String get environmentSection => '环境';
+
+  @override
+  String get profileLabel => '配置';
+
+  @override
+  String get worktreeTooltip => '为此会话创建独立的 Git 工作树。';
+
+  @override
+  String get sessionStartedLabel => '会话已开始';
+
+  @override
+  String systemSubtypeLabel(String subtype) {
+    return '系统：$subtype';
+  }
+
+  @override
+  String get speedFastLabel => '快速';
+
+  @override
+  String get speedFastDetail => '1.5 倍速，用量较高';
+
+  @override
+  String get speedStandardDetail => '默认速度';
+
+  @override
+  String get ultraEffortDetail => '使用更多额度，并自动分派任务';
 }

@@ -89,7 +89,8 @@ class GalleryTile extends StatelessWidget {
                   if (onLongPress != null)
                     IconButton(
                       icon: const Icon(Icons.delete_outline_rounded, size: 18),
-                      tooltip: MaterialLocalizations.of(context).deleteButtonTooltip,
+                      tooltip: MaterialLocalizations.of(context)
+                          .deleteButtonTooltip,
                       color: colors.onSurfaceVariant,
                       onPressed: onLongPress,
                     ),
