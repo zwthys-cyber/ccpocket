@@ -5,7 +5,7 @@ on:
     inputs:
       verification:
         type: choice
-        options: [screenshots, bridge, icons, ipa, menubar, polish, zh-previews, ios-system-language]
+        options: [screenshots, bridge, icons, ipa, menubar, polish, zh-previews, ios-system-language, home-safe-area]
         default: screenshots
       source_ref:
         description: App commit to build or generate from
@@ -738,4 +738,48 @@ jobs:
         with:
           name: ios-simulator-system-language
           path: ${{ runner.temp }}/ios-language
+          if-no-files-found: error
+
+  home-safe-area:
+    if: inputs.verification == 'home-safe-area'
+    name: iOS home status inset during scrolling
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: diagnostics
+          sparse-checkout: scripts/zh-preview
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_ref }}
+          path: app
+      - name: Read app Flutter version
+        id: sdk
+        run: echo "version=$(sed -n 's/^flutter = "\(.*\)"/\1/p' app/.mise.toml)" >> "$GITHUB_OUTPUT"
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          flutter-version: ${{ steps.sdk.outputs.version }}
+          cache: true
+      - name: Capture the expanded and collapsed real home layout at a 59 point status inset
+        working-directory: app/apps/mobile
+        env:
+          PREVIEW_OUTPUT: ${{ runner.temp }}/safe-area
+          PREVIEW_FONT: ${{ runner.temp }}/NotoSansCJKsc-Regular.otf
+        run: |
+          mkdir -p "$PREVIEW_OUTPUT"
+          revision=$(git rev-parse HEAD)
+          export PREVIEW_VARIANT=after
+          if [[ "$revision" == 689098965340e15cfe41a4dffa5284a93b947ebf ]]; then export PREVIEW_VARIANT=before; fi
+          echo "$revision" > "$PREVIEW_OUTPUT/source.txt"
+          curl -fsSL --retry 3 -o "$PREVIEW_FONT" https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf
+          flutter pub get
+          python3 "$GITHUB_WORKSPACE/diagnostics/scripts/zh-preview/prepare-safe-area.py"
+          flutter test --no-pub --concurrency=1 --reporter expanded --plain-name 'capture compact home status inset during scroll' test/status_inset_capture_test.dart | tee "$RUNNER_TEMP/layout.log"
+          grep '^SAFE_AREA ' "$RUNNER_TEMP/layout.log" > "$PREVIEW_OUTPUT/geometry.txt"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: home-safe-area
+          path: ${{ runner.temp }}/safe-area
           if-no-files-found: error
