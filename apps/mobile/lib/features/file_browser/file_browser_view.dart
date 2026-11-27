@@ -233,8 +233,8 @@ class BrowserHeader extends StatelessWidget {
     return Container(
       key: const ValueKey('browser_header'),
       height: 52,
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerLow,
+      color: colors.surfaceContainerLow,
+      foregroundDecoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: colors.outlineVariant)),
       ),
       child: LayoutBuilder(
