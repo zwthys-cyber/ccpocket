@@ -1,4 +1,4 @@
-name: Verify gallery upgrade archives
+name: Verify gallery and Codex history upgrade archives
 on:
   push:
     branches: [ci/bridge-gallery-release-check]
@@ -26,13 +26,13 @@ jobs:
         run: |
           set -euo pipefail
           gh run download 45939314858 --repo "$GITHUB_REPOSITORY" --name bridge-linux-x64-45939314858 --dir "$RUNNER_TEMP/baseline"
-          gh run download 45973399976 --repo "$GITHUB_REPOSITORY" --name deepseek-server-update --dir "$RUNNER_TEMP/update"
-          gh run download 45973399976 --repo "$GITHUB_REPOSITORY" --name deepseek-server-runtime --dir "$RUNNER_TEMP/full"
+          gh run download 45976258416 --repo "$GITHUB_REPOSITORY" --name deepseek-server-update --dir "$RUNNER_TEMP/update"
+          gh run download 45976258416 --repo "$GITHUB_REPOSITORY" --name deepseek-server-runtime --dir "$RUNNER_TEMP/full"
           for package in baseline update full; do
             (cd "$RUNNER_TEMP/$package" && sha256sum --check *.sha256 && tar -xzf *.tar.gz)
           done
           test "$(cat "$RUNNER_TEMP/baseline/BUILD_COMMIT")" = fe64d775a1b23b71938f06d827e98e2ded5cf0a3
-          test "$(cat "$RUNNER_TEMP/update/BUILD_COMMIT")" = 8b985987590d3901a1780336ffa5f0d146c26226
+          test "$(cat "$RUNNER_TEMP/update/BUILD_COMMIT")" = 375868a49618e47b6d6f9564ab722d086bb99722
           cmp "$RUNNER_TEMP/update/BUILD_COMMIT" "$RUNNER_TEMP/full/BUILD_COMMIT"
           cmp "$RUNNER_TEMP/baseline/package-lock.json" "$RUNNER_TEMP/update/package-lock.json"
           cmp "$RUNNER_TEMP/update/package-lock.json" "$RUNNER_TEMP/full/package-lock.json"
@@ -70,3 +70,4 @@ jobs:
           stop_bridge
           start_bridge
           node "$GITHUB_WORKSPACE/.github/gallery-upgrade-check.mjs" persistence
+          node "$GITHUB_WORKSPACE/.github/codex-steer-upgrade-check.mjs"
