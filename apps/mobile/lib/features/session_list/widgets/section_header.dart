@@ -19,8 +19,8 @@ class SectionHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 44),
       child: Row(
         children: [
           DecoratedBox(

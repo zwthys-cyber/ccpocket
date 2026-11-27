@@ -169,7 +169,7 @@ class _RunningSessionCardState extends State<RunningSessionCard> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(14, 6, 10, 2),
+              padding: const EdgeInsets.fromLTRB(14, 6, 12, 2),
               child: Row(
                 children: [
                   Expanded(

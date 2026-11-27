@@ -332,7 +332,6 @@ class AppTheme {
         iconColor: colorScheme.onSurfaceVariant,
         textColor: colorScheme.onSurface,
         selectedColor: colorScheme.onPrimaryContainer,
-        selectedTileColor: colorScheme.primaryContainer,
         contentPadding: const EdgeInsets.symmetric(horizontal: 14),
       ),
       navigationBarTheme: NavigationBarThemeData(
