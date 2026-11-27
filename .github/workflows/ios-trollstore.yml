@@ -1,4 +1,4 @@
-name: Build iOS TrollStore IPA
+name: Capture CC Pocket UI refresh evidence
 
 on:
   workflow_dispatch:
@@ -7,60 +7,136 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build unsigned IPA
+  screenshots:
+    name: iPhone simulator (${{ matrix.variant }})
     runs-on: macos-26
-    timeout-minutes: 45
-
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: before
+            ref: 5d0f0bf53703dd8ce927e0e7d8559034531dee37
+          - variant: after
+            ref: 7fc6c841c370e8329b6c58289a2f0288eb382e95
     steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Read Flutter version from .mise.toml
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.ref }}
+      - name: Read Flutter version
         id: mise
         run: echo "flutter_version=$(grep 'flutter' .mise.toml | sed 's/.*= *\"//' | sed 's/\"//')" >> "$GITHUB_OUTPUT"
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
         with:
           flutter-version: ${{ steps.mise.outputs.flutter_version }}
           cache: true
-
-      - name: Install dependencies
-        working-directory: apps/mobile
-        run: flutter pub get
-
-      - name: Analyze Flutter app
-        working-directory: apps/mobile
-        run: flutter analyze --no-fatal-infos
-
-      - name: Test usage display
-        working-directory: apps/mobile
-        run: flutter test test/settings_usage_visibility_test.dart test/usage_pace_test.dart test/codex_usage_summary_test.dart test/usage_reset_card_test.dart
-
-      - name: Build unsigned iOS app
+      - name: Build simulator app with the existing mock routes
         working-directory: apps/mobile
         run: |
-          flutter build ios \
-            --release \
-            --no-codesign \
-            --no-tree-shake-icons \
-            --dart-define=REVENUECAT_PUBLIC_KEY=
+          cat > lib/ci_ui_evidence.dart <<'DART'
+          import 'dart:async';
+          import 'dart:io';
 
-      - name: Package IPA
+          import 'package:flutter/material.dart';
+          import 'package:flutter_bloc/flutter_bloc.dart';
+
+          import 'features/settings/state/settings_cubit.dart';
+          import 'main.dart' as app;
+          import 'services/store_screenshot_extension.dart';
+
+          Future<void> main() async {
+            app.main();
+            final environment = Platform.environment;
+            final screenshot = environment['CCPOCKET_UI_SCENE'];
+            final marker = environment['CCPOCKET_UI_MARKER'];
+            if (screenshot == null || marker == null) {
+              return;
+            }
+            for (var attempt = 0; attempt < 150; attempt++) {
+              await Future<void>.delayed(const Duration(milliseconds: 200));
+              final navigator = StoreScreenshotState.navigatorKey?.currentState;
+              final context = StoreScreenshotState.navigatorKey?.currentContext;
+              if (navigator == null || context == null || !context.mounted) {
+                continue;
+              }
+              final settings = context.read<SettingsCubit>();
+              settings.setAppLocaleId('zh');
+              settings.setThemeMode(
+                environment['CCPOCKET_UI_THEME'] == 'dark'
+                    ? ThemeMode.dark
+                    : ThemeMode.light,
+              );
+              unawaited(
+                navigator.push(
+                  buildStoreScenarioRoute(
+                    screenshot,
+                    StoreScreenshotState.draftService,
+                  ),
+                ),
+              );
+              await Future<void>.delayed(const Duration(seconds: 4));
+              await File(marker).writeAsString(screenshot, flush: true);
+              return;
+            }
+            throw StateError('The app navigator was unavailable');
+          }
+          DART
+          flutter pub get
+          flutter build ios --simulator --debug --no-codesign \
+            --target=lib/ci_ui_evidence.dart --dart-define=REVENUECAT_PUBLIC_KEY=
+      - name: Capture CC Pocket home and conversation
+        shell: bash
+        working-directory: apps/mobile
         run: |
-          APP_PATH="apps/mobile/build/ios/iphoneos/Runner.app"
-          test -d "$APP_PATH"
-          mkdir -p "$RUNNER_TEMP/Payload"
-          cp -R "$APP_PATH" "$RUNNER_TEMP/Payload/"
-          ditto -c -k --sequesterRsrc --keepParent \
-            "$RUNNER_TEMP/Payload" \
-            "$RUNNER_TEMP/CC-Pocket-TrollStore-unsigned.ipa"
+          xcrun simctl list devices available -j > "$RUNNER_TEMP/ios-devices.json"
+          device_info=$(jq -r '
+            [.devices | to_entries[] | select(.key | contains("iOS"))
+              | .key as $runtime | .value[]
+              | select(.name | startswith("iPhone"))
+              | {name, udid, runtime: $runtime}]
+            | (map(select(.name == "iPhone 17 Pro"))[0] // .[0] // empty)
+            | [.udid, .name, .runtime] | @tsv
+          ' "$RUNNER_TEMP/ios-devices.json")
+          IFS=$'\t' read -r device model runtime <<< "$device_info"
+          test -n "$device"
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
+          xcrun simctl status_bar "$device" override --time '9:41' \
+            --dataNetwork wifi --wifiMode active --wifiBars 3 --cellularMode active \
+            --cellularBars 4 --batteryState unplugged --batteryLevel 100
+          bundle_id=com.zwthys.ccpocket
+          xcrun simctl install "$device" build/ios/iphonesimulator/Runner.app
+          app_data=$(xcrun simctl get_app_container "$device" "$bundle_id" data)
+          out="$RUNNER_TEMP/ccpocket-ui"
+          mkdir -p "$out"
+          printf '%s\n%s\n%s\n' "$model" "$runtime" "$(git rev-parse HEAD)" > "$out/device.txt"
 
-      - name: Upload IPA
-        uses: actions/upload-artifact@v7
+          capture() {
+            local scenario="$1" theme="$2" name="$3"
+            local marker="$app_data/tmp/ccpocket-ready-$name"
+            xcrun simctl ui "$device" appearance "$theme"
+            SIMCTL_CHILD_CCPOCKET_UI_SCENE="$scenario" \
+            SIMCTL_CHILD_CCPOCKET_UI_THEME="$theme" \
+            SIMCTL_CHILD_CCPOCKET_UI_MARKER="$marker" \
+              xcrun simctl launch --terminate-running-process "$device" "$bundle_id"
+            for ((attempt = 0; attempt < 45; attempt++)); do
+              if [[ -f "$marker" ]]; then
+                xcrun simctl io "$device" screenshot "$out/$name.png"
+                return
+              fi
+              sleep 2
+            done
+            echo "::error::The scene $scenario did not reach its ready marker."
+            xcrun simctl spawn "$device" log show --last 2m --predicate 'process == "Runner"' | tail -80
+            return 1
+          }
+
+          capture 'Self-Hosted Agents' light home-light
+          capture 'Self-Hosted Agents' dark home-dark
+          capture 'Network Resilience' dark conversation-dark
+      - uses: actions/upload-artifact@v7
         with:
-          name: CC-Pocket-TrollStore-unsigned-${{ github.sha }}
-          path: ${{ runner.temp }}/CC-Pocket-TrollStore-unsigned.ipa
+          name: CC-Pocket-UI-${{ matrix.variant }}
+          path: ${{ runner.temp }}/ccpocket-ui
           if-no-files-found: error
           retention-days: 30
