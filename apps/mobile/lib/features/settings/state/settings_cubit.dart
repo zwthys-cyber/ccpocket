@@ -21,7 +21,7 @@ import '../../../services/fcm_service.dart';
 import '../../../services/machine_manager_service.dart';
 import '../../../services/revenuecat_service.dart';
 import '../../../theme/code_text_style.dart';
-import '../../../utils/platform_helper.dart';
+import '../../../l10n/display_locale.dart';
 import 'settings_state.dart';
 
 /// Manages user settings with SharedPreferences persistence.
@@ -160,7 +160,7 @@ class SettingsCubit extends Cubit<SettingsState> {
 
   static SettingsState _load(SharedPreferences prefs) {
     final themeModeIndex = prefs.getInt(_keyThemeMode);
-    final appLocale = prefs.getString(_keyAppLocale) ?? '';
+    final appLocale = followsDeviceLanguage ? '' : prefs.getString(_keyAppLocale) ?? '';
     final speechLocale = prefs.getString(_keySpeechLocale);
 
     // Load per-machine FCM set
@@ -387,6 +387,7 @@ class SettingsCubit extends Cubit<SettingsState> {
   }
 
   void setAppLocaleId(String localeId) {
+    if (followsDeviceLanguage) return;
     _prefs.setString(_keyAppLocale, localeId);
     emit(state.copyWith(appLocaleId: localeId));
     // Auto-sync push notification locale when app language changes
@@ -615,27 +616,10 @@ class SettingsCubit extends Cubit<SettingsState> {
     }
   }
 
-  /// Resolve the push notification locale from app settings or system locale.
-  /// Returns a BCP-47 language subtag (e.g. "en", "ja", "zh", "ko").
-  String _resolvePushLocale() {
-    // Use explicit app locale if set
-    final appLocale = state.appLocaleId;
-    if (appLocale.isNotEmpty) {
-      final lang = appLocale.split(RegExp(r'[-_]')).first.toLowerCase();
-      if (lang == 'ja') return 'ja';
-      if (lang == 'zh') return 'zh';
-      if (lang == 'ko') return 'ko';
-      return 'en';
-    }
-    // Fall back to system locale
-    final systemLocale = getSystemLocaleName();
-    if (systemLocale != null) {
-      if (systemLocale.startsWith('ja')) return 'ja';
-      if (systemLocale.startsWith('zh')) return 'zh';
-      if (systemLocale.startsWith('ko')) return 'ko';
-    }
-    return 'en';
-  }
+  String _resolvePushLocale() =>
+      (displayLocaleOverride(state.appLocaleId) ??
+              resolveDeviceLocale(WidgetsBinding.instance.platformDispatcher.locales))
+          .languageCode;
 
   Future<void> _syncPushRegistration() async {
     final requestId = _uuid.v4();

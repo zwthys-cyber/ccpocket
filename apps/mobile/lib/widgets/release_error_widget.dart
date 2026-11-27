@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
 import '../l10n/app_localizations.dart';
+import '../l10n/display_locale.dart';
 
 Locale? _releaseErrorLocaleOverride;
 
@@ -25,7 +26,7 @@ void updateReleaseErrorWidgetLocale(Locale? locale) {
 Widget buildReleaseErrorWidget(FlutterErrorDetails _) {
   final locale =
       _releaseErrorLocaleOverride ??
-      WidgetsBinding.instance.platformDispatcher.locale;
+      resolveDeviceLocale(WidgetsBinding.instance.platformDispatcher.locales);
   return ReleaseErrorWidget(message: releaseErrorMessageForLocale(locale));
 }
 

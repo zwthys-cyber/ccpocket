@@ -31,6 +31,7 @@ import '../features/session_list/state/session_list_state.dart';
 import '../features/session_list/widgets/home_content.dart';
 import '../features/session_list/widgets/session_list_app_bar.dart';
 import '../features/settings/state/settings_cubit.dart';
+import '../l10n/app_localizations.dart';
 import '../mock/mock_scenarios.dart';
 import '../mock/store_screenshot_data.dart';
 import '../models/messages.dart';
@@ -51,6 +52,9 @@ class StoreScreenshotState {
   /// Navigator key from auto_route's AppRouter.
   /// Set in [_CcpocketAppState._initRouter].
   static GlobalKey<NavigatorState>? navigatorKey;
+
+  /// Only used by debug screenshot automation, never persisted or sent to Bridge.
+  static final previewLocale = ValueNotifier<Locale?>(null);
 
   /// DraftService instance for scenarios that need pre-populated input.
   /// Set in [main] after DraftService creation.
@@ -177,8 +181,8 @@ void registerStoreScreenshotExtensions() {
   registerMarionetteExtension(
     name: 'ccpocket.setLocale',
     description:
-        'Switch the app language. '
-        'Values: "en", "ja", "zh", "ko", "" (system default).',
+        'Preview a language for screenshots in this debug session. '
+        'Values: "en", "ja", "zh", "ko", "" (end preview).',
     callback: (params) async {
       final locale = params['locale'];
       if (locale == null) {
@@ -192,7 +196,11 @@ void registerStoreScreenshotExtensions() {
         return MarionetteExtensionResult.error(1, 'Context not available.');
       }
 
-      ctx.read<SettingsCubit>().setAppLocaleId(locale);
+      if (locale.isNotEmpty &&
+          !AppLocalizations.supportedLocales.any((item) => item.languageCode == locale)) {
+        return MarionetteExtensionResult.invalidParams('Unsupported locale: $locale');
+      }
+      StoreScreenshotState.previewLocale.value = locale.isEmpty ? null : Locale(locale);
       return MarionetteExtensionResult.success({'locale': locale});
     },
   );

@@ -70,7 +70,7 @@ void main() {
     tester,
   ) async {
     updateReleaseErrorWidgetLocale(null);
-    tester.binding.platformDispatcher.localeTestValue = const Locale('ja');
+    tester.binding.platformDispatcher.localesTestValue = const [Locale('fr'), Locale('ja')];
 
     try {
       final fallback = buildReleaseErrorWidget(
@@ -79,7 +79,7 @@ void main() {
 
       expect(fallback.message, 'このコンテンツを表示できませんでした');
     } finally {
-      tester.binding.platformDispatcher.clearLocaleTestValue();
+      tester.binding.platformDispatcher.clearLocalesTestValue();
     }
   });
 

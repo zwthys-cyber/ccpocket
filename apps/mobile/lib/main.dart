@@ -30,6 +30,7 @@ import 'package:talker_bloc_logger/talker_bloc_logger.dart';
 
 import 'core/logger.dart';
 import 'l10n/app_localizations.dart';
+import 'l10n/display_locale.dart';
 import 'features/session_list/state/session_list_cubit.dart';
 import 'features/git/state/git_status_cubit.dart';
 import 'features/git/state/git_view_cache_service.dart';
@@ -315,7 +316,8 @@ class CcpocketApp extends StatefulWidget {
   State<CcpocketApp> createState() => _CcpocketAppState();
 }
 
-class _CcpocketAppState extends State<CcpocketApp> {
+class _CcpocketAppState extends State<CcpocketApp> with WidgetsBindingObserver {
+  late Locale _deviceLocale;
   AppLinks? _appLinks;
   final _deepLinkNotifier = ValueNotifier<ConnectionParams?>(null);
   StreamSubscription<Uri>? _linkSub;
@@ -331,12 +333,16 @@ class _CcpocketAppState extends State<CcpocketApp> {
   @override
   void initState() {
     super.initState();
+    _deviceLocale = resolveDeviceLocale(WidgetsBinding.instance.platformDispatcher.locales);
+    WidgetsBinding.instance.addObserver(this);
+    if (kDebugMode) StoreScreenshotState.previewLocale.addListener(_onPreviewLocaleChanged);
     _deepLinkDispatcher = DeepLinkDispatcher(_handleUri);
 
     // Clear stale notifications on launch and whenever the app is resumed.
     _lifecycleListener = AppLifecycleListener(
       onStateChange: (state) {
         if (state == AppLifecycleState.resumed) {
+          _refreshDeviceLocale(WidgetsBinding.instance.platformDispatcher.locales);
           NotificationService.instance.cancelAll();
         }
       },
@@ -348,6 +354,23 @@ class _CcpocketAppState extends State<CcpocketApp> {
       _initDeepLinks();
     }
   }
+
+  @override
+  void didChangeLocales(List<Locale>? locales) {
+    _refreshDeviceLocale(locales ?? WidgetsBinding.instance.platformDispatcher.locales);
+  }
+
+  void _refreshDeviceLocale(List<Locale> locales) {
+    final resolved = resolveDeviceLocale(locales);
+    if (resolved == _deviceLocale) return;
+    _deviceLocale = resolved;
+    final settings = context.read<SettingsCubit>();
+    if (displayLocaleOverride(settings.state.appLocaleId) != null) return;
+    setState(() {});
+    unawaited(settings.syncPushLocale());
+  }
+
+  void _onPreviewLocaleChanged() => setState(() {});
 
   void _initRouter() {
     if (_routerInitialized) return;
@@ -412,7 +435,7 @@ class _CcpocketAppState extends State<CcpocketApp> {
     final body =
         notification?.body ??
         data['body']?.toString() ??
-        'New update available';
+        lookupAppLocalizations(displayLocaleOverride(context.read<SettingsCubit>().state.appLocaleId) ?? _deviceLocale).sessionNewActivity;
     final eventType = data['eventType']?.toString() ?? '';
     final payload = jsonEncode({'sessionId': sessionId, 'provider': provider});
 
@@ -506,6 +529,8 @@ class _CcpocketAppState extends State<CcpocketApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    if (kDebugMode) StoreScreenshotState.previewLocale.removeListener(_onPreviewLocaleChanged);
     _lifecycleListener.dispose();
     _linkSub?.cancel();
     _fcmOnMessageSub?.cancel();
@@ -524,12 +549,10 @@ class _CcpocketAppState extends State<CcpocketApp> {
         if (settings.fcmEnabledMachines.isNotEmpty && settings.fcmAvailable) {
           _initFcmHandlers();
         }
-        final appLocale = settings.appLocaleId.isEmpty
-            ? null
-            : Locale(settings.appLocaleId);
-        final themeLocale =
-            appLocale ?? WidgetsBinding.instance.platformDispatcher.locale;
-        updateReleaseErrorWidgetLocale(appLocale);
+        final appLocale = (kDebugMode ? StoreScreenshotState.previewLocale.value : null) ??
+            displayLocaleOverride(settings.appLocaleId);
+        final themeLocale = appLocale ?? _deviceLocale;
+        updateReleaseErrorWidgetLocale(themeLocale);
         return MaterialApp.router(
           title: 'CC Pocket',
           theme: AppTheme.lightThemeForLocale(themeLocale),

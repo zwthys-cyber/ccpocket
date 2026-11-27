@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../constants/app_constants.dart';
 import '../../constants/feature_flags.dart';
 import '../../l10n/app_localizations.dart';
+import '../../l10n/display_locale.dart';
 import '../../utils/network_endpoint.dart';
 import '../../models/app_icon.dart';
 import '../../models/git_diff_interaction_mode.dart';
@@ -438,8 +439,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             context.read<SettingsCubit>().setThemeMode(mode),
                       ),
                     ),
-                    // Language
-                    ListTile(
+                    // Desktop display language
+                    if (!followsDeviceLanguage) ListTile(
+                      key: const ValueKey('settings_display_language'),
                       leading: Icon(Icons.language, color: cs.primary),
                       title: Text(l.language),
                       subtitle: Text(
@@ -778,6 +780,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               .read<SettingsCubit>()
                               .toggleFcmPrivacy(enabled),
                         ),
+                        if (!followsDeviceLanguage || const {
+                          FcmStatusKey.unavailable, FcmStatusKey.bridgeNotInitialized,
+                          FcmStatusKey.tokenFailed, FcmStatusKey.registrationFailed,
+                        }.contains(state.fcmStatusKey)) ...[
                         Divider(
                           height: 1,
                           indent: 16,
@@ -789,7 +795,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           onTap: () async {
                             final cubit = context.read<SettingsCubit>();
                             await cubit.syncPushLocale();
-                            if (context.mounted) {
+                            if (context.mounted && !followsDeviceLanguage) {
                               final status = cubit.state.fcmStatusKey;
                               final isSuccess =
                                   status == FcmStatusKey.enabled ||
@@ -807,6 +813,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             }
                           },
                         ),
+                        ],
                       ],
                     ],
                   ),
@@ -1737,8 +1744,8 @@ class _UpdateNotificationLanguageTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
     return ListTile(
-      leading: const Icon(Icons.translate_outlined),
-      title: Text(l.updateNotificationLanguage),
+      leading: Icon(followsDeviceLanguage ? Icons.refresh : Icons.translate_outlined),
+      title: Text(followsDeviceLanguage ? l.retry : l.updateNotificationLanguage),
       trailing: syncInProgress
           ? const SizedBox(
               width: 20,

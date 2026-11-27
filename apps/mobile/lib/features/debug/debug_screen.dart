@@ -10,6 +10,7 @@ import '../../features/settings/state/settings_state.dart';
 import '../../features/settings/widgets/app_locale_bottom_sheet.dart';
 import '../../features/settings/widgets/theme_bottom_sheet.dart';
 import '../../l10n/app_localizations.dart';
+import '../../l10n/display_locale.dart';
 import '../../router/app_router.dart';
 import '../../services/support_banner_service.dart';
 import '../../utils/platform_helper.dart';
@@ -47,7 +48,7 @@ class DebugScreen extends StatelessWidget {
                           context.read<SettingsCubit>().setThemeMode(mode),
                     ),
                   ),
-                  ListTile(
+                  if (!followsDeviceLanguage) ListTile(
                     key: const ValueKey('debug_language_button'),
                     leading: Icon(Icons.language, color: cs.primary),
                     title: Text(l.language),
