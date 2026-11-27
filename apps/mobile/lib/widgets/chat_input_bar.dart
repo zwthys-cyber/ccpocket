@@ -181,9 +181,14 @@ class _ComposerContent extends StatelessWidget {
         Row(
           children: [
             Expanded(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: _ComposerTools(bar: bar),
+              child: LayoutBuilder(
+                builder: (context, constraints) => SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: _ComposerTools(
+                    bar: bar,
+                    compact: constraints.maxWidth < 240,
+                  ),
+                ),
               ),
             ),
             const SizedBox(width: 6),
@@ -210,8 +215,9 @@ class _ComposerContent extends StatelessWidget {
 
 class _ComposerTools extends StatelessWidget {
   final ChatInputBar bar;
+  final bool compact;
 
-  const _ComposerTools({required this.bar});
+  const _ComposerTools({required this.bar, required this.compact});
 
   @override
   Widget build(BuildContext context) {
@@ -225,34 +231,86 @@ class _ComposerTools extends StatelessWidget {
           onLongPress: bar.onShowAttachmentOptions,
         ),
         const SizedBox(width: 4),
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 200),
-          child: bar.isInputEmpty
-              ? _SlashCommandButton(
-                  key: const ValueKey('slash_command_button'),
-                  onTap: bar.onSlashCommand,
-                )
-              : _DedentButton(
-                  key: const ValueKey('dedent_button'),
-                  onTap: bar.onDedent,
-                  enabled: bar.canDedent,
-                ),
-        ),
-        const SizedBox(width: 4),
-        _IndentButton(onTap: bar.onIndent),
-        const SizedBox(width: 4),
+        if (bar.isInputEmpty || !compact) ...[
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            child: bar.isInputEmpty
+                ? _SlashCommandButton(
+                    key: const ValueKey('slash_command_button'),
+                    onTap: bar.onSlashCommand,
+                  )
+                : _DedentButton(
+                    key: const ValueKey('dedent_button'),
+                    onTap: bar.onDedent,
+                    enabled: bar.canDedent,
+                  ),
+          ),
+          const SizedBox(width: 4),
+        ],
+        if (!compact) ...[
+          _IndentButton(onTap: bar.onIndent),
+          const SizedBox(width: 4),
+        ],
         _MentionButton(
           onTap: bar.onMention,
           enabled: !bar.isInMentionContext,
         ),
-        if (bar.showDollarButton) ...[
+        if (compact) ...[
+          const SizedBox(width: 4),
+          _ComposerActionsMenu(bar: bar),
+        ],
+        if (!compact && bar.showDollarButton) ...[
           const SizedBox(width: 4),
           _DollarButton(onTap: bar.onDollarMention ?? () {}),
         ],
-        if (bar.onShowPromptHistory case final onShowHistory?) ...[
+        if (bar.onShowPromptHistory case final onShowHistory? when !compact)
+          ...[
           const SizedBox(width: 4),
           _HistoryButton(onTap: onShowHistory),
         ],
+      ],
+    );
+  }
+}
+
+enum _ComposerAction { indent, dedent, skill, promptHistory }
+
+class _ComposerActionsMenu extends StatelessWidget {
+  const _ComposerActionsMenu({required this.bar});
+
+  final ChatInputBar bar;
+
+  @override
+  Widget build(BuildContext context) {
+    final l = AppLocalizations.of(context);
+    final actions = <(_ComposerAction, String, bool)>[
+      (_ComposerAction.indent, l.tooltipIndent, true),
+      if (!bar.isInputEmpty)
+        (_ComposerAction.dedent, l.tooltipDedent, bar.canDedent),
+      if (bar.showDollarButton && bar.onDollarMention != null)
+        (_ComposerAction.skill, l.tooltipDollarMention, true),
+      if (bar.onShowPromptHistory != null)
+        (_ComposerAction.promptHistory, l.tooltipPromptHistory, true),
+    ];
+    return PopupMenuButton<_ComposerAction>(
+      key: const ValueKey('composer_actions_button'),
+      tooltip: l.composerMoreActions,
+      icon: const Icon(Icons.more_horiz, size: 20),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 160, maxWidth: 260),
+      requestFocus: false,
+      onSelected: (action) {
+        final callback = switch (action) {
+          _ComposerAction.indent => bar.onIndent,
+          _ComposerAction.dedent => bar.onDedent,
+          _ComposerAction.skill => bar.onDollarMention,
+          _ComposerAction.promptHistory => bar.onShowPromptHistory,
+        };
+        callback?.call();
+      },
+      itemBuilder: (context) => [
+        for (final (action, label, enabled) in actions)
+          PopupMenuItem(value: action, enabled: enabled, child: Text(label)),
       ],
     );
   }

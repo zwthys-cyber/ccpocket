@@ -1383,7 +1383,10 @@ class _ChatScreenBody extends HookWidget {
                     ),
                   ),
                 ),
-                LiteModeActivityBar(sessionId: sessionId),
+                SessionActivityBar(
+                  sessionId: sessionId,
+                  isConnected: bridgeState == BridgeConnectionState.connected,
+                ),
                 if (approval is ApprovalNone)
                   ChatInputWithOverlays(
                     sessionId: sessionId,

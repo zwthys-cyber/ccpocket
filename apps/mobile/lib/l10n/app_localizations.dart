@@ -3761,6 +3761,36 @@ abstract class AppLocalizations {
   /// **'New activity'**
   String get sessionNewActivity;
 
+  /// No description provided for @chatResultStopped.
+  ///
+  /// In en, this message translates to:
+  /// **'Stopped'**
+  String get chatResultStopped;
+
+  /// No description provided for @chatResultFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Task failed'**
+  String get chatResultFailed;
+
+  /// No description provided for @chatResultTruncated.
+  ///
+  /// In en, this message translates to:
+  /// **'Output truncated'**
+  String get chatResultTruncated;
+
+  /// No description provided for @chatResultToolCalls.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} tool calls'**
+  String chatResultToolCalls(int count);
+
+  /// No description provided for @chatResultFileEdits.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} file edits'**
+  String chatResultFileEdits(int count);
+
   /// No description provided for @sessionOpenSessions.
   ///
   /// In en, this message translates to:
@@ -4720,6 +4750,12 @@ abstract class AppLocalizations {
   /// In ja, this message translates to:
   /// **'インデントを増やす'**
   String get tooltipIndent;
+
+  /// No description provided for @composerMoreActions.
+  ///
+  /// In en, this message translates to:
+  /// **'More composer actions'**
+  String get composerMoreActions;
 
   /// No description provided for @tooltipDedent.
   ///

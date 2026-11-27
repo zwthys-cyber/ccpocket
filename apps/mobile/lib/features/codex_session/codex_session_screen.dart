@@ -1542,7 +1542,10 @@ class _CodexChatBody extends HookWidget {
                         context.read<ChatSessionCubit>().cancelCodexRecovery(),
                     onSettings: () => showCodexRecoverySheet(context),
                   ),
-                LiteModeActivityBar(sessionId: sessionId),
+                SessionActivityBar(
+                  sessionId: sessionId,
+                  isConnected: bridgeState == BridgeConnectionState.connected,
+                ),
                 if (approval is ApprovalNone)
                   if (currentGoal != null)
                     CodexGoalCard(

@@ -1090,8 +1090,30 @@ void main() {
       expect(find.byKey(const ValueKey('send_button')), findsOneWidget);
     });
 
+    testWidgets('narrow composer keeps attachment visible and menus indent', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(320, 700);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      var indentCount = 0;
+      await tester.pumpWidget(buildSubject(onIndent: () => indentCount++));
+
+      expect(find.byKey(const ValueKey('attach_image_button')), findsOneWidget);
+      expect(find.byKey(const ValueKey('send_button')), findsOneWidget);
+      expect(find.byKey(const ValueKey('indent_button')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('composer_actions_button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Increase indent'));
+      await tester.pumpAndSettle();
+
+      expect(indentCount, 1);
+      expect(tester.takeException(), isNull);
+    });
+
     group('mention button (@)', () {
-      testWidgets('mention button exists between indent and attach', (
+      testWidgets('places attachment before the text shortcuts', (
         tester,
       ) async {
         await tester.pumpWidget(buildSubject());
@@ -1105,12 +1127,12 @@ void main() {
         expect(mentionFinder, findsOneWidget);
         expect(attachFinder, findsOneWidget);
 
-        // Verify order: indent center.dx < mention center.dx < attach center.dx
+        // Attachments are reachable before the text shortcuts.
         final indentCenter = tester.getCenter(indentFinder);
         final mentionCenter = tester.getCenter(mentionFinder);
         final attachCenter = tester.getCenter(attachFinder);
-        expect(mentionCenter.dx, greaterThan(indentCenter.dx));
-        expect(mentionCenter.dx, lessThan(attachCenter.dx));
+        expect(attachCenter.dx, lessThan(indentCenter.dx));
+        expect(indentCenter.dx, lessThan(mentionCenter.dx));
       });
 
       testWidgets('mention button fires callback on tap', (tester) async {

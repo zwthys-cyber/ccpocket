@@ -99,18 +99,18 @@ class _SessionHeading extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final l = AppLocalizations.of(context);
-    final colors = theme.extension<AppColors>()!;
+    final l = Localizations.of<AppLocalizations>(context, AppLocalizations);
+    final colors = theme.extension<AppColors>();
     final statusLabel = switch (status) {
       ProcessStatus.running ||
       ProcessStatus.starting ||
-      ProcessStatus.compacting => l.statusWorking,
-      ProcessStatus.waitingApproval => l.statusNeedsYou,
+      ProcessStatus.compacting => l?.statusWorking,
+      ProcessStatus.waitingApproval => l?.statusNeedsYou,
       _ => null,
     };
     final statusColor = status == ProcessStatus.waitingApproval
-        ? colors.statusApproval
-        : colors.statusRunning;
+        ? colors?.statusApproval ?? theme.colorScheme.tertiary
+        : colors?.statusRunning ?? theme.colorScheme.primary;
     final metadataStyle = theme.textTheme.bodySmall?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
     );

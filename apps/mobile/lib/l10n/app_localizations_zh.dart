@@ -1960,6 +1960,25 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sessionNewActivity => '有新动态';
 
   @override
+  String get chatResultStopped => '已停止';
+
+  @override
+  String get chatResultFailed => '任务失败';
+
+  @override
+  String get chatResultTruncated => '输出已截断';
+
+  @override
+  String chatResultToolCalls(int count) {
+    return '$count 次工具调用';
+  }
+
+  @override
+  String chatResultFileEdits(int count) {
+    return '$count 次文件编辑';
+  }
+
+  @override
   String get sessionOpenSessions => '已打开的会话';
 
   @override
@@ -2468,6 +2487,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get tooltipIndent => '增加缩进';
+
+  @override
+  String get composerMoreActions => '更多输入操作';
 
   @override
   String get tooltipDedent => '减少缩进';

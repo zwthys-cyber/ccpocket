@@ -201,7 +201,7 @@ void main() {
             locale: const Locale('en'),
             home: const MediaQuery(
               data: MediaQueryData(padding: EdgeInsets.only(bottom: 34)),
-              child: Scaffold(body: LiteModeActivityBar(sessionId: 's')),
+              child: Scaffold(body: SessionActivityBar(sessionId: 's')),
             ),
           ),
         ),
@@ -212,6 +212,40 @@ void main() {
       final started = chat.activityObservedSince;
       settings.setLiteMode(false);
       await tester.pump();
+      expect(
+        find.byKey(const ValueKey('session_activity_indicator')),
+        findsOneWidget,
+      );
+      bridge.emitMessage(
+        const AssistantServerMessage(
+          message: AssistantMessage(
+            id: 'parallel-tools',
+            role: 'assistant',
+            model: 'claude',
+            content: [
+              ToolUseContent(
+                id: 'tests',
+                name: 'Bash',
+                input: {'command': 'flutter test'},
+              ),
+              ToolUseContent(
+                id: 'read',
+                name: 'Read',
+                input: {'file_path': '/repo/README.md'},
+              ),
+            ],
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.textContaining('README.md'), findsOneWidget);
+      bridge.emitMessage(
+        const ToolResultMessage(toolUseId: 'read', content: 'README contents'),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.textContaining('flutter test'), findsOneWidget);
       settings.setLiteMode(true);
       await tester.pump();
       expect(chat.activityObservedSince, started);
@@ -225,6 +259,7 @@ void main() {
       await tester.pump();
       expect(find.textContaining('Idle'), findsOneWidget);
       expect(find.textContaining('Received'), findsNothing);
+      expect(find.textContaining('flutter test'), findsNothing);
       bridge.emitMessage(
         const SessionContextMessage(
           sessionId: 's',

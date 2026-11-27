@@ -545,7 +545,7 @@ void main() {
     });
 
     testWidgets(
-      'selected running session uses border emphasis without selection fill',
+      'selected running session keeps its status fill and emphasizes its border',
       (tester) async {
         final session = SessionInfo(
           id: 'selected-running',
@@ -570,7 +570,7 @@ void main() {
         final theme = Theme.of(tester.element(find.byType(Card).first));
         final appColors = theme.extension<AppColors>()!;
 
-        expect(card.color, theme.colorScheme.surfaceContainerHigh);
+        expect(card.color, theme.colorScheme.primaryContainer);
         expect(shape.side.width, 2.2);
         expect(
           shape.side.color,

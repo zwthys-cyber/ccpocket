@@ -1999,6 +1999,25 @@ class AppLocalizationsKo extends AppLocalizations {
   String get sessionNewActivity => '새 활동';
 
   @override
+  String get chatResultStopped => '중지됨';
+
+  @override
+  String get chatResultFailed => '작업 실패';
+
+  @override
+  String get chatResultTruncated => '출력이 잘렸습니다';
+
+  @override
+  String chatResultToolCalls(int count) {
+    return '도구 호출 $count회';
+  }
+
+  @override
+  String chatResultFileEdits(int count) {
+    return '파일 편집 $count회';
+  }
+
+  @override
   String get sessionOpenSessions => '열린 세션';
 
   @override
@@ -2511,6 +2530,9 @@ class AppLocalizationsKo extends AppLocalizations {
 
   @override
   String get tooltipIndent => '들여쓰기 증가';
+
+  @override
+  String get composerMoreActions => '입력창 추가 작업';
 
   @override
   String get tooltipDedent => '들여쓰기 감소';

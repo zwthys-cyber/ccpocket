@@ -1986,6 +1986,25 @@ class AppLocalizationsJa extends AppLocalizations {
   String get sessionNewActivity => '新しいアクティビティ';
 
   @override
+  String get chatResultStopped => '停止しました';
+
+  @override
+  String get chatResultFailed => 'タスクに失敗しました';
+
+  @override
+  String get chatResultTruncated => '出力が途中で切れています';
+
+  @override
+  String chatResultToolCalls(int count) {
+    return 'ツール呼び出し $count 回';
+  }
+
+  @override
+  String chatResultFileEdits(int count) {
+    return 'ファイル編集 $count 回';
+  }
+
+  @override
   String get sessionOpenSessions => '開いているセッション';
 
   @override
@@ -2499,6 +2518,9 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get tooltipIndent => 'インデントを増やす';
+
+  @override
+  String get composerMoreActions => '入力欄のその他の操作';
 
   @override
   String get tooltipDedent => 'インデントを減らす';
