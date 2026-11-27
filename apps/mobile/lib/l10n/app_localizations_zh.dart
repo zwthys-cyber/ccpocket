@@ -1948,6 +1948,27 @@ class AppLocalizationsZh extends AppLocalizations {
   String get noActiveSessions => '没有活动中的会话';
 
   @override
+  String get statusWorking => '运行中';
+
+  @override
+  String get statusNeedsYou => '需要你处理';
+
+  @override
+  String get statusReady => '就绪';
+
+  @override
+  String get sessionNewActivity => '有新动态';
+
+  @override
+  String get sessionOpenSessions => '已打开的会话';
+
+  @override
+  String get bridgeConnected => '已连接';
+
+  @override
+  String get clearSessionSearch => '清除搜索';
+
+  @override
   String get startSessionToBegin => '启动一个会话后，即可开始接收审批请求。';
 
   @override

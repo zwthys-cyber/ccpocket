@@ -1974,6 +1974,27 @@ class AppLocalizationsJa extends AppLocalizations {
   String get noActiveSessions => '実行中のセッションはありません';
 
   @override
+  String get statusWorking => '作業中';
+
+  @override
+  String get statusNeedsYou => '要対応';
+
+  @override
+  String get statusReady => '待機中';
+
+  @override
+  String get sessionNewActivity => '新しいアクティビティ';
+
+  @override
+  String get sessionOpenSessions => '開いているセッション';
+
+  @override
+  String get bridgeConnected => '接続済み';
+
+  @override
+  String get clearSessionSearch => '検索をクリア';
+
+  @override
   String get startSessionToBegin => 'セッションを開始して承認リクエストの受信を始めましょう。';
 
   @override

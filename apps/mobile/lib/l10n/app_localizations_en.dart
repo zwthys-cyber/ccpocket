@@ -2053,6 +2053,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String get noActiveSessions => 'No active sessions';
 
   @override
+  String get statusWorking => 'Working';
+
+  @override
+  String get statusNeedsYou => 'Needs You';
+
+  @override
+  String get statusReady => 'Ready';
+
+  @override
+  String get sessionNewActivity => 'New activity';
+
+  @override
+  String get sessionOpenSessions => 'Open Sessions';
+
+  @override
+  String get bridgeConnected => 'Connected';
+
+  @override
+  String get clearSessionSearch => 'Clear search';
+
+  @override
   String get startSessionToBegin =>
       'Start a session to begin receiving approval requests.';
 

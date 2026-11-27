@@ -1,15 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-// ---------------------------------------------------------------------------
-// AppTheme: Graphite & Ember design system (Space Grotesk + IBM Plex Sans)
-//
-// Warm editorial palette. Dominant burnt-orange primary with muted teal
-// accent. Warm stone surfaces instead of cool slates. Inspired by IDE themes
-// and professional developer tools — deliberately avoids the "AI purple
-// gradient on white" cliché.
-// ---------------------------------------------------------------------------
-
 class AppTheme {
   static const List<String> _zhFontFallback = [
     'Microsoft YaHei', // Windows
@@ -22,24 +13,26 @@ class AppTheme {
   }
 
   static ThemeData lightThemeForLocale(Locale? locale) {
-    final colorScheme = ColorScheme.light(
-      surface: const Color(0xFFF7F7F8), // cleaner off-white bg (Zinc 50)
-      surfaceContainerLowest: Colors.white,
-      surfaceContainerLow: const Color(0xFFF4F4F5), // Zinc 100
-      surfaceContainer: const Color(0xFFE4E4E7), // Zinc 200
-      surfaceContainerHigh: Colors.white, // crisp white card bg
-      surfaceContainerHighest: const Color(0xFFD4D4D8), // Zinc 300
-      primary: const Color(0xFFD4450A), // Ember (brighter)
-      onPrimary: Colors.white,
-      primaryContainer: const Color(0xFFFFF0E0), // warm Orange 100
-      onPrimaryContainer: const Color(0xFFD4450A), // Ember (vibrant contrast)
-      secondary: const Color(0xFF0D9488), // Teal 600 (brighter accent)
-      onSecondary: Colors.white,
-      tertiary: const Color(0xFF92400E), // Amber 800 (subtle warm variant)
-      error: const Color(0xFFB91C1C), // Red 700
-      onError: Colors.white,
-      outline: const Color(0xFF71717A), // Zinc 500 (cleaner grey)
-      outlineVariant: const Color(0xFFE4E4E7), // Zinc 200 (clean border)
+    const colorScheme = ColorScheme.light(
+      surface: Color(0xFFF7F8FC),
+      onSurface: Color(0xFF181B32),
+      onSurfaceVariant: Color(0xFF525B73),
+      surfaceContainerLowest: Color(0xFFFFFFFF),
+      surfaceContainerLow: Color(0xFFF0F2FA),
+      surfaceContainer: Color(0xFFECEEF7),
+      surfaceContainerHigh: Color(0xFFFFFFFF),
+      surfaceContainerHighest: Color(0xFFE0E4F1),
+      primary: Color(0xFF4E46CC),
+      onPrimary: Color(0xFFFFFFFF),
+      primaryContainer: Color(0xFFEDEEFF),
+      onPrimaryContainer: Color(0xFF362D9E),
+      secondary: Color(0xFF365C80),
+      onSecondary: Color(0xFFFFFFFF),
+      tertiary: Color(0xFF815114),
+      error: Color(0xFFB42335),
+      onError: Color(0xFFFFFFFF),
+      outline: Color(0xFF68728D),
+      outlineVariant: Color(0xFFDCE0EC),
     );
 
     return _buildTheme(
@@ -55,28 +48,26 @@ class AppTheme {
   }
 
   static ThemeData darkThemeForLocale(Locale? locale) {
-    final colorScheme = ColorScheme.dark(
-      surface: const Color(0xFF0A0A0A), // Deep neat black bg (Neutral 950)
-      surfaceContainerLowest: const Color(0xFF000000), // Pure Black
-      surfaceContainerLow: const Color(0xFF171717), // Neutral 900
-      surfaceContainer: const Color(0xFF171717), // Neutral 900
-      surfaceContainerHigh: const Color(
-        0xFF161616,
-      ), // near-surface card bg, glow-focused
-      surfaceContainerHighest: const Color(0xFF404040), // Neutral 700
-      primary: const Color(0xFFF97316), // Orange 500 (brighter for dark)
-      onPrimary: Colors.white,
-      primaryContainer: const Color(0xFFC2410C),
-      onPrimaryContainer: Colors.white,
-      secondary: const Color(0xFF2DD4BF), // Teal 300 (bright for dark)
-      onSecondary: Colors.black,
-      tertiary: const Color(0xFFFBBF24), // Amber 400
-      error: const Color(0xFFF87171), // Red 400
-      onError: Colors.black,
-      onSurface: const Color(0xFFF5F5F5), // Clean white (Neutral 100)
-      onSurfaceVariant: const Color(0xFFA3A3A3), // Neutral 400
-      outline: const Color(0xFF737373), // Neutral 500
-      outlineVariant: const Color(0xFF404040), // clean border (Neutral 700)
+    const colorScheme = ColorScheme.dark(
+      surface: Color(0xFF111426),
+      onSurface: Color(0xFFEEF0FF),
+      onSurfaceVariant: Color(0xFFB5BDD8),
+      surfaceContainerLowest: Color(0xFF0D1020),
+      surfaceContainerLow: Color(0xFF15192C),
+      surfaceContainer: Color(0xFF202641),
+      surfaceContainerHigh: Color(0xFF191E33),
+      surfaceContainerHighest: Color(0xFF2C3451),
+      primary: Color(0xFFB5B0FF),
+      onPrimary: Color(0xFF171735),
+      primaryContainer: Color(0xFF23274B),
+      onPrimaryContainer: Color(0xFFDAD6FF),
+      secondary: Color(0xFFA4C7EA),
+      onSecondary: Color(0xFF102D48),
+      tertiary: Color(0xFFF1BD70),
+      error: Color(0xFFFF9DA8),
+      onError: Color(0xFF490D1B),
+      outline: Color(0xFF8B96B6),
+      outlineVariant: Color(0xFF303754),
     );
 
     return _buildTheme(
@@ -508,43 +499,43 @@ class AppColors extends ThemeExtension<AppColors> {
 
   // ---- Light (Graphite & Ember palette) ----
   factory AppColors.light() => const AppColors(
-    userBubble: Color(0xFFD4450A), // Ember (brighter)
-    userBubbleText: Color(0xFFFFFFFF),
-    assistantBubble: Color(0xFFF3F0EE), // warm cream (refined)
-    toolBubble: Color(0xFFF0FDFA), // Teal 50
-    toolBubbleBorder: Color(0xFF5EEAD4), // Teal 300
-    toolIcon: Color(0xFF0F766E), // Teal 700
+    userBubble: Color(0xFFEDEEFF),
+    userBubbleText: Color(0xFF242255),
+    assistantBubble: Color(0xFFECEEF7),
+    toolBubble: Color(0xFFEDF2FA),
+    toolBubbleBorder: Color(0xFFDCE0EC),
+    toolIcon: Color(0xFF365C80),
     errorBubble: Color(0xFFFEF2F2), // Red 50
     errorBubbleBorder: Color(0xFFEF4444), // Red 500
     errorText: Color(0xFFB91C1C), // Red 700
     warningBubble: Color(0xFFFFFBEB), // Amber 50
     warningBubbleBorder: Color(0xFFFBBF24), // Amber 400
     warningText: Color(0xFF92400E), // Amber 800
-    permissionBubble: Color(0xFFFFF7ED), // Orange 50
-    permissionBubbleBorder: Color(0xFFD97706), // Amber 600
-    permissionIcon: Color(0xFFD4450A), // Ember (match primary)
-    askBubble: Color(0xFFFFF7ED), // Orange 50
-    askBubbleBorder: Color(0xFFD97706), // Amber 600
-    askIcon: Color(0xFF9A3412), // Orange 800
-    systemChip: Color(0xFFF0FDFA), // Teal 50 (unified)
-    successChip: Color(0xFFF0FDF4), // Green 50
+    permissionBubble: Color(0xFFFFF7E8),
+    permissionBubbleBorder: Color(0xFFC48531),
+    permissionIcon: Color(0xFF815114),
+    askBubble: Color(0xFFFFF7E8),
+    askBubbleBorder: Color(0xFFC48531),
+    askIcon: Color(0xFF815114),
+    systemChip: Color(0xFFEDF2FA),
+    successChip: Color(0xFFE7F6EF),
     errorChip: Color(0xFFFEE2E2), // Red 100
-    approvalBar: Color(0xFFFFF7ED), // Orange 50
-    approvalBarBorder: Color(0xFFD4450A), // Ember (unified)
-    statusStarting: Color(0xFF6F7C8C), // cool grey for light surfaces
-    statusRunning: Color(0xFF156FDB), // clear working blue
-    statusApproval: Color(0xFFD4450A), // Ember (brighter)
+    approvalBar: Color(0xFFFFF7E8),
+    approvalBarBorder: Color(0xFFC48531),
+    statusStarting: Color(0xFF525B73),
+    statusRunning: Color(0xFF4E46CC),
+    statusApproval: Color(0xFF815114),
     statusCompacting: Color(0xFF7C3AED), // Violet 600
-    statusIdle: Color(0xFF787068), // warm grey (WCAG AA)
-    statusOnline: Color(0xFF16A34A), // green for online/running indicators
+    statusIdle: Color(0xFF525B73),
+    statusOnline: Color(0xFF18734E),
     statusPlan: Color(0xFF1F8F4E), // structured plan green
     statusPlanGlow: Color(0xFF7BD89A), // lighter green for glow
-    subtleText: Color(0xFF6B5E54), // warm stone (WCAG AA)
-    codeBackground: Color(0xFFF5F0EB), // warm cream
-    codeBorder: Color(0xFF99D5CF), // Teal accent border
-    toolResultBackground: Color(0xFFF5F0EB),
-    toolResultText: Color(0xFF6B5E54), // warm stone (WCAG AA)
-    toolResultTextExpanded: Color(0xFF44403C), // Stone 700
+    subtleText: Color(0xFF525B73),
+    codeBackground: Color(0xFFECEEF7),
+    codeBorder: Color(0xFFD1D7E8),
+    toolResultBackground: Color(0xFFECEEF7),
+    toolResultText: Color(0xFF525B73),
+    toolResultTextExpanded: Color(0xFF303754),
     diffAdditionBackground: Color(0xFFDCFCE7), // Green 100
     diffAdditionText: Color(0xFF166534), // Green 800
     diffDeletionBackground: Color(0xFFFEE2E2), // Red 100
@@ -553,43 +544,43 @@ class AppColors extends ThemeExtension<AppColors> {
 
   // ---- Dark (Graphite & Ember palette) ----
   factory AppColors.dark() => const AppColors(
-    userBubble: Color(0xFFF97316), // Orange 500
-    userBubbleText: Color(0xFFFFFFFF),
-    assistantBubble: Color(0xFF1E1E1E), // neutral dark
-    toolBubble: Color(0xFF0A1F12), // deep green
-    toolBubbleBorder: Color(0xFF1A5C35),
-    toolIcon: Color(0xFF86EFAC), // Green 300
+    userBubble: Color(0xFF252A49),
+    userBubbleText: Color(0xFFEEF0FF),
+    assistantBubble: Color(0xFF191E33),
+    toolBubble: Color(0xFF1B2940),
+    toolBubbleBorder: Color(0xFF354866),
+    toolIcon: Color(0xFFA4C7EA),
     errorBubble: Color(0xFF2A1215),
     errorBubbleBorder: Color(0xFF5C2020),
     errorText: Color(0xFFFCA5A5), // Red 300
     warningBubble: Color(0xFF2A2008),
     warningBubbleBorder: Color(0xFF78350F),
     warningText: Color(0xFFFCD34D), // Amber 300
-    permissionBubble: Color(0xFF241A0B), // deep warm
-    permissionBubbleBorder: Color(0xFF5C3D15),
-    permissionIcon: Color(0xFFFDBA74), // Orange 300
-    askBubble: Color(0xFF241A0B), // deep warm
-    askBubbleBorder: Color(0xFF5C3D15),
-    askIcon: Color(0xFFFDBA74), // Orange 300
-    systemChip: Color(0xFF0F1A16), // dark green
-    successChip: Color(0xFF0A1F12),
+    permissionBubble: Color(0xFF2B2117),
+    permissionBubbleBorder: Color(0xFF75502A),
+    permissionIcon: Color(0xFFF1BD70),
+    askBubble: Color(0xFF2B2117),
+    askBubbleBorder: Color(0xFF75502A),
+    askIcon: Color(0xFFF1BD70),
+    systemChip: Color(0xFF1B2940),
+    successChip: Color(0xFF14362B),
     errorChip: Color(0xFF2A1215),
-    approvalBar: Color(0xFF241A0B),
-    approvalBarBorder: Color(0xFF5C3D15),
-    statusStarting: Color(0xFFE8EDF3), // cool white
-    statusRunning: Color(0xFF4DA3FF), // electric working blue
-    statusApproval: Color(0xFFFDBA74), // Orange 300
+    approvalBar: Color(0xFF2B2117),
+    approvalBarBorder: Color(0xFF75502A),
+    statusStarting: Color(0xFFB5BDD8),
+    statusRunning: Color(0xFFB5B0FF),
+    statusApproval: Color(0xFFF1BD70),
     statusCompacting: Color(0xFFA78BFA), // Violet 400
-    statusIdle: Color(0xFF6E6E6E), // neutral grey
-    statusOnline: Color(0xFF4ADE80), // green for online/running indicators
+    statusIdle: Color(0xFFB5BDD8),
+    statusOnline: Color(0xFF81DFB5),
     statusPlan: Color(0xFF57C779), // natural plan green
     statusPlanGlow: Color(0xFF9AE6B4), // lifted green glow
-    subtleText: Color(0xFFB8B5B0), // neutral-warm stone
-    codeBackground: Color(0xFF1E1E1E), // neutral lifted
-    codeBorder: Color(0xFF3D3D3D), // match outlineVariant
-    toolResultBackground: Color(0xFF1E1E1E),
-    toolResultText: Color(0xFFB8B5B0), // neutral-warm stone
-    toolResultTextExpanded: Color(0xFFD6D3D1), // Stone 300
+    subtleText: Color(0xFFB5BDD8),
+    codeBackground: Color(0xFF202641),
+    codeBorder: Color(0xFF303754),
+    toolResultBackground: Color(0xFF202641),
+    toolResultText: Color(0xFFB5BDD8),
+    toolResultTextExpanded: Color(0xFFD5DCF3),
     diffAdditionBackground: Color(0xFF14532D), // Green 900
     diffAdditionText: Color(0xFF86EFAC), // Green 300
     diffDeletionBackground: Color(0xFF7F1D1D), // Red 900

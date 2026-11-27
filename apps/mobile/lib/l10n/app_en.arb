@@ -790,6 +790,13 @@
   "working": "Working...",
   "waitingForApprovalRequests": "Waiting for approval requests from the agent.",
   "noActiveSessions": "No active sessions",
+  "statusWorking": "Working",
+  "statusNeedsYou": "Needs You",
+  "statusReady": "Ready",
+  "sessionNewActivity": "New activity",
+  "sessionOpenSessions": "Open Sessions",
+  "bridgeConnected": "Connected",
+  "clearSessionSearch": "Clear search",
   "startSessionToBegin": "Start a session to begin receiving approval requests.",
 
   "settingsTitle": "Settings",

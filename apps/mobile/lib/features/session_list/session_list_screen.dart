@@ -24,6 +24,7 @@ import '../../services/app_update_service.dart';
 import '../../services/bridge_endpoint_probe.dart';
 import '../../services/bridge_service.dart';
 import '../../services/connection_url_parser.dart';
+import '../../services/notification_service.dart';
 import '../../services/platform_environment_service.dart';
 import '../../services/server_discovery_service.dart';
 import '../../services/ssh_bridge_tunnel_service.dart';
@@ -391,10 +392,21 @@ class _SessionListScreenState extends State<SessionListScreen>
 
     // Feed active session updates to the unseen tracker.
     final activeCubit = context.read<ActiveSessionsCubit>();
-    _unseenCubit.updateSessions(activeCubit.state);
-    _activeSessionsSub = activeCubit.stream.listen(_unseenCubit.updateSessions);
+    _updateUnseenSessions(activeCubit.state);
+    _activeSessionsSub = activeCubit.stream.listen(_updateUnseenSessions);
     unawaited(_loadMacOSNativeAppBannerState());
     _checkAppUpdate();
+  }
+
+  void _updateUnseenSessions(List<SessionInfo> sessions) {
+    final isForeground =
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    _unseenCubit.updateSessions(
+      sessions,
+      visibleSessionId: isForeground
+          ? NotificationService.instance.activeSessionId
+          : null,
+    );
   }
 
   Future<void> _loadMacOSNativeAppBannerState() async {
@@ -1916,7 +1928,9 @@ class _SessionListScreenState extends State<SessionListScreen>
           ? FloatingActionButtonLocation.startFloat
           : FloatingActionButtonLocation.endFloat,
       floatingActionButton:
-          showConnectedUI && MediaQuery.of(context).viewInsets.bottom == 0
+          widget.embedded &&
+              showConnectedUI &&
+              MediaQuery.of(context).viewInsets.bottom == 0
           ? Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: FloatingActionButton.extended(
@@ -1924,7 +1938,7 @@ class _SessionListScreenState extends State<SessionListScreen>
                 heroTag: null,
                 onPressed: _showNewSessionDialog,
                 icon: const Icon(Icons.add),
-                label: const Text('New'),
+                label: Text(l.newSession),
               ),
             )
           : null,
@@ -2118,6 +2132,7 @@ class _SessionListScreenState extends State<SessionListScreen>
                 if (chrome.topInset > 0)
                   SliverToBoxAdapter(child: SizedBox(height: chrome.topInset)),
                 SessionListSliverAppBar(
+                  onNewSession: _showNewSessionDialog,
                   onOpenSettings: _openSettings,
                   onOpenGallery: _openGallery,
                   onTitleTap: _onTitleTap,
@@ -2125,6 +2140,7 @@ class _SessionListScreenState extends State<SessionListScreen>
                   forceElevated: innerBoxIsScrolled,
                   toolbarHeight: chrome.toolbarHeight,
                   bridgeLabel: connectedBridgeLabel,
+                  isConnected: connectionState == BridgeConnectionState.connected,
                 ),
               ],
         body: content,

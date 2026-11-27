@@ -116,106 +116,144 @@ class ChatInputBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Container(
+    return Padding(
       padding: EdgeInsets.only(
-        left: 8,
-        right: 8,
-        top: 8,
-        bottom: MediaQuery.of(context).padding.bottom + 8,
+        left: 12,
+        right: 12,
+        top: 6,
+        bottom: MediaQuery.paddingOf(context).bottom + 8,
       ),
-      decoration: BoxDecoration(
-        color: cs.surface,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.15),
-            blurRadius: 8,
-            offset: const Offset(0, -2),
-          ),
-        ],
+      child: Material(
+        color: cs.surfaceContainerHigh,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: cs.outlineVariant),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(6, 2, 6, 6),
+          child: _ComposerContent(bar: this),
+        ),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (attachedDiffSelection != null)
-            _DiffPreview(
-              selection: attachedDiffSelection!,
-              onTap: onTapDiffPreview,
-              onClear: onClearDiffSelection,
-            ),
-          if (attachedImages.isNotEmpty)
-            _ImagePreview(
-              images: attachedImages,
-              onClearImage: onClearImage,
-              editableSketchIndices: editableSketchIndices,
-              onEditSketch: onEditSketch,
-              onAnnotateImage: onAnnotateImage,
-            ),
-          _InputTextField(
-            controller: inputController,
-            status: status,
-            hintText: hintText,
-            onSend: onSend,
-            hasInputText: hasInputText,
-            onPasteImage: onPasteImage,
-            onPasteImageFromContextMenu: onPasteImageFromContextMenu,
-            onNativePasteImage: onNativePasteImage,
-            hasImageInClipboard: hasImageInClipboard,
-            imagePasteShortcut: imagePasteShortcut,
-            onCompletionKeyEvent: onCompletionKeyEvent,
-            onIndent: onIndent,
-            onDedent: onDedent,
+    );
+  }
+}
+
+class _ComposerContent extends StatelessWidget {
+  final ChatInputBar bar;
+
+  const _ComposerContent({required this.bar});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (bar.attachedDiffSelection case final selection?)
+          _DiffPreview(
+            selection: selection,
+            onTap: bar.onTapDiffPreview,
+            onClear: bar.onClearDiffSelection,
           ),
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              AnimatedSwitcher(
-                duration: const Duration(milliseconds: 200),
-                child: isInputEmpty
-                    ? _SlashCommandButton(
-                        key: const ValueKey('slash_command_button'),
-                        onTap: onSlashCommand,
-                      )
-                    : _DedentButton(
-                        key: const ValueKey('dedent_button'),
-                        onTap: onDedent,
-                        enabled: canDedent,
-                      ),
+        if (bar.attachedImages.isNotEmpty)
+          _ImagePreview(
+            images: bar.attachedImages,
+            onClearImage: bar.onClearImage,
+            editableSketchIndices: bar.editableSketchIndices,
+            onEditSketch: bar.onEditSketch,
+            onAnnotateImage: bar.onAnnotateImage,
+          ),
+        _InputTextField(
+          controller: bar.inputController,
+          status: bar.status,
+          hintText: bar.hintText,
+          onSend: bar.onSend,
+          hasInputText: bar.hasInputText,
+          onPasteImage: bar.onPasteImage,
+          onPasteImageFromContextMenu: bar.onPasteImageFromContextMenu,
+          onNativePasteImage: bar.onNativePasteImage,
+          hasImageInClipboard: bar.hasImageInClipboard,
+          imagePasteShortcut: bar.imagePasteShortcut,
+          onCompletionKeyEvent: bar.onCompletionKeyEvent,
+          onIndent: bar.onIndent,
+          onDedent: bar.onDedent,
+        ),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            Expanded(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: _ComposerTools(bar: bar),
               ),
-              const SizedBox(width: 8),
-              _IndentButton(onTap: onIndent),
-              const SizedBox(width: 8),
-              _MentionButton(onTap: onMention, enabled: !isInMentionContext),
-              if (showDollarButton) ...[
-                const SizedBox(width: 8),
-                _DollarButton(onTap: onDollarMention ?? () {}),
-              ],
-              const SizedBox(width: 8),
-              _AttachButton(
-                hasAttachment: attachedImages.isNotEmpty,
-                imageCount: attachedImages.length,
-                onTap: onAttachImage,
-                onLongPress: onShowAttachmentOptions,
+            ),
+            const SizedBox(width: 6),
+            if (bar.isVoiceAvailable) ...[
+              _VoiceButton(
+                isRecording: bar.isRecording,
+                onTap: bar.onToggleVoice,
               ),
-              if (onShowPromptHistory != null) ...[
-                const SizedBox(width: 8),
-                _HistoryButton(onTap: onShowPromptHistory!),
-              ],
-              const Spacer(),
-              if (isVoiceAvailable) ...[
-                _VoiceButton(isRecording: isRecording, onTap: onToggleVoice),
-                const SizedBox(width: 8),
-              ],
-              _ActionButton(
-                status: status,
-                hasInputText: hasInputText,
-                onSend: onSend,
-                onStop: onStop,
-                onInterrupt: onInterrupt,
-              ),
+              const SizedBox(width: 6),
             ],
-          ),
+            _ActionButton(
+              status: bar.status,
+              hasInputText: bar.hasInputText,
+              onSend: bar.onSend,
+              onStop: bar.onStop,
+              onInterrupt: bar.onInterrupt,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _ComposerTools extends StatelessWidget {
+  final ChatInputBar bar;
+
+  const _ComposerTools({required this.bar});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _AttachButton(
+          hasAttachment: bar.attachedImages.isNotEmpty,
+          imageCount: bar.attachedImages.length,
+          onTap: bar.onAttachImage,
+          onLongPress: bar.onShowAttachmentOptions,
+        ),
+        const SizedBox(width: 4),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 200),
+          child: bar.isInputEmpty
+              ? _SlashCommandButton(
+                  key: const ValueKey('slash_command_button'),
+                  onTap: bar.onSlashCommand,
+                )
+              : _DedentButton(
+                  key: const ValueKey('dedent_button'),
+                  onTap: bar.onDedent,
+                  enabled: bar.canDedent,
+                ),
+        ),
+        const SizedBox(width: 4),
+        _IndentButton(onTap: bar.onIndent),
+        const SizedBox(width: 4),
+        _MentionButton(
+          onTap: bar.onMention,
+          enabled: !bar.isInMentionContext,
+        ),
+        if (bar.showDollarButton) ...[
+          const SizedBox(width: 4),
+          _DollarButton(onTap: bar.onDollarMention ?? () {}),
         ],
-      ),
+        if (bar.onShowPromptHistory case final onShowHistory?) ...[
+          const SizedBox(width: 4),
+          _HistoryButton(onTap: onShowHistory),
+        ],
+      ],
     );
   }
 }
@@ -1246,21 +1284,18 @@ class _InputTextFieldState extends State<_InputTextField>
         decoration: InputDecoration(
           hintText: widget.hintText ?? l.messagePlaceholder,
           filled: true,
-          fillColor: cs.surfaceContainerLow,
+          fillColor: cs.surfaceContainerHigh,
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(10),
             borderSide: BorderSide.none,
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(24),
-            borderSide: BorderSide(color: cs.outlineVariant, width: 0.5),
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide.none,
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(24),
-            borderSide: BorderSide(
-              color: cs.primary.withValues(alpha: 0.5),
-              width: 1.5,
-            ),
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide(color: cs.primary),
           ),
           isDense: true,
           contentPadding: const EdgeInsets.symmetric(
@@ -1379,26 +1414,18 @@ class _SendButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final l = AppLocalizations.of(context);
-    final opacity = enabled ? 1.0 : 0.4;
-    return Opacity(
-      opacity: opacity,
-      child: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [cs.primary, cs.primary.withValues(alpha: 0.8)],
-          ),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: IconButton(
-          key: const ValueKey('send_button'),
-          tooltip: l.tooltipSendMessage,
-          onPressed: enabled ? onSend : null,
-          icon: Icon(Icons.arrow_upward, color: cs.onPrimary, size: 20),
-          constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
-          padding: EdgeInsets.zero,
-        ),
+    return IconButton.filled(
+      key: const ValueKey('send_button'),
+      tooltip: l.tooltipSendMessage,
+      onPressed: enabled ? onSend : null,
+      icon: const Icon(Icons.arrow_upward_rounded, size: 20),
+      style: IconButton.styleFrom(
+        minimumSize: const Size.square(44),
+        backgroundColor: cs.primary,
+        foregroundColor: cs.onPrimary,
+        disabledBackgroundColor: cs.surfaceContainer,
+        disabledForegroundColor: cs.onSurfaceVariant,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
   }

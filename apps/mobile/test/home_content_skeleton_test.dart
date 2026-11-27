@@ -201,7 +201,9 @@ void main() {
   late SupportBannerService supportBannerService;
 
   setUp(() async {
-    SharedPreferences.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({
+      'session_list_group_recent_sessions': true,
+    });
     final prefs = await SharedPreferences.getInstance();
     draftService = DraftService(prefs);
     revenueCatService = RevenueCatService(
@@ -512,7 +514,7 @@ void main() {
       await tester.pump();
 
       expect(find.text('Running'), findsOneWidget);
-      expect(find.text('No active sessions'), findsOneWidget);
+      expect(find.text('No active sessions'), findsNothing);
       expect(find.text('Codex Remaining'), findsOneWidget);
       expect(find.text('1w 86%'), findsOneWidget);
       expect(

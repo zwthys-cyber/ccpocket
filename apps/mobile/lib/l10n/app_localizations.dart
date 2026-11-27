@@ -3737,6 +3737,48 @@ abstract class AppLocalizations {
   /// **'実行中のセッションはありません'**
   String get noActiveSessions;
 
+  /// No description provided for @statusWorking.
+  ///
+  /// In en, this message translates to:
+  /// **'Working'**
+  String get statusWorking;
+
+  /// No description provided for @statusNeedsYou.
+  ///
+  /// In en, this message translates to:
+  /// **'Needs You'**
+  String get statusNeedsYou;
+
+  /// No description provided for @statusReady.
+  ///
+  /// In en, this message translates to:
+  /// **'Ready'**
+  String get statusReady;
+
+  /// No description provided for @sessionNewActivity.
+  ///
+  /// In en, this message translates to:
+  /// **'New activity'**
+  String get sessionNewActivity;
+
+  /// No description provided for @sessionOpenSessions.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Sessions'**
+  String get sessionOpenSessions;
+
+  /// No description provided for @bridgeConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected'**
+  String get bridgeConnected;
+
+  /// No description provided for @clearSessionSearch.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear search'**
+  String get clearSessionSearch;
+
   /// No description provided for @startSessionToBegin.
   ///
   /// In ja, this message translates to:

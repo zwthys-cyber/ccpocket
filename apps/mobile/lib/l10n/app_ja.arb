@@ -820,6 +820,13 @@
   "working": "処理中...",
   "waitingForApprovalRequests": "エージェントからの承認リクエストを待っています。",
   "noActiveSessions": "実行中のセッションはありません",
+  "statusWorking": "作業中",
+  "statusNeedsYou": "要対応",
+  "statusReady": "待機中",
+  "sessionNewActivity": "新しいアクティビティ",
+  "sessionOpenSessions": "開いているセッション",
+  "bridgeConnected": "接続済み",
+  "clearSessionSearch": "検索をクリア",
   "startSessionToBegin": "セッションを開始して承認リクエストの受信を始めましょう。",
 
   "settingsTitle": "設定",

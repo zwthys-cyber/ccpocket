@@ -1083,6 +1083,9 @@ class _CodexChatBody extends HookWidget {
                         sessionId: sessionId,
                         projectPath: effectiveProjectPath,
                         workspace: workspace,
+                        branch: currentBranch.value,
+                        provider: Provider.codex,
+                        status: status,
                       ),
                     ),
                     flexibleSpace: StatusLineFlexibleSpace(

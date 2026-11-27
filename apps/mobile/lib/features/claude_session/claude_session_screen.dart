@@ -981,6 +981,9 @@ class _ChatScreenBody extends HookWidget {
                         sessionId: sessionId,
                         projectPath: effectiveProjectPath,
                         workspace: workspace,
+                        branch: currentBranch.value,
+                        provider: Provider.claude,
+                        status: status,
                       ),
                     ),
                     flexibleSpace: StatusLineFlexibleSpace(

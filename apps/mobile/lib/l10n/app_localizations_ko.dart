@@ -1987,6 +1987,27 @@ class AppLocalizationsKo extends AppLocalizations {
   String get noActiveSessions => '활성 세션 없음';
 
   @override
+  String get statusWorking => '작업 중';
+
+  @override
+  String get statusNeedsYou => '응답 필요';
+
+  @override
+  String get statusReady => '대기 중';
+
+  @override
+  String get sessionNewActivity => '새 활동';
+
+  @override
+  String get sessionOpenSessions => '열린 세션';
+
+  @override
+  String get bridgeConnected => '연결됨';
+
+  @override
+  String get clearSessionSearch => '검색 지우기';
+
+  @override
   String get startSessionToBegin => '승인 요청을 받으려면 세션을 시작하세요.';
 
   @override
