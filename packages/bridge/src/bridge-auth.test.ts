@@ -181,9 +181,11 @@ describe("HTTP auth", () => {
     } as unknown as IncomingMessage;
   }
 
-  it("protects account data and gallery writes only", () => {
+  it("protects account data, the gallery catalogue and gallery writes", () => {
     expect(httpRouteRequiresAuth("GET", "/usage")).toBe(true);
     expect(httpRouteRequiresAuth("GET", "/doctor")).toBe(true);
+    expect(httpRouteRequiresAuth("GET", "/api/gallery")).toBe(true);
+    expect(httpRouteRequiresAuth("GET", "/api/gallery?project=test")).toBe(true);
     expect(httpRouteRequiresAuth("POST", "/api/gallery/upload")).toBe(true);
     expect(httpRouteRequiresAuth("POST", "/api/gallery/upload?x=1")).toBe(true);
     expect(httpRouteRequiresAuth("DELETE", "/api/gallery/abc")).toBe(true);
@@ -191,7 +193,16 @@ describe("HTTP auth", () => {
     expect(httpRouteRequiresAuth("GET", "/health")).toBe(false);
     expect(httpRouteRequiresAuth("GET", "/version")).toBe(false);
     expect(httpRouteRequiresAuth("GET", "/api/gallery/abc")).toBe(false);
+    expect(httpRouteRequiresAuth("GET", "/api/gallery/abc?variant=thumbnail")).toBe(false);
     expect(httpRouteRequiresAuth("OPTIONS", "/api/gallery/upload")).toBe(false);
+  });
+
+  it("applies the configured key to catalogue readers and preserves no-key mode", () => {
+    const list = "/api/gallery?project=test";
+    expect(isAuthorizedHttpRequest(request("GET", list), "k")).toBe(false);
+    expect(isAuthorizedHttpRequest(request("GET", list, "Bearer wrong"), "k")).toBe(false);
+    expect(isAuthorizedHttpRequest(request("GET", list, "Bearer k"), "k")).toBe(true);
+    expect(isAuthorizedHttpRequest(request("GET", list), undefined)).toBe(true);
   });
 
   it("reads bearer tokens", () => {
