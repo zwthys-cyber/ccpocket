@@ -1924,24 +1924,6 @@ class _SessionListScreenState extends State<SessionListScreen>
               ),
             ),
       body: body,
-      floatingActionButtonLocation: widget.embedded
-          ? FloatingActionButtonLocation.startFloat
-          : FloatingActionButtonLocation.endFloat,
-      floatingActionButton:
-          widget.embedded &&
-              showConnectedUI &&
-              MediaQuery.of(context).viewInsets.bottom == 0
-          ? Padding(
-              padding: const EdgeInsets.only(bottom: 16),
-              child: FloatingActionButton.extended(
-                key: const ValueKey('new_session_fab'),
-                heroTag: null,
-                onPressed: _showNewSessionDialog,
-                icon: const Icon(Icons.add),
-                label: Text(l.newSession),
-              ),
-            )
-          : null,
     );
   }
 
@@ -2132,7 +2114,6 @@ class _SessionListScreenState extends State<SessionListScreen>
                 if (chrome.topInset > 0)
                   SliverToBoxAdapter(child: SizedBox(height: chrome.topInset)),
                 SessionListSliverAppBar(
-                  onNewSession: _showNewSessionDialog,
                   onOpenSettings: _openSettings,
                   onOpenGallery: _openGallery,
                   onTitleTap: _onTitleTap,

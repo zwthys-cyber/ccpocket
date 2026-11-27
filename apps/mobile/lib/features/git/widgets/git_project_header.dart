@@ -15,28 +15,28 @@ class GitProjectHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
-    return Material(
-      color: cs.surface,
-      child: Container(
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      child: Material(
         key: const ValueKey('git_project_header'),
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
-        decoration: BoxDecoration(
-          border: Border(
-            bottom: BorderSide(
-              color: cs.outlineVariant.withValues(alpha: 0.35),
-            ),
-          ),
+        color: cs.surfaceContainerHigh,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: cs.outlineVariant),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _GitHeaderControls(state: state, cubit: cubit),
-            const SizedBox(height: 8),
-            GitViewModeSegment(
-              viewMode: state.viewMode,
-              onChanged: cubit.switchMode,
-            ),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _GitHeaderControls(state: state, cubit: cubit),
+              const SizedBox(height: 8),
+              GitViewModeSegment(
+                viewMode: state.viewMode,
+                onChanged: cubit.switchMode,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -97,14 +97,14 @@ class _BranchSelectorButton extends StatelessWidget {
             state.isWorktree && constraints.maxWidth > 240;
 
         return Material(
-          color: cs.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(14),
+          color: cs.surfaceContainer,
+          borderRadius: BorderRadius.circular(10),
           child: InkWell(
             key: const ValueKey('branch_selector_button'),
             onTap: projectPath != null
                 ? () => showBranchSelectorSheet(context, projectPath!)
                 : null,
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(10),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               child: Row(

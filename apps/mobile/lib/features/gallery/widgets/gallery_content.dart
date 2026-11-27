@@ -103,12 +103,12 @@ class GalleryContent extends StatelessWidget {
           ),
         Expanded(
           child: GridView.builder(
-            padding: const EdgeInsets.all(12),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
-              childAspectRatio: 0.75,
+            padding: const EdgeInsets.fromLTRB(14, 8, 14, 16),
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 214,
+              mainAxisSpacing: 10,
+              crossAxisSpacing: 10,
+              childAspectRatio: 0.86,
             ),
             itemCount: filtered.length,
             itemBuilder: (context, index) {

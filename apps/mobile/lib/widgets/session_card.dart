@@ -149,11 +149,11 @@ class _RunningSessionCardState extends State<RunningSessionCard> {
       session.lastMessage.replaceAll(RegExp(r'\s+'), ' ').trim(),
     );
     final card = Card(
-      margin: const EdgeInsets.symmetric(vertical: 3, horizontal: 0),
+      margin: const EdgeInsets.only(bottom: 8),
       elevation: 0,
       color: cardColor,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         side: BorderSide(
           color: widget.isSelected
               ? statusColor.withValues(alpha: 0.95)
@@ -169,47 +169,61 @@ class _RunningSessionCardState extends State<RunningSessionCard> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 3),
+              padding: const EdgeInsets.fromLTRB(14, 6, 10, 2),
               child: Row(
                 children: [
                   Expanded(
-                    child: Row(
-                      children: [
-                        _StatusDot(
-                          color: statusColor,
-                          animate: visualStatus.animate,
-                          glow: isReadyUnseen,
-                          inPlanMode:
-                              visualStatus.showPlanBadge &&
-                              visualStatus.animate,
+                    child: Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
                         ),
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: Text(
-                            statusLabel,
-                            style: theme.textTheme.labelMedium?.copyWith(
-                              fontWeight: FontWeight.w600,
+                        decoration: BoxDecoration(
+                          color: statusColor.withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _StatusDot(
                               color: statusColor,
+                              animate: visualStatus.animate,
+                              glow: isReadyUnseen,
+                              inPlanMode:
+                                  visualStatus.showPlanBadge &&
+                                  visualStatus.animate,
                             ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        if (visualStatus.detail != null) ...[
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(
-                              visualStatus.detail!,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: statusColor.withValues(alpha: 0.82),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                statusLabel,
+                                style: theme.textTheme.labelMedium?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  color: statusColor,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
                             ),
-                          ),
-                        ],
-                      ],
+                            if (visualStatus.detail != null) ...[
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  visualStatus.detail!,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: statusColor.withValues(alpha: 0.82),
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                   PinToggleButton(
@@ -382,14 +396,14 @@ class _LiveSessionSummary extends StatelessWidget {
     final name = session.name?.trim() ?? '';
     final branch = session.worktreeBranch ?? session.gitBranch;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 3, 12, 10),
+      padding: const EdgeInsets.fromLTRB(14, 3, 14, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (name.isNotEmpty || message.isNotEmpty)
             Text(
               name.isNotEmpty ? name : message,
-              style: theme.textTheme.titleSmall,
+              style: theme.textTheme.titleMedium,
               maxLines: name.isNotEmpty ? 1 : 2,
               overflow: TextOverflow.ellipsis,
             ),
@@ -402,7 +416,10 @@ class _LiveSessionSummary extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ],
-          const SizedBox(height: 4),
+          if (name.isNotEmpty || message.isNotEmpty)
+            const Divider(height: 18)
+          else
+            const SizedBox(height: 4),
           Row(
             children: [
               Icon(
@@ -2585,7 +2602,7 @@ class RecentSessionCard extends StatelessWidget {
         child: Stack(
           children: [
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+              padding: const EdgeInsets.fromLTRB(10, 10, 8, 10),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -2593,12 +2610,12 @@ class RecentSessionCard extends StatelessWidget {
                     dimension: 34,
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        color: colorScheme.surfaceContainer,
-                        borderRadius: BorderRadius.circular(9),
+                        color: providerStyle.background,
+                        borderRadius: BorderRadius.circular(8),
                       ),
                       child: Icon(
                         providerStyle.icon,
-                        color: colorScheme.onSurfaceVariant,
+                        color: providerStyle.foreground,
                         size: 17,
                       ),
                     ),

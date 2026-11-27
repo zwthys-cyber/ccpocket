@@ -732,22 +732,18 @@ class HomeContentState extends State<HomeContent> {
       key: const ValueKey('session_list'),
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: EdgeInsets.fromLTRB(
-        12,
-        8,
-        12,
-        shell?.isSinglePane == false ? 88 : 16,
-      ),
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 16),
       children: [
         if (isReconnecting) const SessionReconnectBanner(),
         ?connectedBridgeBanner,
         ?updateBanner,
         ?supportBanner,
         ?macOSNativeAppBanner,
-        _SessionSearchField(
+        _HomeSessionActions(
           controller: _searchController,
           focusNode: _searchFocus,
           onChanged: context.read<SessionListCubit>().setSearchQuery,
+          onNewSession: widget.onNewSession,
         ),
         if (hasWorkingSessions || usageSummary != null) runningSessionsHeader,
         if (hasLiveSessions) ...[
@@ -973,15 +969,17 @@ class HomeContentState extends State<HomeContent> {
   }
 }
 
-class _SessionSearchField extends StatelessWidget {
+class _HomeSessionActions extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
   final ValueChanged<String> onChanged;
+  final VoidCallback onNewSession;
 
-  const _SessionSearchField({
+  const _HomeSessionActions({
     required this.controller,
     required this.focusNode,
     required this.onChanged,
+    required this.onNewSession,
   });
 
   @override
@@ -989,7 +987,7 @@ class _SessionSearchField extends StatelessWidget {
     final l = AppLocalizations.of(context);
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    return ValueListenableBuilder<TextEditingValue>(
+    final search = ValueListenableBuilder<TextEditingValue>(
       valueListenable: controller,
       builder: (context, value, _) => TextField(
         key: const ValueKey('search_field'),
@@ -1002,10 +1000,7 @@ class _SessionSearchField extends StatelessWidget {
         decoration: InputDecoration(
           hintText: l.searchSessions,
           fillColor: colors.surfaceContainerHigh,
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: colors.outlineVariant),
-          ),
+          contentPadding: const EdgeInsets.symmetric(vertical: 12),
           prefixIcon: const Icon(Icons.search, size: 20),
           suffixIcon: value.text.isEmpty
               ? null
@@ -1020,6 +1015,41 @@ class _SessionSearchField extends StatelessWidget {
                 ),
         ),
       ),
+    );
+    const newSessionKey = ValueKey('new_session_button');
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact =
+            constraints.maxWidth < 330 ||
+            MediaQuery.textScalerOf(context).scale(14) > 18;
+        return Row(
+          children: [
+            Expanded(child: search),
+            const SizedBox(width: 8),
+            if (compact)
+              IconButton.filled(
+                key: newSessionKey,
+                tooltip: l.newSession,
+                onPressed: onNewSession,
+                style: IconButton.styleFrom(
+                  fixedSize: const Size.square(48),
+                ),
+                icon: const Icon(Icons.add_rounded),
+              )
+            else
+              FilledButton.icon(
+                key: newSessionKey,
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 48),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                ),
+                onPressed: onNewSession,
+                icon: const Icon(Icons.add_rounded, size: 20),
+                label: Text(l.newSession),
+              ),
+          ],
+        );
+      },
     );
   }
 }
@@ -1042,7 +1072,7 @@ class _RunningSessionsHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final appColors = Theme.of(context).extension<AppColors>()!;
-    final header = Column(
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SectionHeader(
@@ -1050,6 +1080,10 @@ class _RunningSessionsHeader extends StatelessWidget {
           icon: Icons.play_circle_filled,
           label: label,
           color: color,
+          shrinkTrailingToFit: true,
+          trailing: usageSummary == null
+              ? null
+              : SizedBox(height: 44, child: usageSummary),
         ),
         const SizedBox(height: 4),
         if (showEmptyMessage)
@@ -1062,37 +1096,6 @@ class _RunningSessionsHeader extends StatelessWidget {
             ),
           ),
       ],
-    );
-    if (usageSummary == null) return header;
-
-    final labelPainter = TextPainter(
-      text: TextSpan(
-        text: label,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.8,
-          color: color,
-        ),
-      ),
-      textDirection: Directionality.of(context),
-      textScaler: MediaQuery.textScalerOf(context),
-    )..layout();
-    final tapTargetLeft = 4 + 16 + 6 + labelPainter.width + 8;
-
-    return LayoutBuilder(
-      builder: (context, constraints) => Stack(
-        children: [
-          header,
-          Positioned(
-            top: 0,
-            left: tapTargetLeft.clamp(0, constraints.maxWidth).toDouble(),
-            right: 0,
-            height: 44,
-            child: usageSummary!,
-          ),
-        ],
-      ),
     );
   }
 }
@@ -1285,8 +1288,8 @@ class _ProjectRecentSessionGroup extends StatelessWidget {
     final visibleSessions = group.sessions.take(displayLimit).toList();
     final hasHiddenLoadedSessions = group.sessions.length > displayLimit;
     final canShowMore = hasHiddenLoadedSessions || canLoadFromBridge;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1390,13 +1393,13 @@ class _ProjectRecentSessionHeader extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     return Material(
-      color: Colors.transparent,
+      color: colorScheme.surfaceContainer,
       child: InkWell(
         key: ValueKey('project_header_$groupKey'),
         borderRadius: BorderRadius.circular(8),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           child: Row(
             children: [
               AnimatedRotation(

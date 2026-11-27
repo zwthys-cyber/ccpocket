@@ -1383,6 +1383,19 @@ class _CodexChatBody extends HookWidget {
                 if (bridgeState == BridgeConnectionState.reconnecting ||
                     bridgeState == BridgeConnectionState.disconnected)
                   ReconnectBanner(bridgeState: bridgeState),
+                if (sessionState.sessionContextLoaded)
+                  SessionModeBar(
+                    showExtendedCodexEfforts: context
+                        .watch<SettingsCubit>()
+                        .state
+                        .showExtendedCodexEfforts,
+                    onBeforeRestart: () async {
+                      draftService.saveDraft(
+                        sessionId,
+                        chatInputController.text,
+                      );
+                    },
+                  ),
                 Expanded(
                   child: BottomOverlayLayout(
                     overlay:
@@ -1463,27 +1476,6 @@ class _CodexChatBody extends HookWidget {
                               ),
                             ),
                           ),
-                    topOverlay: sessionState.sessionContextLoaded
-                        ? Positioned(
-                            top: 0,
-                            left: 0,
-                            right: 0,
-                            child: Center(
-                              child: SessionModeBar(
-                                showExtendedCodexEfforts: context
-                                    .watch<SettingsCubit>()
-                                    .state
-                                    .showExtendedCodexEfforts,
-                                onBeforeRestart: () async {
-                                  draftService.saveDraft(
-                                    sessionId,
-                                    chatInputController.text,
-                                  );
-                                },
-                              ),
-                            ),
-                          )
-                        : null,
                     floatingButtonBuilder: (overlayHeight) {
                       if (!scroll.showScrollToLatest) {
                         return const SizedBox.shrink();

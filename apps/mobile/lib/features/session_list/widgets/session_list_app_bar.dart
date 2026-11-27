@@ -20,7 +20,6 @@ class SessionListSliverAppBar extends StatelessWidget {
   final double? toolbarHeight;
   final String? bridgeLabel;
   final bool isConnected;
-  final VoidCallback? onNewSession;
 
   const SessionListSliverAppBar({
     super.key,
@@ -32,14 +31,11 @@ class SessionListSliverAppBar extends StatelessWidget {
     this.toolbarHeight,
     this.bridgeLabel,
     this.isConnected = false,
-    this.onNewSession,
   });
 
   @override
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
-    final colors = Theme.of(context).colorScheme;
-    final newSession = onNewSession;
 
     return SliverAppBar(
       floating: true,
@@ -79,20 +75,6 @@ class SessionListSliverAppBar extends StatelessWidget {
           onPressed: onDisconnect,
           tooltip: l.disconnect,
         ),
-        if (newSession != null)
-          Padding(
-            padding: const EdgeInsetsDirectional.only(start: 2, end: 8),
-            child: IconButton.filled(
-              key: const ValueKey('new_session_button'),
-              tooltip: l.newSession,
-              onPressed: newSession,
-              icon: const Icon(Icons.add),
-              style: IconButton.styleFrom(
-                backgroundColor: colors.primary,
-                foregroundColor: colors.onPrimary,
-              ),
-            ),
-          ),
       ],
     );
   }

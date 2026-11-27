@@ -18,51 +18,42 @@ class SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.only(left: 4, top: 12, bottom: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
         children: [
-          Row(
-            children: [
-              Icon(icon, size: 16, color: color),
-              const SizedBox(width: 6),
-              Flexible(
-                fit: FlexFit.tight,
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.8,
-                    color: color,
-                  ),
-                ),
-              ),
-              if (trailing != null && shrinkTrailingToFit) ...[
-                const SizedBox(width: 8),
-                Flexible(
-                  fit: FlexFit.tight,
-                  child: Align(
-                    alignment: Alignment.centerRight,
-                    child: trailing!,
-                  ),
-                ),
-              ] else if (trailing != null) ...[
-                const SizedBox(width: 8),
-                trailing!,
-              ],
-            ],
-          ),
-          const SizedBox(height: 4),
-          Container(
-            height: 1,
+          DecoratedBox(
             decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [color.withValues(alpha: 0.4), Colors.transparent],
-              ),
+              color: theme.colorScheme.surfaceContainer,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: SizedBox.square(
+              dimension: 30,
+              child: Icon(icon, size: 17, color: color),
             ),
           ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              style: theme.textTheme.titleMedium,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (trailing != null) ...[
+            const SizedBox(width: 8),
+            if (shrinkTrailingToFit)
+              Flexible(
+                flex: 2,
+                child: Align(
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: trailing!,
+                ),
+              ),
+            if (!shrinkTrailingToFit) trailing!,
+          ],
         ],
       ),
     );

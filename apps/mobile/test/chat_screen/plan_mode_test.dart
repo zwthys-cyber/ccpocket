@@ -1,3 +1,4 @@
+import 'package:ccpocket/features/chat_session/widgets/chat_message_list.dart';
 import 'package:ccpocket/features/chat_session/widgets/status_line.dart';
 import 'package:ccpocket/features/chat_session/widgets/session_mode_bar.dart';
 import 'package:ccpocket/models/messages.dart';
@@ -58,6 +59,11 @@ void main() {
       // SessionModeBar is visible and shows Plan mode indicator
       // (rotating border is drawn via CustomPaint, not testable via keys)
       expect(find.byType(SessionModeBar), findsOneWidget);
+      final toolbar = $.tester.getRect(
+        find.byKey(const ValueKey('session_mode_toolbar')),
+      );
+      final transcript = $.tester.getRect(find.byType(ChatMessageList));
+      expect(toolbar.bottom, lessThanOrEqualTo(transcript.top));
     });
 
     patrolWidgetTest('C1: StatusLine shows plan mode when EnterPlanMode', (
