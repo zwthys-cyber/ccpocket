@@ -18,6 +18,10 @@ void main() {
         (colors.statusRunning, scheme.surfaceContainerHigh, 'running status'),
         (colors.statusApproval, colors.approvalBar, 'approval status'),
         (colors.userBubbleText, colors.userBubble, 'user message'),
+        (scheme.onError, scheme.error, 'danger action'),
+        (colors.warningText, colors.warningBubble, 'warning'),
+        (colors.diffAdditionText, colors.diffAdditionBackground, 'added line'),
+        (colors.diffDeletionText, colors.diffDeletionBackground, 'removed line'),
       ];
       for (final (foreground, background, label) in pairs) {
         final luminances = [

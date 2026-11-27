@@ -503,13 +503,13 @@ class _UsageBarState extends State<_UsageBar>
         pct >= 90
             ? cs.error
             : pct >= 70
-            ? Colors.orange
+            ? cs.tertiary
             : cs.primary,
       UsageDisplayMode.remaining =>
         pct <= 10
             ? cs.error
             : pct <= 30
-            ? Colors.orange
+            ? cs.tertiary
             : cs.primary,
     };
   }

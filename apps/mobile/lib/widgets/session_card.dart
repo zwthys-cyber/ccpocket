@@ -189,7 +189,8 @@ class _RunningSessionCardState extends State<RunningSessionCard> {
                           children: [
                             _StatusDot(
                               color: statusColor,
-                              animate: visualStatus.animate,
+                              animate: visualStatus.animate &&
+                                  !MediaQuery.disableAnimationsOf(context),
                               glow: isReadyUnseen,
                               inPlanMode:
                                   visualStatus.showPlanBadge &&

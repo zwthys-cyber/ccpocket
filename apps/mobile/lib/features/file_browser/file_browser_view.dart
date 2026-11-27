@@ -229,9 +229,14 @@ class BrowserHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
-    return SizedBox(
+    final colors = Theme.of(context).colorScheme;
+    return Container(
       key: const ValueKey('browser_header'),
       height: 52,
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerLow,
+        border: Border(bottom: BorderSide(color: colors.outlineVariant)),
+      ),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 360;

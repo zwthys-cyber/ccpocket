@@ -118,6 +118,7 @@ Widget _buildHomeContent({
   bool showMacOSNativeAppBanner = false,
   UsageInfo? codexUsageOverride,
   VoidCallback? onOpenUsageSettings,
+  VoidCallback? onNewSession,
   VoidCallback? onDismissMacOSNativeAppBanner,
   ValueChanged<String?>? onSelectProject,
   ValueChanged<String>? onLoadMoreProject,
@@ -157,7 +158,7 @@ Widget _buildHomeContent({
             isInitialLoading: isInitialLoading,
             hasMoreSessions: hasMoreSessions,
             currentProjectFilter: currentProjectFilter,
-            onNewSession: () {},
+            onNewSession: onNewSession ?? () {},
             onTapRunning: (
               id, {
               projectPath,
@@ -228,6 +229,33 @@ void main() {
   });
 
   group('HomeContent skeleton', () {
+    testWidgets('keeps search and session creation usable on a narrow phone', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(320, 720);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      var created = 0;
+      await tester.pumpWidget(
+        _buildHomeContent(
+          recentSessions: [_session(id: 'recent')],
+          onNewSession: () => created++,
+          cubit: cubit,
+          draftService: draftService,
+          revenueCatService: revenueCatService,
+          supportBannerService: supportBannerService,
+        ),
+      );
+
+      final search = find.byKey(const ValueKey('search_field'));
+      final create = find.byKey(const ValueKey('new_session_button'));
+      expect(tester.getRect(search).right, lessThan(tester.getRect(create).left));
+      await tester.tap(create);
+      expect(created, 1);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('lists a workspace Project with no loaded recent session', (
       tester,
     ) async {

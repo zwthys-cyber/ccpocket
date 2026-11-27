@@ -347,6 +347,16 @@ class AppTheme {
         indicatorColor: colorScheme.primaryContainer,
         indicatorShape: controlShape,
       ),
+      bottomAppBarTheme: BottomAppBarThemeData(
+        color: colorScheme.surfaceContainerHigh,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+      ),
+      bannerTheme: MaterialBannerThemeData(
+        backgroundColor: colorScheme.surfaceContainerHigh,
+        dividerColor: colorScheme.outlineVariant,
+        contentTextStyle: textTheme.bodyMedium,
+      ),
       tabBarTheme: TabBarThemeData(
         labelColor: colorScheme.primary,
         unselectedLabelColor: colorScheme.onSurfaceVariant,
@@ -361,6 +371,26 @@ class AppTheme {
       progressIndicatorTheme: ProgressIndicatorThemeData(
         color: colorScheme.primary,
         linearTrackColor: colorScheme.surfaceContainerHighest,
+      ),
+      sliderTheme: SliderThemeData(
+        activeTrackColor: colorScheme.primary,
+        inactiveTrackColor: colorScheme.surfaceContainerHighest,
+        thumbColor: colorScheme.primary,
+        overlayColor: colorScheme.primary.withValues(alpha: 0.14),
+      ),
+      switchTheme: SwitchThemeData(
+        trackColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) return null;
+          return states.contains(WidgetState.selected)
+              ? colorScheme.primary
+              : colorScheme.surfaceContainerHighest;
+        }),
+        thumbColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) return null;
+          return states.contains(WidgetState.selected)
+              ? colorScheme.onPrimary
+              : colorScheme.outline;
+        }),
       ),
       badgeTheme: BadgeThemeData(
         backgroundColor: colorScheme.error,
@@ -446,18 +476,21 @@ class AppTheme {
       bodyLarge: GoogleFonts.ibmPlexSans(
         fontSize: 16,
         fontWeight: FontWeight.w400,
+        height: 1.35,
         letterSpacing: 0.25,
         color: colorScheme.onSurface,
       ),
       bodyMedium: GoogleFonts.ibmPlexSans(
         fontSize: 14,
         fontWeight: FontWeight.w400,
+        height: 1.35,
         letterSpacing: 0.15,
         color: colorScheme.onSurface,
       ),
       bodySmall: GoogleFonts.ibmPlexSans(
         fontSize: 12,
         fontWeight: FontWeight.w400,
+        height: 1.3,
         letterSpacing: 0.25,
         color: colorScheme.onSurfaceVariant,
       ),
@@ -493,6 +526,9 @@ class AppTheme {
 // ---------------------------------------------------------------------------
 
 class AppColors extends ThemeExtension<AppColors> {
+  static const mediaSurface = Color(0xFF202024);
+  static const mediaForeground = Color(0xFFE3DED6);
+
   // User bubble
   final Color userBubble;
   final Color userBubbleText;

@@ -101,42 +101,15 @@ class ComposerTokenPalette {
 
   factory ComposerTokenPalette.fromTheme(ThemeData theme) {
     final cs = theme.colorScheme;
-    final surface = cs.surfaceContainerHigh;
-    const fileTint = Color(0xFF4C9BFF);
-    const purpleTint = Color(0xFFA06BFF);
     return ComposerTokenPalette(
-      slashForeground: Color.alphaBlend(
-        purpleTint.withValues(alpha: 0.42),
-        cs.onSurfaceVariant,
-      ),
-      slashBackground: Color.alphaBlend(
-        purpleTint.withValues(alpha: 0.14),
-        surface,
-      ),
-      fileForeground: Color.alphaBlend(
-        fileTint.withValues(alpha: 0.42),
-        cs.onSurfaceVariant,
-      ),
-      fileBackground: Color.alphaBlend(
-        fileTint.withValues(alpha: 0.14),
-        surface,
-      ),
-      skillForeground: Color.alphaBlend(
-        purpleTint.withValues(alpha: 0.42),
-        cs.onSurfaceVariant,
-      ),
-      skillBackground: Color.alphaBlend(
-        purpleTint.withValues(alpha: 0.14),
-        surface,
-      ),
-      appForeground: Color.alphaBlend(
-        purpleTint.withValues(alpha: 0.42),
-        cs.onSurfaceVariant,
-      ),
-      appBackground: Color.alphaBlend(
-        purpleTint.withValues(alpha: 0.14),
-        surface,
-      ),
+      slashForeground: cs.onSecondaryContainer,
+      slashBackground: cs.secondaryContainer,
+      fileForeground: cs.onPrimaryContainer,
+      fileBackground: cs.primaryContainer,
+      skillForeground: cs.onSecondaryContainer,
+      skillBackground: cs.secondaryContainer,
+      appForeground: cs.onSecondaryContainer,
+      appBackground: cs.secondaryContainer,
     );
   }
 

@@ -781,9 +781,9 @@ class HomeContentState extends State<HomeContent> {
                         color: Theme.of(context).colorScheme.error,
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(
+                      child: Icon(
                         Icons.stop_circle_outlined,
-                        color: Colors.white,
+                        color: Theme.of(context).colorScheme.onError,
                         size: 22,
                       ),
                     ),
@@ -1174,9 +1174,9 @@ class _RecentSessionSlidable extends StatelessWidget {
                 color: Theme.of(context).colorScheme.error,
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.archive_outlined,
-                color: Colors.white,
+                color: Theme.of(context).colorScheme.onError,
                 size: 22,
               ),
             ),
