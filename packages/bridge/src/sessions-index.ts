@@ -2955,7 +2955,7 @@ export function codexThreadToSessionHistory(
     const turnStartedAt = numberToIsoTimestamp(turn.startedAt);
     const turnCompletedAt = numberToIsoTimestamp(turn.completedAt);
 
-    for (const rawItem of arrayValue(turn.items)) {
+    for (const [position, rawItem] of arrayValue(turn.items).entries()) {
       const item = asObject(rawItem);
       if (!item || typeof item.type !== "string") continue;
       const rawItemId = stringValue(item.id);
@@ -2974,7 +2974,11 @@ export function codexThreadToSessionHistory(
                 : "";
           if (displayText.trim().length === 0) break;
           userTurnOrdinal += 1;
-          const timestamp = codexItemTime(item) ?? (rawItemId ? userTimesById?.get(rawItemId) : undefined) ?? turnStartedAt;
+          // A steer may arrive minutes after the start. If the original item's
+          // time is unavailable, only the opening prompt can use the turn time.
+          const timestamp = codexItemTime(item) ??
+            (rawItemId ? userTimesById?.get(rawItemId) : undefined) ??
+            (position === 0 ? turnStartedAt : undefined);
           messages.push({
             role: "user",
             uuid: codexUserTurnUuid(userTurnOrdinal),

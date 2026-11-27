@@ -1462,6 +1462,7 @@ describe("SessionManager codex path", () => {
     const id = manager.create("/tmp/project", undefined, undefined, undefined, "codex");
     const proc = codexInstances.at(-1)!;
     const timestamp = "2026-11-27T09:32:09.859Z";
+    manager.get(id)!.turnOutputSinceUserInput = true;
     proc.steerInputStructured.mockImplementationOnce(async () => {
       proc.emit("message", {
         type: "user_input", text: "confirm", userMessageUuid: "provider-item", timestamp,
@@ -1472,6 +1473,7 @@ describe("SessionManager codex path", () => {
       userMessageUuid: "codex:user-turn:1", clientMessageId: "phone-send",
     });
     expect(result).toBe("steered");
+    expect(manager.get(id)!.turnOutputSinceUserInput).toBe(true);
     const rows = manager.get(id)!.history.filter(message => message.type === "user_input");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({

@@ -1794,6 +1794,7 @@ describe("codex sessions integration", () => {
       { type: "agentMessage", text: "Still working" }, thread.turns[0].items[1],
     ] }] };
     expect((await codexThreadUserTimes(threadId, partial))?.get("completed-item")).toBe(sentAt);
+    expect(codexThreadToSessionHistory(thread)[1].timestamp).toBeUndefined();
     const times = await codexThreadUserTimes(threadId, thread);
     const users = codexThreadToSessionHistory(thread, times);
     expect(users.map(message => message.timestamp)).toEqual([

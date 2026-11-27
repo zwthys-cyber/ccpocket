@@ -725,7 +725,8 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     const started = "2026-11-27T09:18:41.123Z";
     const delivered = "2026-11-27T09:32:09.853Z";
     const user = (ordinal: number, rawItemId: string, text: string) => ({
-      role: "user", uuid: `codex:user-turn:${ordinal}`, rawItemId, timestamp: started,
+      role: "user", uuid: `codex:user-turn:${ordinal}`, rawItemId,
+      timestamp: ordinal === 1 ? started : ordinal === 2 ? delivered : undefined,
       content: [{ type: "text", text }],
     });
     codexThreadToSessionHistoryMock.mockReturnValue([
@@ -743,7 +744,7 @@ describe("BridgeWebSocketServer resume/get_history flow", () => {
     try {
       manager.appendHistory(id, { type: "assistant", messageUuid: "anchor",
         message: { id: "anchor", role: "assistant", model: "", content: [{ type: "text", text: "working" }] } });
-      manager.appendHistory(id, { type: "user_input", text: "confirm", timestamp: delivered,
+      manager.appendHistory(id, { type: "user_input", text: "confirm", timestamp: "2026-11-27T09:32:08.984Z",
         userMessageUuid: "codex:user-turn:8", clientMessageId: "send-A" });
       manager.appendHistory(id, { type: "user_input", text: "confirm", timestamp: "2026-11-27T09:33:01.000Z",
         userMessageUuid: "codex:user-turn:9", rawItemId: "steer-B", clientMessageId: "send-B" });

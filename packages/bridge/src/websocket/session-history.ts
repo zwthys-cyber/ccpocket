@@ -134,9 +134,10 @@ function reconcileCodexUserInputs(
         ...candidate,
         ...(message.clientMessageId && { clientMessageId: message.clientMessageId }),
         ...(!candidate.rawItemId && message.rawItemId && { rawItemId: message.rawItemId }),
-        // A client-acknowledged input carries its delivery time. A historical
-        // turn-start fallback must not replace it on subsequent reads.
-        ...(message.clientMessageId && message.timestamp && { timestamp: message.timestamp }),
+        // For a steer, thread/read has either the provider receipt or no time.
+        // Its acknowledged live delivery is the fallback on older providers.
+        ...(!candidate.timestamp && message.clientMessageId && message.timestamp &&
+          { timestamp: message.timestamp }),
       };
       entry.message = merged;
       if (merged.clientMessageId) remember(`client:${merged.clientMessageId}`, index);
