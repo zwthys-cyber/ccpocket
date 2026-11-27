@@ -101,9 +101,7 @@ jobs:
           test -n "$device"
           xcrun simctl boot "$device"
           xcrun simctl bootstatus "$device" -b
-          xcrun simctl status_bar "$device" override --time '9:41' \
-            --dataNetwork wifi --wifiMode active --wifiBars 3 --cellularMode active \
-            --cellularBars 4 --batteryState unplugged --batteryLevel 100
+          xcrun simctl status_bar "$device" override --time '9:41'
           bundle_id=com.zwthys.ccpocket
           xcrun simctl install "$device" build/ios/iphonesimulator/Runner.app
           app_data=$(xcrun simctl get_app_container "$device" "$bundle_id" data)
